@@ -1,0 +1,4 @@
+.repo.git/
+node_modules/
+*.log
+data/

@@ -1,0 +1,199 @@
+openapi: 3.0.3
+info:
+  title: Script Factory API
+  version: 0.1.0
+servers:
+  - url: http://localhost:3001/api/v2
+    description: Local development server
+  - url: /api/v2
+    description: Relative path for same-origin deployment
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+    JobCreateRequest:
+      type: object
+      properties:
+        priority:
+          type: integer
+          description: Lower value means higher priority.
+          example: 100
+        timeout_ms:
+          type: integer
+          description: Per-job timeout in milliseconds.
+          example: 30000
+        retry_policy:
+          type: object
+          properties:
+            max_attempts:
+              type: integer
+              example: 2
+            backoff_ms:
+              type: integer
+              example: 500
+        script:
+          type: object
+          description: Simulated execution payload.
+          properties:
+            simulate:
+              type: object
+              properties:
+                outcome:
+                  type: string
+                  enum: [success, validation_failed, timeout, retry_once]
+                delay_ms:
+                  type: integer
+                  example: 250
+            steps:
+              type: array
+              items:
+                type: object
+                properties:
+                  action:
+                    type: string
+                    example: noop
+                  duration_ms:
+                    type: integer
+                    example: 100
+    SystemConfig:
+      type: object
+      properties:
+        max_parallel_jobs:
+          type: integer
+          example: 1
+        default_job_timeout_ms:
+          type: integer
+          example: 30000
+        retry_policy:
+          type: object
+          properties:
+            max_attempts:
+              type: integer
+              example: 2
+            backoff_ms:
+              type: integer
+              example: 500
+security:
+  - ApiKeyAuth: []
+paths:
+  /health:
+    get:
+      summary: Health check
+      security: []
+      responses:
+        "200":
+          description: OK
+  /jobs:
+    get:
+      summary: List jobs
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Job collection
+    post:
+      summary: Create job
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema:
+            type: string
+          description: Optional idempotency key for retry-safe job creation.
+          example: job-2026-06-08-001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreateRequest'
+            example:
+              priority: 100
+              timeout_ms: 30000
+              retry_policy:
+                max_attempts: 2
+                backoff_ms: 500
+              script:
+                simulate:
+                  outcome: success
+                  delay_ms: 250
+                steps:
+                  - action: noop
+      responses:
+        "201":
+          description: Created
+  /jobs/{job_id}:
+    get:
+      summary: Get job
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Job
+  /jobs/{job_id}/cancel:
+    post:
+      summary: Cancel job
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Cancelled
+  /jobs/{job_id}/logs:
+    get:
+      summary: Get job logs
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Logs
+  /system/resources:
+    get:
+      summary: Get system resources
+      responses:
+        "200":
+          description: Resources
+  /system/config:
+    get:
+      summary: Get config
+      responses:
+        "200":
+          description: Config
+    put:
+      summary: Update config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemConfig'
+            example:
+              max_parallel_jobs: 2
+              default_job_timeout_ms: 30000
+              retry_policy:
+                max_attempts: 2
+                backoff_ms: 500
+      responses:
+        "200":
+          description: Config

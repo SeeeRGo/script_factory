@@ -1,0 +1,14 @@
+{
+  "name": "script-factory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal MVP API for distributed script execution planning.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  }
+}
