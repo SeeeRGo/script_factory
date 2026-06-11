@@ -2,18 +2,18 @@ services:
   script-factory:
     build: .
     ports:
-      - "3001:3001"
+      - "33001:33001"
     volumes:
       - ./data:/app/data
     environment:
       API_KEY: dev-secret
-      PORT: 3001
+      PORT: 33001
       HOST: 0.0.0.0
       DATA_DIR: /app/data
   swagger-ui:
     image: swaggerapi/swagger-ui:v5.17.14
     ports:
-      - "3002:8080"
+      - "33002:8080"
     volumes:
       - ./swagger-initializer.js:/usr/share/nginx/html/swagger-initializer.js:ro
       - ./openapi.yaml:/usr/share/nginx/html/spec/openapi.yaml:ro
