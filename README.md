@@ -11,8 +11,9 @@ npm start
 Requires Node.js 24+.
 
 The API listens on `http://localhost:3000`.
+Swagger UI is available at `http://localhost:3000/docs`.
 
-Swagger UI is available at `http://localhost:3002`.
+The Docker Compose Swagger UI helper is available at `http://localhost:3002`.
 In `docker compose`, it loads the spec from a mounted local file and preloads `X-API-Key: dev-secret`.
 
 ## Docker
@@ -39,6 +40,8 @@ HOST=0.0.0.0
 Do not set `PORT`; Railway injects it at runtime and the app already reads
 `process.env.PORT`.
 
+Swagger UI is served by the app at `/docs`.
+
 ## Auth
 
 All `/api/v2/*` routes require `X-API-Key: dev-secret` by default.
@@ -50,6 +53,7 @@ Swagger UI in `docker compose` preauthorizes the default dev key for convenience
 ## Main routes
 
 - `GET /openapi.yaml`
+- `GET /docs`
 - `GET /health`
 - `GET /api/v2/health`
 - `POST /api/v2/jobs`

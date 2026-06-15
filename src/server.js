@@ -288,6 +288,42 @@ function sendText(res, statusCode, text) {
   res.end(text);
 }
 
+function sendSwaggerUi(res) {
+  const body = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Script Factory API Docs</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+    <style>
+      body {
+        margin: 0;
+        background: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script>
+      window.ui = SwaggerUIBundle({
+        url: '/openapi.yaml',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        persistAuthorization: true
+      });
+    </script>
+  </body>
+</html>`;
+
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body)
+  });
+  res.end(body);
+}
+
 async function sendOpenApiYaml(res) {
   const yaml = await readFile(OPENAPI_FILE, 'utf8');
   res.writeHead(200, {
@@ -697,6 +733,11 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/openapi.yaml') {
       await sendOpenApiYaml(res);
+      return;
+    }
+
+    if (pathname === '/docs') {
+      sendSwaggerUi(res);
       return;
     }
 
