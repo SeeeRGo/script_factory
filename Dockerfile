@@ -15,6 +15,4 @@ ENV DATA_DIR=/app/data
 
 EXPOSE 3000
 
-VOLUME ["/app/data"]
-
 CMD ["node", "src/server.js"]

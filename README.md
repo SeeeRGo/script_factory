@@ -23,6 +23,22 @@ docker compose up --build
 
 State is persisted to `data/state.sqlite` locally and `/app/data/state.sqlite` in Docker.
 
+## Railway
+
+Railway does not support Dockerfile `VOLUME` declarations. Persist state by adding a
+Railway Volume to the service and setting its mount path to `/app/data`.
+
+Set these Railway variables:
+
+```text
+API_KEY=<production-secret>
+DATA_DIR=/app/data
+HOST=0.0.0.0
+```
+
+Do not set `PORT`; Railway injects it at runtime and the app already reads
+`process.env.PORT`.
+
 ## Auth
 
 All `/api/v2/*` routes require `X-API-Key: dev-secret` by default.
