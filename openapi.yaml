@@ -3,7 +3,7 @@ info:
   title: Script Factory API
   version: 0.1.0
 servers:
-  - url: http://localhost:3001/api/v2
+  - url: http://localhost:3000/api/v2
     description: Local development server
   - url: /api/v2
     description: Relative path for same-origin deployment
@@ -14,9 +14,64 @@ components:
       in: header
       name: X-API-Key
   schemas:
+    RetryPolicy:
+      type: object
+      properties:
+        max_attempts:
+          type: integer
+          minimum: 1
+          example: 2
+        backoff_ms:
+          type: integer
+          minimum: 0
+          example: 500
+    ScriptStep:
+      type: object
+      required: [action]
+      properties:
+        id:
+          type: string
+          example: locate-reports
+        action:
+          type: string
+          enum: [noop, check_ip, launch_browser, navigate, auth_ecp, find_files, upload_files, validate_report, submit_if_valid, move_files]
+          example: find_files
+        params:
+          type: object
+          additionalProperties: true
+          description: Action parameters. Values may contain context templates such as `{{root_dir}}` or `{{found_files}}`.
+        timeout_ms:
+          type: integer
+          minimum: 1
+          description: Maximum execution time for this step.
+          example: 5000
+        duration_ms:
+          type: number
+          minimum: 0
+          description: Mock action duration used by the Stage 2 adapter.
+          example: 250
+    JsonScript:
+      type: object
+      required: [steps]
+      properties:
+        context:
+          type: object
+          additionalProperties: true
+          description: Script-local initial context.
+        default_step_timeout_ms:
+          type: integer
+          minimum: 1
+          example: 10000
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScriptStep'
     JobCreateRequest:
       type: object
       properties:
+        uid:
+          type: string
+          description: Optional idempotency identifier. Idempotency-Key is also supported.
         priority:
           type: integer
           description: Lower value means higher priority.
@@ -26,38 +81,145 @@ components:
           description: Per-job timeout in milliseconds.
           example: 30000
         retry_policy:
+          $ref: '#/components/schemas/RetryPolicy'
+        context:
           type: object
-          properties:
-            max_attempts:
-              type: integer
-              example: 2
-            backoff_ms:
-              type: integer
-              example: 500
+          additionalProperties: true
+          description: Initial interpreter context. Overrides matching script context values.
         script:
+          $ref: '#/components/schemas/JsonScript'
+    ExecutionStep:
+      type: object
+      properties:
+        index:
+          type: integer
+        id:
+          type: string
+        action:
+          type: string
+        status:
+          type: string
+          enum: [pending, running, success, failed]
+        attempt:
+          type: integer
+          nullable: true
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        duration_ms:
+          type: integer
+          nullable: true
+        params:
           type: object
-          description: Simulated execution payload.
-          properties:
-            simulate:
-              type: object
-              properties:
-                outcome:
-                  type: string
-                  enum: [success, validation_failed, timeout, retry_once]
-                delay_ms:
-                  type: integer
-                  example: 250
-            steps:
-              type: array
-              items:
-                type: object
-                properties:
-                  action:
-                    type: string
-                    example: noop
-                  duration_ms:
-                    type: integer
-                    example: 100
+          nullable: true
+          additionalProperties: true
+        output:
+          type: object
+          nullable: true
+          additionalProperties: true
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+    Execution:
+      type: object
+      properties:
+        status:
+          type: string
+        total_steps:
+          type: integer
+        completed_steps:
+          type: integer
+        current_step:
+          type: integer
+          nullable: true
+        percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        duration_ms:
+          type: integer
+          nullable: true
+        context:
+          type: object
+          nullable: true
+          additionalProperties: true
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionStep'
+    ErrorBody:
+      type: object
+      nullable: true
+      properties:
+        code:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+    Job:
+      type: object
+      properties:
+        job_id:
+          type: string
+        uid:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, retrying, success, failed, validation_failed, cancelled, timeout]
+        priority:
+          type: integer
+        attempts:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+        execution:
+          $ref: '#/components/schemas/Execution'
+    JobResponse:
+      type: object
+      properties:
+        job:
+          $ref: '#/components/schemas/Job'
+        idempotent:
+          type: boolean
+    JobLog:
+      type: object
+      properties:
+        ts:
+          type: string
+          format: date-time
+        level:
+          type: string
+          enum: [debug, info, warn, error]
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
     SystemConfig:
       type: object
       properties:
@@ -68,14 +230,7 @@ components:
           type: integer
           example: 30000
         retry_policy:
-          type: object
-          properties:
-            max_attempts:
-              type: integer
-              example: 2
-            backoff_ms:
-              type: integer
-              example: 500
+          $ref: '#/components/schemas/RetryPolicy'
 security:
   - ApiKeyAuth: []
 paths:
@@ -86,6 +241,21 @@ paths:
       responses:
         "200":
           description: OK
+  /interpreter/actions:
+    get:
+      summary: List registered interpreter actions
+      responses:
+        "200":
+          description: Registered action names
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  actions:
+                    type: array
+                    items:
+                      type: string
   /jobs:
     get:
       summary: List jobs
@@ -123,15 +293,27 @@ paths:
               retry_policy:
                 max_attempts: 2
                 backoff_ms: 500
+              context:
+                root_dir: /reports/incoming
+                loaded_dir: /reports/loaded
               script:
-                simulate:
-                  outcome: success
-                  delay_ms: 250
                 steps:
-                  - action: noop
+                  - action: find_files
+                    params:
+                      directory: "{{root_dir}}"
+                      files: [FNS_2026.xml]
+                  - action: upload_files
+                    params:
+                      files: "{{found_files}}"
       responses:
         "201":
           description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+        "400":
+          description: Invalid job or script contract
   /jobs/{job_id}:
     get:
       summary: Get job
@@ -144,6 +326,13 @@ paths:
       responses:
         "200":
           description: Job
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job:
+                    $ref: '#/components/schemas/Job'
   /jobs/{job_id}/cancel:
     post:
       summary: Cancel job
@@ -168,6 +357,17 @@ paths:
       responses:
         "200":
           description: Logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                  logs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/JobLog'
   /system/resources:
     get:
       summary: Get system resources

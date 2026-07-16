@@ -4,6 +4,12 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { URL } from 'node:url';
+import {
+  abortableDelay,
+  createDefaultStepRegistry,
+  executeScript,
+  validateScript
+} from './interpreter.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -14,6 +20,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.sqlite');
 const LEGACY_STATE_FILE = path.join(DATA_DIR, 'state.json');
 const OPENAPI_FILE = path.join(process.cwd(), 'openapi.yaml');
+const PUBLIC_DIR = path.join(process.cwd(), 'public');
 const PERSIST_DEBOUNCE_MS = Number(process.env.PERSIST_DEBOUNCE_MS || 50);
 const CORS_ALLOWED_HEADERS = 'X-API-Key, Idempotency-Key, Content-Type, Accept, Origin, Authorization';
 const CORS_ALLOWED_METHODS = 'GET, POST, PUT, OPTIONS';
@@ -31,8 +38,11 @@ const state = {
   jobs: new Map(),
   queue: [],
   running: new Set(),
+  controllers: new Map(),
   activeCount: 0
 };
+
+const stepRegistry = createDefaultStepRegistry();
 
 let persistTimer = null;
 let persistRequested = false;
@@ -94,6 +104,7 @@ function buildJobSnapshot(job) {
     result: job.result,
     error: job.error,
     cancellation_requested: job.cancellation_requested,
+    execution: job.execution,
     logs: job.logs
   };
 }
@@ -115,6 +126,7 @@ function restoreJob(snapshot) {
     result: snapshot.result ?? null,
     error: snapshot.error ?? null,
     cancellation_requested: Boolean(snapshot.cancellation_requested),
+    execution: restoreExecution(snapshot.execution, snapshot.request?.script),
     logs: Array.isArray(snapshot.logs) ? snapshot.logs : []
   };
 
@@ -123,6 +135,7 @@ function restoreJob(snapshot) {
     job.error = null;
     job.cancellation_requested = false;
     job.finished_at = null;
+    job.execution = createExecution(job.request.script);
   }
 
   return job;
@@ -218,7 +231,46 @@ function rebuildQueueFromJobs() {
     })
     .map((job) => job.job_id);
   state.running.clear();
+  state.controllers.clear();
   state.activeCount = 0;
+}
+
+function createExecution(script = {}) {
+  const steps = Array.isArray(script.steps) ? script.steps : [];
+  return {
+    status: 'pending',
+    total_steps: steps.length,
+    completed_steps: 0,
+    current_step: null,
+    percent: steps.length === 0 ? 0 : 0,
+    started_at: null,
+    finished_at: null,
+    duration_ms: null,
+    context: null,
+    steps: steps.map((step, index) => ({
+      index,
+      id: step.id ?? `step_${index + 1}`,
+      action: step.action ?? 'unknown',
+      status: 'pending',
+      attempt: null,
+      started_at: null,
+      finished_at: null,
+      duration_ms: null,
+      params: null,
+      output: null,
+      error: null
+    }))
+  };
+}
+
+function restoreExecution(execution, script) {
+  const expected = createExecution(script);
+  if (!execution || typeof execution !== 'object' || !Array.isArray(execution.steps)) return expected;
+  return {
+    ...expected,
+    ...execution,
+    steps: expected.steps.map((step, index) => ({ ...step, ...(execution.steps[index] ?? {}) }))
+  };
 }
 
 function schedulePersist() {
@@ -333,6 +385,24 @@ async function sendOpenApiYaml(res) {
   res.end(yaml);
 }
 
+async function sendPublicFile(res, filename) {
+  const contentTypes = {
+    '.html': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'text/javascript; charset=utf-8',
+    '.svg': 'image/svg+xml'
+  };
+  const safeName = path.basename(filename);
+  const file = path.join(PUBLIC_DIR, safeName);
+  const body = await readFile(file);
+  res.writeHead(200, {
+    'Content-Type': contentTypes[path.extname(safeName)] ?? 'application/octet-stream',
+    'Content-Length': body.length,
+    'Cache-Control': safeName === 'index.html' ? 'no-cache' : 'public, max-age=300'
+  });
+  res.end(body);
+}
+
 function applyCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', CORS_ALLOWED_METHODS);
@@ -372,6 +442,7 @@ function createJobRecord(payload) {
     result: null,
     error: null,
     cancellation_requested: false,
+    execution: createExecution(payload.script),
     logs: []
   };
 
@@ -391,7 +462,8 @@ function summarizeJob(job) {
     started_at: job.started_at,
     finished_at: job.finished_at,
     error: job.error,
-    result: job.result
+    result: job.result,
+    execution: job.execution
   };
 }
 
@@ -417,11 +489,12 @@ function removeFromQueue(jobId) {
   if (index >= 0) state.queue.splice(index, 1);
 }
 
-function createApiError(code, message, statusCode = 400, retryable = false) {
+function createApiError(code, message, statusCode = 400, retryable = false, details = undefined) {
   const error = new Error(message);
   error.code = code;
   error.statusCode = statusCode;
   error.retryable = retryable;
+  error.details = details;
   return error;
 }
 
@@ -429,80 +502,98 @@ function isRetryableError(error) {
   return Boolean(error?.retryable);
 }
 
-function delay(ms, signal) {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(signal.reason || createApiError('CANCELLED', 'Operation cancelled', 499, false));
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, ms);
-
-    const onAbort = () => {
-      cleanup();
-      reject(signal.reason || createApiError('CANCELLED', 'Operation cancelled', 499, false));
-    };
-
-    function cleanup() {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', onAbort);
-    }
-
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-async function executeStep(step, signal) {
-  const action = step?.action || step?.type || 'noop';
-  const params = step?.params || {};
-  const duration = Number.isFinite(step?.timeout_ms) ? step.timeout_ms : Number(step?.duration_ms || 100);
-
-  switch (action) {
-    case 'check_ip': {
-      if (params.expected_ip && params.current_ip && params.expected_ip !== params.current_ip) {
-        throw createApiError('IP_MISMATCH', `Expected IP ${params.expected_ip}, got ${params.current_ip}`, 400, false);
-      }
-      break;
-    }
-    case 'find_files': {
-      if (!Array.isArray(params.files) || params.files.length === 0) {
-        throw createApiError('FILE_NOT_FOUND', 'No matching files found', 404, false);
-      }
-      break;
-    }
-    case 'validate_report': {
-      if (params.valid === false || params.passed === false) {
-        throw createApiError('VALIDATION_ERROR', 'Report validation failed', 422, false);
-      }
-      break;
-    }
-    case 'auth_ecp': {
-      if (params.plugin_running === false) {
-        throw createApiError('PLUGIN_NOT_RUNNING', 'SBIIS plugin is not running', 503, true);
-      }
-      break;
-    }
-    case 'upload_files':
-    case 'launch_browser':
-    case 'navigate':
-    case 'submit_if_valid':
-    case 'move_files':
-    case 'noop':
-      break;
-    default:
-      if (step?.action) {
-        throw createApiError('UNKNOWN_ACTION', `Unsupported action: ${action}`, 400, false);
-      }
+function applyInterpreterEvent(job, event) {
+  const execution = job.execution;
+  if (event.type === 'script_started') {
+    execution.status = 'running';
+    execution.started_at = event.ts;
+    execution.finished_at = null;
+    execution.duration_ms = null;
+    execution.context = null;
+    execution.current_step = null;
+    execution.completed_steps = 0;
+    execution.percent = 0;
+    execution.steps.forEach((step) => Object.assign(step, {
+      status: 'pending',
+      attempt: null,
+      started_at: null,
+      finished_at: null,
+      duration_ms: null,
+      params: null,
+      output: null,
+      error: null
+    }));
+    return;
   }
 
-  await delay(duration, signal);
+  if (event.type.startsWith('step_')) {
+    const step = execution.steps[event.step_index];
+    if (!step) return;
+    execution.current_step = event.step_index;
+    if (event.type === 'step_started') {
+      Object.assign(step, {
+        status: 'running',
+        attempt: job.attempts,
+        started_at: event.ts,
+        finished_at: null,
+        params: event.params,
+        output: null,
+        error: null
+      });
+      logJob(job, 'info', `Step ${event.step_index + 1}/${execution.total_steps} started`, {
+        action: event.action,
+        step_id: event.step_id,
+        params: event.params
+      });
+    } else if (event.type === 'step_completed') {
+      Object.assign(step, {
+        status: 'success',
+        finished_at: event.ts,
+        duration_ms: event.duration_ms,
+        output: event.output
+      });
+      execution.completed_steps = execution.steps.filter((item) => item.status === 'success').length;
+      execution.percent = execution.total_steps === 0
+        ? 100
+        : Math.round((execution.completed_steps / execution.total_steps) * 100);
+      logJob(job, 'info', `Step ${event.step_index + 1}/${execution.total_steps} completed`, {
+        action: event.action,
+        step_id: event.step_id,
+        duration_ms: event.duration_ms,
+        output: event.output
+      });
+    } else if (event.type === 'step_failed') {
+      Object.assign(step, {
+        status: 'failed',
+        finished_at: event.ts,
+        duration_ms: event.duration_ms,
+        error: event.error
+      });
+      execution.status = 'failed';
+      logJob(job, 'error', `Step ${event.step_index + 1}/${execution.total_steps} failed`, {
+        action: event.action,
+        step_id: event.step_id,
+        duration_ms: event.duration_ms,
+        error: event.error
+      });
+    }
+    return;
+  }
+
+  if (event.type === 'script_completed') {
+    execution.status = 'success';
+    execution.current_step = null;
+    execution.completed_steps = execution.total_steps;
+    execution.percent = 100;
+    execution.finished_at = event.ts;
+    execution.duration_ms = event.result.duration_ms;
+    execution.context = event.result.context;
+  }
 }
 
 async function executeJob(job) {
   const controller = new AbortController();
+  state.controllers.set(job.job_id, controller);
   const timeoutTimer = setTimeout(() => {
     controller.abort(createApiError('TIMEOUT_ERROR', `Job timed out after ${job.timeout_ms}ms`, 408, true));
   }, job.timeout_ms);
@@ -519,31 +610,23 @@ async function executeJob(job) {
     const simulatedOutcome = script.simulate?.outcome || 'success';
     const simulatedDelay = Number.isFinite(script.simulate?.delay_ms) ? script.simulate.delay_ms : 250;
 
-    if (steps.length === 0) {
-      await delay(simulatedDelay, controller.signal);
-    }
+    const interpreterResult = await executeScript({
+      script: { ...script, steps },
+      signal: controller.signal,
+      registry: stepRegistry,
+      defaultStepTimeoutMs: Math.min(job.timeout_ms, 10_000),
+      initialContext: job.request.context ?? {},
+      onEvent: (event) => applyInterpreterEvent(job, event)
+    });
 
-    for (let index = 0; index < steps.length; index += 1) {
-      if (job.cancellation_requested) {
-        throw createApiError('CANCELLED', 'Job cancelled by user', 499, false);
-      }
-
-      const step = steps[index];
-      logJob(job, 'info', `Step ${index + 1}/${steps.length} started`, {
-        action: step?.action || step?.type || 'noop'
-      });
-      await executeStep(step, controller.signal);
-      logJob(job, 'info', `Step ${index + 1}/${steps.length} completed`, {
-        action: step?.action || step?.type || 'noop'
-      });
-    }
+    if (steps.length === 0 && simulatedDelay > 0) await abortableDelay(simulatedDelay, controller.signal);
 
     if (simulatedOutcome === 'validation_failed') {
       throw createApiError('VALIDATION_ERROR', 'Simulated validation failure', 422, false);
     }
 
     if (simulatedOutcome === 'timeout') {
-      await delay(job.timeout_ms + 50, controller.signal);
+      await abortableDelay(job.timeout_ms + 50, controller.signal);
     }
 
     if (simulatedOutcome === 'retry_once' && job.attempts === 1) {
@@ -553,7 +636,7 @@ async function executeJob(job) {
     job.status = 'success';
     job.result = {
       message: 'Job completed successfully',
-      steps_executed: steps.length,
+      ...interpreterResult,
       simulated_outcome: simulatedOutcome
     };
     job.finished_at = nowIso();
@@ -562,6 +645,8 @@ async function executeJob(job) {
     if (error?.code === 'CANCELLED') {
       job.status = 'cancelled';
       job.error = { code: error.code, message: error.message };
+      job.execution.status = 'cancelled';
+      job.execution.finished_at = nowIso();
       job.finished_at = nowIso();
       logJob(job, 'warn', 'Job cancelled', job.error);
       return;
@@ -569,7 +654,13 @@ async function executeJob(job) {
 
     if (error?.code === 'TIMEOUT_ERROR') {
       job.status = 'timeout';
-      job.error = { code: error.code, message: error.message };
+      job.error = {
+        code: error.code,
+        message: error.message,
+        ...(error?.details === undefined ? {} : { details: error.details })
+      };
+      job.execution.status = 'timeout';
+      job.execution.finished_at = nowIso();
       job.finished_at = nowIso();
       logJob(job, 'error', 'Job timed out', job.error);
       return;
@@ -578,8 +669,22 @@ async function executeJob(job) {
     if (job.attempts < job.max_attempts && isRetryableError(error)) {
       job.status = 'retrying';
       job.error = { code: error.code, message: error.message };
+      job.execution.status = 'retrying';
       logJob(job, 'warn', 'Job failed, scheduling retry', job.error);
-      await delay(state.config.retry_policy.backoff_ms, controller.signal);
+      try {
+        await abortableDelay(job.request.retry_policy?.backoff_ms ?? state.config.retry_policy.backoff_ms, controller.signal);
+      } catch (backoffError) {
+        job.status = backoffError?.code === 'TIMEOUT_ERROR' ? 'timeout' : 'cancelled';
+        job.execution.status = job.status;
+        job.error = {
+          code: backoffError?.code || 'CANCELLED',
+          message: backoffError?.message || 'Job cancelled during retry backoff'
+        };
+        job.finished_at = nowIso();
+        job.execution.finished_at = job.finished_at;
+        logJob(job, job.status === 'timeout' ? 'error' : 'warn', `Job ${job.status} during retry backoff`, job.error);
+        return;
+      }
       job.status = 'queued';
       enqueue(job);
       schedulePersist();
@@ -587,15 +692,21 @@ async function executeJob(job) {
       return;
     }
 
-    job.status = error?.code === 'VALIDATION_ERROR' ? 'validation_failed' : 'failed';
+    job.status = error?.code === 'VALIDATION_ERROR' || error?.code === 'INVALID_SCRIPT'
+      ? 'validation_failed'
+      : 'failed';
     job.error = {
       code: error?.code || 'INTERNAL_ERROR',
-      message: error?.message || 'Unexpected failure'
+      message: error?.message || 'Unexpected failure',
+      ...(error?.details === undefined ? {} : { details: error.details })
     };
+    job.execution.status = job.status;
+    job.execution.finished_at = nowIso();
     job.finished_at = nowIso();
     logJob(job, 'error', 'Job failed', job.error);
   } finally {
     clearTimeout(timeoutTimer);
+    state.controllers.delete(job.job_id);
   }
 }
 
@@ -717,6 +828,34 @@ function validateConfigPatch(payload) {
   return next;
 }
 
+function validateJobPayload(payload) {
+  const errors = [];
+  if (payload.priority !== undefined && !Number.isFinite(payload.priority)) {
+    errors.push({ path: 'priority', message: 'priority must be a finite number' });
+  }
+  if (payload.timeout_ms !== undefined && (!Number.isInteger(payload.timeout_ms) || payload.timeout_ms < 1)) {
+    errors.push({ path: 'timeout_ms', message: 'timeout_ms must be a positive integer' });
+  }
+  if (payload.context !== undefined && (!payload.context || typeof payload.context !== 'object' || Array.isArray(payload.context))) {
+    errors.push({ path: 'context', message: 'context must be an object' });
+  }
+  if (payload.retry_policy !== undefined) {
+    if (!payload.retry_policy || typeof payload.retry_policy !== 'object' || Array.isArray(payload.retry_policy)) {
+      errors.push({ path: 'retry_policy', message: 'retry_policy must be an object' });
+    } else {
+      if (payload.retry_policy.max_attempts !== undefined
+        && (!Number.isInteger(payload.retry_policy.max_attempts) || payload.retry_policy.max_attempts < 1)) {
+        errors.push({ path: 'retry_policy.max_attempts', message: 'max_attempts must be a positive integer' });
+      }
+      if (payload.retry_policy.backoff_ms !== undefined
+        && (!Number.isInteger(payload.retry_policy.backoff_ms) || payload.retry_policy.backoff_ms < 0)) {
+        errors.push({ path: 'retry_policy.backoff_ms', message: 'backoff_ms must be a non-negative integer' });
+      }
+    }
+  }
+  return errors;
+}
+
 const server = http.createServer(async (req, res) => {
   const requestId = randomUUID();
   res.setHeader('X-Request-Id', requestId);
@@ -728,6 +867,16 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/health') {
       sendJson(res, 200, { status: 'ok', service: 'script-factory', request_id: requestId });
+      return;
+    }
+
+    if (method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
+      await sendPublicFile(res, 'index.html');
+      return;
+    }
+
+    if (method === 'GET' && (pathname === '/app.js' || pathname === '/styles.css')) {
+      await sendPublicFile(res, pathname.slice(1));
       return;
     }
 
@@ -763,6 +912,11 @@ const server = http.createServer(async (req, res) => {
 
     requireApiKey(req);
 
+    if (method === 'GET' && resourcePath === '/interpreter/actions') {
+      sendJson(res, 200, { actions: stepRegistry.actions() });
+      return;
+    }
+
     if (method === 'GET' && resourcePath === '/jobs') {
       const status = requestUrl.searchParams.get('status');
       const limit = Math.max(1, Number(requestUrl.searchParams.get('limit') || 100));
@@ -792,6 +946,17 @@ const server = http.createServer(async (req, res) => {
       if (payload.script !== undefined && (typeof payload.script !== 'object' || payload.script === null)) {
         throw createApiError('INVALID_PAYLOAD', 'script must be an object', 400, false);
       }
+      const payloadErrors = validateJobPayload(payload);
+      if (payloadErrors.length > 0) {
+        throw createApiError('INVALID_PAYLOAD', 'Job validation failed', 400, false, { errors: payloadErrors });
+      }
+      const script = payload.script ?? { steps: [] };
+      const scriptErrors = validateScript(script, stepRegistry);
+      if (scriptErrors.length > 0) {
+        throw createApiError('INVALID_SCRIPT', 'Script validation failed', 400, false, {
+          errors: scriptErrors
+        });
+      }
 
       const existing = (typeof explicitUid === 'string' && explicitUid.trim())
         ? [...state.jobs.values()].find((job) => job.uid === uid)
@@ -803,7 +968,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const job = createJobRecord({ ...payload, uid });
+      const job = createJobRecord({ ...payload, script, uid });
       state.jobs.set(job.job_id, job);
       enqueue(job);
       drainQueue();
@@ -849,6 +1014,8 @@ const server = http.createServer(async (req, res) => {
         job.status = 'cancelled';
         job.finished_at = nowIso();
         job.error = { code: 'CANCELLED', message: 'Job cancelled before execution' };
+        job.execution.status = 'cancelled';
+        job.execution.finished_at = job.finished_at;
         logJob(job, 'warn', 'Job cancelled before execution', job.error);
         schedulePersist();
         sendJson(res, 200, { job: summarizeJob(job), cancelled: true });
@@ -857,6 +1024,7 @@ const server = http.createServer(async (req, res) => {
 
       if (job.status === 'running' || job.status === 'retrying') {
         job.cancellation_requested = true;
+        state.controllers.get(job.job_id)?.abort(createApiError('CANCELLED', 'Job cancelled by user', 499, false));
         logJob(job, 'warn', 'Cancellation requested by user');
         schedulePersist();
         sendJson(res, 202, { job: summarizeJob(job), cancelled: false, message: 'Cancellation requested' });
@@ -895,7 +1063,8 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, statusCode, {
       error: {
         code: error?.code || 'INTERNAL_ERROR',
-        message: error?.message || 'Unexpected error'
+        message: error?.message || 'Unexpected error',
+        ...(error?.details === undefined ? {} : { details: error.details })
       }
     });
   }

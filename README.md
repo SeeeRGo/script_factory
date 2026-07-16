@@ -1,6 +1,6 @@
 # Script Factory
 
-Minimal MVP API for the distributed script execution service described in `plan-realizacii.md`.
+Stage 2 MVP for the distributed script execution service described in `plan-realizacii.md`. It includes the local priority queue, persistent jobs, a registry-driven JSON-steps interpreter, normalized execution errors, and a browser view of every scripting step.
 
 ## Start locally
 
@@ -11,6 +11,7 @@ npm start
 Requires Node.js 24+.
 
 The API listens on `http://localhost:3000`.
+The Execution Studio is available at `http://localhost:3000/`.
 Swagger UI is available at `http://localhost:3000/docs`.
 
 The Docker Compose Swagger UI helper is available at `http://localhost:3002`.
@@ -23,6 +24,69 @@ docker compose up --build
 ```
 
 State is persisted to `data/state.sqlite` locally and `/app/data/state.sqlite` in Docker.
+
+## Execution Studio
+
+Open `/` to edit a JSON job, preview its step graph, start it, and follow live progress. The view shows resolved step parameters, status, timing, attempts, normalized errors, recent jobs, and interpreter logs. It uses the same API key and same-origin API as the service, so it also works in the single Railway container.
+
+The default `dev-secret` is prefilled for local development. For other environments, enter the configured `API_KEY`; it is stored only in the current browser's local storage.
+
+## JSON interpreter
+
+The interpreter validates scripts before they enter the queue. Each step supports:
+
+- `id`: optional stable name used in logs and visualization;
+- `action`: a registered action name;
+- `params`: action parameters, including context expressions such as `{{root_dir}}` and `{{found_files}}`;
+- `timeout_ms`: optional per-step timeout;
+- `duration_ms`: mock adapter duration for Stage 2 demonstrations and tests.
+
+Registered actions are `noop`, `check_ip`, `launch_browser`, `navigate`, `auth_ecp`, `find_files`, `upload_files`, `validate_report`, `submit_if_valid`, and `move_files`. `GET /api/v2/interpreter/actions` returns the runtime registry.
+
+Exact context expressions preserve their JSON type, so `"{{found_files}}"` resolves to an array rather than a string. Step outputs are merged into the context for subsequent steps. The execution result returns the final context.
+
+The normalized workflow errors are `IP_MISMATCH`, `FILE_NOT_FOUND`, `AUTH_ERROR`, `UPLOAD_ERROR`, `VALIDATION_ERROR`, `TIMEOUT_ERROR`, and `PLUGIN_NOT_RUNNING`.
+
+Example:
+
+```json
+{
+  "context": {
+    "root_dir": "/reports/incoming",
+    "loaded_dir": "/reports/loaded"
+  },
+  "script": {
+    "steps": [
+      {
+        "action": "find_files",
+        "params": {
+          "directory": "{{root_dir}}",
+          "files": ["FNS_2026.xml"]
+        }
+      },
+      {
+        "action": "upload_files",
+        "params": { "files": "{{found_files}}" }
+      },
+      {
+        "action": "move_files",
+        "params": {
+          "files": "{{found_files}}",
+          "destination": "{{loaded_dir}}"
+        }
+      }
+    ]
+  }
+}
+```
+
+## Tests
+
+```bash
+npm test
+```
+
+The suite covers the step contract and registry, typed parameter substitution, successful context flow, required error codes, per-step timeout, API validation, exposed execution state, logs, and root UI serving.
 
 ## Railway
 
@@ -54,6 +118,7 @@ Swagger UI in `docker compose` preauthorizes the default dev key for convenience
 
 - `GET /openapi.yaml`
 - `GET /docs`
+- `GET /` (Execution Studio)
 - `GET /health`
 - `GET /api/v2/health`
 - `POST /api/v2/jobs`
@@ -61,6 +126,7 @@ Swagger UI in `docker compose` preauthorizes the default dev key for convenience
 - `GET /api/v2/jobs/{job_id}`
 - `POST /api/v2/jobs/{job_id}/cancel`
 - `GET /api/v2/jobs/{job_id}/logs`
+- `GET /api/v2/interpreter/actions`
 - `GET /api/v2/system/resources`
 - `GET /api/v2/system/config`
 - `PUT /api/v2/system/config`

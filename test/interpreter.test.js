@@ -1,0 +1,125 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  ERROR_CODES,
+  createDefaultStepRegistry,
+  executeScript,
+  resolveTemplates,
+  validateScript
+} from '../src/interpreter.js';
+
+test('the default registry contains every Stage 2 action', () => {
+  assert.deepEqual(createDefaultStepRegistry().actions(), [
+    'noop',
+    'check_ip',
+    'launch_browser',
+    'navigate',
+    'auth_ecp',
+    'find_files',
+    'upload_files',
+    'validate_report',
+    'submit_if_valid',
+    'move_files'
+  ]);
+});
+
+test('script validation reports contract errors with JSON paths', () => {
+  const errors = validateScript({
+    steps: [
+      { action: 'missing_action' },
+      { action: 'navigate', params: [] },
+      { action: 'noop', timeout_ms: 0 }
+    ],
+    default_step_timeout_ms: 0
+  });
+
+  assert.deepEqual(errors, [
+    { path: 'script.default_step_timeout_ms', message: 'default_step_timeout_ms must be a positive integer' },
+    { path: 'script.steps[0].action', message: 'unsupported action: missing_action' },
+    { path: 'script.steps[1].params', message: 'params must be an object' },
+    { path: 'script.steps[2].timeout_ms', message: 'timeout_ms must be a positive integer' }
+  ]);
+});
+
+test('parameter templates preserve exact values and interpolate nested context', () => {
+  const context = {
+    root_dir: '/reports/incoming',
+    found_files: ['FNS.xml', 'SFR.xml'],
+    prefixes: ['FNS', 'SFR'],
+    nested: { value: 'ready' }
+  };
+  const resolved = resolveTemplates({
+    directory: '{{root_dir}}',
+    files: '{{found_files}}',
+    prefixes: '{{prefixes}}',
+    label: 'State: {{nested.value}}',
+    nested: ['{{root_dir}}']
+  }, context);
+
+  assert.equal(resolved.directory, '/reports/incoming');
+  assert.deepEqual(resolved.files, ['FNS.xml', 'SFR.xml']);
+  assert.deepEqual(resolved.prefixes, ['FNS', 'SFR']);
+  assert.equal(resolved.label, 'State: ready');
+  assert.deepEqual(resolved.nested, ['/reports/incoming']);
+});
+
+test('a complete report workflow passes context between steps and emits lifecycle events', async () => {
+  const events = [];
+  const result = await executeScript({
+    script: {
+      steps: [
+        { action: 'check_ip', params: { expected_ip: '10.0.0.5', current_ip: '10.0.0.5' }, duration_ms: 1 },
+        { action: 'launch_browser', params: { browser: 'chromium' }, duration_ms: 1 },
+        { action: 'navigate', params: { url: 'https://online.sbis.ru' }, duration_ms: 1 },
+        { action: 'auth_ecp', params: { plugin_running: true }, duration_ms: 1 },
+        { action: 'find_files', params: { directory: '{{root_dir}}', files: ['FNS.xml'] }, duration_ms: 1 },
+        { action: 'upload_files', params: { files: '{{found_files}}' }, duration_ms: 1 },
+        { action: 'validate_report', params: { valid: true }, duration_ms: 1 },
+        { action: 'submit_if_valid', params: {}, duration_ms: 1 },
+        { action: 'move_files', params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }, duration_ms: 1 }
+      ]
+    },
+    initialContext: { root_dir: '/incoming', loaded_dir: '/loaded' },
+    onEvent: (event) => events.push(event)
+  });
+
+  assert.equal(result.steps_executed, 9);
+  assert.equal(result.context.browser_launched, true);
+  assert.equal(result.context.current_url, 'https://online.sbis.ru');
+  assert.equal(result.context.authenticated, true);
+  assert.deepEqual(result.context.found_files, ['FNS.xml']);
+  assert.deepEqual(result.context.uploaded_files, ['FNS.xml']);
+  assert.equal(result.context.report_valid, true);
+  assert.equal(result.context.submitted, true);
+  assert.equal(result.context.loaded_dir, '/loaded');
+  assert.equal(events[0].type, 'script_started');
+  assert.equal(events.at(-1).type, 'script_completed');
+  assert.equal(events.filter((event) => event.type === 'step_started').length, 9);
+  assert.equal(events.filter((event) => event.type === 'step_completed').length, 9);
+});
+
+for (const scenario of [
+  ['check_ip', { expected_ip: '1.1.1.1', current_ip: '2.2.2.2' }, ERROR_CODES.IP_MISMATCH],
+  ['find_files', { files: [] }, ERROR_CODES.FILE_NOT_FOUND],
+  ['auth_ecp', { authenticated: false }, ERROR_CODES.AUTH_ERROR],
+  ['auth_ecp', { plugin_running: false }, ERROR_CODES.PLUGIN_NOT_RUNNING],
+  ['upload_files', { files: ['a.xml'], upload_failed: true }, ERROR_CODES.UPLOAD_ERROR],
+  ['validate_report', { valid: false }, ERROR_CODES.VALIDATION_ERROR]
+]) {
+  const [action, params, expectedCode] = scenario;
+  test(`${action} normalizes failures as ${expectedCode}`, async () => {
+    await assert.rejects(
+      executeScript({ script: { steps: [{ action, params, duration_ms: 0 }] } }),
+      (error) => error.code === expectedCode && typeof error.retryable === 'boolean'
+    );
+  });
+}
+
+test('per-step timeout aborts the handler with TIMEOUT_ERROR', async () => {
+  await assert.rejects(
+    executeScript({
+      script: { steps: [{ action: 'noop', duration_ms: 50, timeout_ms: 5 }] }
+    }),
+    (error) => error.code === ERROR_CODES.TIMEOUT_ERROR && error.retryable === true
+  );
+});

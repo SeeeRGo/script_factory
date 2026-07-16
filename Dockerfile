@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY package.json ./
 COPY src ./src
+COPY public ./public
 COPY openapi.yaml ./
 
 RUN mkdir -p /app/data

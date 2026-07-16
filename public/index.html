@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Build, run, and observe Script Factory JSON workflows.">
+    <title>Script Factory · Execution Studio</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="Script Factory home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>Script Factory</span>
+      </a>
+      <nav>
+        <span class="connection" id="connection"><i></i> Connecting</span>
+        <a href="/docs">API docs ↗</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">JSON STEP INTERPRETER · STAGE 2</p>
+          <h1>See every step.<br><em>Understand every run.</em></h1>
+        </div>
+        <p class="hero-copy">Compose an automation script, follow its context through the interpreter, and inspect normalized failures without leaving the browser.</p>
+      </section>
+
+      <section class="toolbar" aria-label="Connection settings">
+        <label for="api-key">API key</label>
+        <input id="api-key" type="password" autocomplete="off" value="dev-secret">
+        <button class="text-button" id="toggle-key" type="button">Show</button>
+        <span class="toolbar-note">Stored in this browser only</span>
+      </section>
+
+      <section class="studio">
+        <div class="panel editor-panel">
+          <div class="panel-heading">
+            <div>
+              <span class="panel-index">01</span>
+              <h2>Script</h2>
+            </div>
+            <button class="text-button" id="format" type="button">Format JSON</button>
+          </div>
+          <div class="editor-shell">
+            <div class="line-numbers" id="line-numbers" aria-hidden="true">1</div>
+            <textarea id="script-editor" spellcheck="false" aria-label="JSON job script"></textarea>
+          </div>
+          <div class="editor-footer">
+            <span id="editor-state" class="editor-state">Ready</span>
+            <div class="button-row">
+              <button class="secondary-button" id="preview" type="button">Preview flow</button>
+              <button class="primary-button" id="run" type="button"><span>Run script</span><b>→</b></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel flow-panel">
+          <div class="panel-heading">
+            <div>
+              <span class="panel-index">02</span>
+              <h2>Execution flow</h2>
+            </div>
+            <span class="status-pill idle" id="job-status">PREVIEW</span>
+          </div>
+
+          <div class="run-summary">
+            <div><span>Progress</span><strong id="progress-value">0%</strong></div>
+            <div><span>Steps</span><strong id="step-count">0 / 0</strong></div>
+            <div><span>Attempt</span><strong id="attempt-count">—</strong></div>
+            <div><span>Duration</span><strong id="duration-value">—</strong></div>
+          </div>
+          <div class="progress-track"><i id="progress-bar"></i></div>
+
+          <div class="flow" id="flow" aria-live="polite"></div>
+          <div class="empty-state" id="flow-empty">
+            <span>{ }</span>
+            <h3>Your workflow will appear here</h3>
+            <p>Preview or run the JSON script to map its steps.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="lower-grid">
+        <div class="panel jobs-panel">
+          <div class="panel-heading">
+            <div><span class="panel-index">03</span><h2>Recent runs</h2></div>
+            <button class="text-button" id="refresh-jobs" type="button">Refresh</button>
+          </div>
+          <div id="jobs" class="jobs-list"><p class="muted">No runs loaded.</p></div>
+        </div>
+        <div class="panel logs-panel">
+          <div class="panel-heading">
+            <div><span class="panel-index">04</span><h2>Event log</h2></div>
+            <span id="selected-job" class="selected-job">No run selected</span>
+          </div>
+          <div id="logs" class="logs"><p class="muted">Events from the selected run will appear here.</p></div>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
