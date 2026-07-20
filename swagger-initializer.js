@@ -1,4 +1,9 @@
 window.onload = function() {
+  const localization = document.createElement('script');
+  localization.src = '/swagger-ru.js';
+  localization.onload = () => window.installSwaggerRu();
+  document.head.appendChild(localization);
+
   window.ui = SwaggerUIBundle({
     url: '/spec/openapi.yaml',
     dom_id: '#swagger-ui',

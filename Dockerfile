@@ -6,6 +6,7 @@ COPY package.json ./
 COPY src ./src
 COPY public ./public
 COPY openapi.yaml ./
+COPY swagger-ru.js ./
 
 RUN mkdir -p /app/data
 

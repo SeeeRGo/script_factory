@@ -16,4 +16,5 @@ services:
       - "33002:8080"
     volumes:
       - ./swagger-initializer.js:/usr/share/nginx/html/swagger-initializer.js:ro
+      - ./swagger-ru.js:/usr/share/nginx/html/swagger-ru.js:ro
       - ./openapi.yaml:/usr/share/nginx/html/spec/openapi.yaml:ro

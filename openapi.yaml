@@ -1,12 +1,22 @@
 openapi: 3.0.3
 info:
-  title: Script Factory API
+  title: API «Фабрика сценариев»
+  description: Управление очередью и выполнением JSON-сценариев.
   version: 0.1.0
 servers:
   - url: http://localhost:3000/api/v2
-    description: Local development server
+    description: Локальный сервер разработки
   - url: /api/v2
-    description: Relative path for same-origin deployment
+    description: Относительный путь для развёртывания на том же домене
+tags:
+  - name: Сервис
+    description: Состояние сервиса
+  - name: Интерпретатор
+    description: Возможности интерпретатора JSON-шагов
+  - name: Задания
+    description: Управление заданиями и их выполнением
+  - name: Система
+    description: Ресурсы и настройки системы
 components:
   securitySchemes:
     ApiKeyAuth:
@@ -39,16 +49,16 @@ components:
         params:
           type: object
           additionalProperties: true
-          description: Action parameters. Values may contain context templates such as `{{root_dir}}` or `{{found_files}}`.
+          description: Параметры действия. Поддерживаются шаблоны контекста `{{root_dir}}` и `{{found_files}}`.
         timeout_ms:
           type: integer
           minimum: 1
-          description: Maximum execution time for this step.
+          description: Максимальное время выполнения шага.
           example: 5000
         duration_ms:
           type: number
           minimum: 0
-          description: Mock action duration used by the Stage 2 adapter.
+          description: Длительность тестового действия для демо этапа 2.
           example: 250
     JsonScript:
       type: object
@@ -57,7 +67,7 @@ components:
         context:
           type: object
           additionalProperties: true
-          description: Script-local initial context.
+          description: Начальный контекст сценария.
         default_step_timeout_ms:
           type: integer
           minimum: 1
@@ -71,21 +81,21 @@ components:
       properties:
         uid:
           type: string
-          description: Optional idempotency identifier. Idempotency-Key is also supported.
+          description: Необязательный идентификатор идемпотентности. Также поддерживается Idempotency-Key.
         priority:
           type: integer
-          description: Lower value means higher priority.
+          description: Чем меньше значение, тем выше приоритет.
           example: 100
         timeout_ms:
           type: integer
-          description: Per-job timeout in milliseconds.
+          description: Тайм-аут задания в миллисекундах.
           example: 30000
         retry_policy:
           $ref: '#/components/schemas/RetryPolicy'
         context:
           type: object
           additionalProperties: true
-          description: Initial interpreter context. Overrides matching script context values.
+          description: Начальный контекст интерпретатора, переопределяющий одноимённые значения сценария.
         script:
           $ref: '#/components/schemas/JsonScript'
     ExecutionStep:
@@ -236,17 +246,19 @@ security:
 paths:
   /health:
     get:
-      summary: Health check
+      tags: [Сервис]
+      summary: Проверить состояние сервиса
       security: []
       responses:
         "200":
-          description: OK
+          description: Сервис доступен
   /interpreter/actions:
     get:
-      summary: List registered interpreter actions
+      tags: [Интерпретатор]
+      summary: Получить зарегистрированные действия
       responses:
         "200":
-          description: Registered action names
+          description: Названия зарегистрированных действий
           content:
             application/json:
               schema:
@@ -258,28 +270,32 @@ paths:
                       type: string
   /jobs:
     get:
-      summary: List jobs
+      tags: [Задания]
+      summary: Получить список заданий
       parameters:
         - in: query
           name: status
+          description: Фильтр по статусу задания.
           schema:
             type: string
         - in: query
           name: limit
+          description: Максимальное количество заданий в ответе.
           schema:
             type: integer
       responses:
         "200":
-          description: Job collection
+          description: Список заданий
     post:
-      summary: Create job
+      tags: [Задания]
+      summary: Создать задание
       parameters:
         - in: header
           name: Idempotency-Key
           required: false
           schema:
             type: string
-          description: Optional idempotency key for retry-safe job creation.
+          description: Необязательный ключ идемпотентности для безопасного повторного создания задания.
           example: job-2026-06-08-001
       requestBody:
         required: true
@@ -307,25 +323,27 @@ paths:
                       files: "{{found_files}}"
       responses:
         "201":
-          description: Created
+          description: Задание создано
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/JobResponse'
         "400":
-          description: Invalid job or script contract
+          description: Некорректный контракт задания или сценария
   /jobs/{job_id}:
     get:
-      summary: Get job
+      tags: [Задания]
+      summary: Получить задание
       parameters:
         - in: path
           name: job_id
+          description: Идентификатор задания.
           required: true
           schema:
             type: string
       responses:
         "200":
-          description: Job
+          description: Задание
           content:
             application/json:
               schema:
@@ -335,28 +353,32 @@ paths:
                     $ref: '#/components/schemas/Job'
   /jobs/{job_id}/cancel:
     post:
-      summary: Cancel job
+      tags: [Задания]
+      summary: Отменить задание
       parameters:
         - in: path
           name: job_id
+          description: Идентификатор задания.
           required: true
           schema:
             type: string
       responses:
         "200":
-          description: Cancelled
+          description: Задание отменено
   /jobs/{job_id}/logs:
     get:
-      summary: Get job logs
+      tags: [Задания]
+      summary: Получить журнал задания
       parameters:
         - in: path
           name: job_id
+          description: Идентификатор задания.
           required: true
           schema:
             type: string
       responses:
         "200":
-          description: Logs
+          description: Журнал задания
           content:
             application/json:
               schema:
@@ -370,18 +392,21 @@ paths:
                       $ref: '#/components/schemas/JobLog'
   /system/resources:
     get:
-      summary: Get system resources
+      tags: [Система]
+      summary: Получить сведения о ресурсах системы
       responses:
         "200":
-          description: Resources
+          description: Ресурсы системы
   /system/config:
     get:
-      summary: Get config
+      tags: [Система]
+      summary: Получить настройки
       responses:
         "200":
-          description: Config
+          description: Настройки
     put:
-      summary: Update config
+      tags: [Система]
+      summary: Обновить настройки
       requestBody:
         required: true
         content:
@@ -396,4 +421,4 @@ paths:
                 backoff_ms: 500
       responses:
         "200":
-          description: Config
+          description: Обновлённые настройки

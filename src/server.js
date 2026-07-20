@@ -21,6 +21,7 @@ const STATE_FILE = path.join(DATA_DIR, 'state.sqlite');
 const LEGACY_STATE_FILE = path.join(DATA_DIR, 'state.json');
 const OPENAPI_FILE = path.join(process.cwd(), 'openapi.yaml');
 const PUBLIC_DIR = path.join(process.cwd(), 'public');
+const SWAGGER_LOCALIZATION_FILE = path.join(process.cwd(), 'swagger-ru.js');
 const PERSIST_DEBOUNCE_MS = Number(process.env.PERSIST_DEBOUNCE_MS || 50);
 const CORS_ALLOWED_HEADERS = 'X-API-Key, Idempotency-Key, Content-Type, Accept, Origin, Authorization';
 const CORS_ALLOWED_METHODS = 'GET, POST, PUT, OPTIONS';
@@ -342,11 +343,11 @@ function sendText(res, statusCode, text) {
 
 function sendSwaggerUi(res) {
   const body = `<!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Script Factory API Docs</title>
+    <title>Документация API «Фабрика сценариев»</title>
     <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
     <style>
       body {
@@ -358,7 +359,9 @@ function sendSwaggerUi(res) {
   <body>
     <div id="swagger-ui"></div>
     <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script src="/swagger-ru.js"></script>
     <script>
+      window.installSwaggerRu();
       window.ui = SwaggerUIBundle({
         url: '/openapi.yaml',
         dom_id: '#swagger-ui',
@@ -383,6 +386,15 @@ async function sendOpenApiYaml(res) {
     'Access-Control-Allow-Origin': '*'
   });
   res.end(yaml);
+}
+
+async function sendSwaggerLocalization(res) {
+  const script = await readFile(SWAGGER_LOCALIZATION_FILE, 'utf8');
+  res.writeHead(200, {
+    'Content-Type': 'text/javascript; charset=utf-8',
+    'Content-Length': Buffer.byteLength(script)
+  });
+  res.end(script);
 }
 
 async function sendPublicFile(res, filename) {
@@ -882,6 +894,11 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/openapi.yaml') {
       await sendOpenApiYaml(res);
+      return;
+    }
+
+    if (pathname === '/swagger-ru.js') {
+      await sendSwaggerLocalization(res);
       return;
     }
 
