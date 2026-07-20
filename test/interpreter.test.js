@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import {
   ERROR_CODES,
@@ -34,10 +37,10 @@ test('script validation reports contract errors with JSON paths', () => {
   });
 
   assert.deepEqual(errors, [
-    { path: 'script.default_step_timeout_ms', message: 'default_step_timeout_ms must be a positive integer' },
-    { path: 'script.steps[0].action', message: 'unsupported action: missing_action' },
-    { path: 'script.steps[1].params', message: 'params must be an object' },
-    { path: 'script.steps[2].timeout_ms', message: 'timeout_ms must be a positive integer' }
+    { path: 'script.default_step_timeout_ms', message: 'default_step_timeout_ms должен быть положительным целым числом' },
+    { path: 'script.steps[0].action', message: 'неподдерживаемое действие: missing_action' },
+    { path: 'script.steps[1].params', message: 'params должен быть объектом' },
+    { path: 'script.steps[2].timeout_ms', message: 'timeout_ms должен быть положительным целым числом' }
   ]);
 });
 
@@ -96,6 +99,40 @@ test('a complete report workflow passes context between steps and emits lifecycl
   assert.equal(events.at(-1).type, 'script_completed');
   assert.equal(events.filter((event) => event.type === 'step_started').length, 9);
   assert.equal(events.filter((event) => event.type === 'step_completed').length, 9);
+});
+
+test('file steps find reports by prefix and move them on the real filesystem', async (t) => {
+  const workingDirectory = await mkdtemp(path.join(os.tmpdir(), 'script-factory-files-'));
+  t.after(() => rm(workingDirectory, { recursive: true, force: true }));
+  await mkdir(path.join(workingDirectory, 'incoming'));
+  await writeFile(path.join(workingDirectory, 'incoming', 'FNS_report.xml'), '<report />');
+  await writeFile(path.join(workingDirectory, 'incoming', 'ignore.txt'), 'ignore');
+
+  const result = await executeScript({
+    script: {
+      context: {
+        root_dir: './incoming',
+        loaded_dir: './loaded',
+        prefixes: ['FNS']
+      },
+      steps: [
+        {
+          action: 'find_files',
+          duration_ms: 0,
+          params: { directory: '{{root_dir}}', prefixes: '{{prefixes}}' }
+        },
+        {
+          action: 'move_files',
+          duration_ms: 0,
+          params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }
+        }
+      ]
+    },
+    registry: createDefaultStepRegistry({ workingDirectory })
+  });
+
+  assert.equal(result.context.found_files.length, 1);
+  assert.deepEqual(await readdir(path.join(workingDirectory, 'loaded')), ['FNS_report.xml']);
 });
 
 for (const scenario of [

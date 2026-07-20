@@ -1,0 +1,63 @@
+{
+  "priority": 10,
+  "timeout_ms": 15000,
+  "retry_policy": {
+    "max_attempts": 2,
+    "backoff_ms": 500
+  },
+  "script": {
+    "context": {
+      "current_ip": "192.168.1.10",
+      "root_dir": "./demo-data/incoming",
+      "loaded_dir": "./demo-data/loaded",
+      "prefixes": ["FNS", "SFR", "ROSSTAT"]
+    },
+    "steps": [
+      {
+        "action": "check_ip",
+        "timeout_ms": 1000,
+        "delay_ms": 250,
+        "params": { "expected_ip": "192.168.1.10" }
+      },
+      {
+        "action": "find_files",
+        "timeout_ms": 1000,
+        "delay_ms": 250,
+        "params": {
+          "directory": "{{root_dir}}",
+          "prefixes": "{{prefixes}}"
+        }
+      },
+      { "action": "launch_browser", "timeout_ms": 1000, "delay_ms": 250 },
+      {
+        "action": "navigate",
+        "timeout_ms": 1000,
+        "delay_ms": 250,
+        "params": { "url": "https://online.sbis.ru" }
+      },
+      { "action": "auth_ecp", "timeout_ms": 1000, "delay_ms": 250 },
+      {
+        "action": "upload_files",
+        "timeout_ms": 1000,
+        "delay_ms": 250,
+        "params": { "files": "{{found_files}}" }
+      },
+      {
+        "action": "validate_report",
+        "timeout_ms": 1000,
+        "delay_ms": 250,
+        "params": { "valid": true }
+      },
+      { "action": "submit_if_valid", "timeout_ms": 1000, "delay_ms": 250 },
+      {
+        "action": "move_files",
+        "timeout_ms": 1000,
+        "delay_ms": 250,
+        "params": {
+          "files": "{{found_files}}",
+          "destination": "{{loaded_dir}}"
+        }
+      }
+    ]
+  }
+}

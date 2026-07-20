@@ -1,0 +1,30 @@
+{
+  "timeout_ms": 5000,
+  "retry_policy": {
+    "max_attempts": 1,
+    "backoff_ms": 200
+  },
+  "script": {
+    "context": {
+      "current_ip": "192.168.1.10",
+      "root_dir": "./demo-data/empty",
+      "prefixes": ["FNS"]
+    },
+    "steps": [
+      {
+        "action": "check_ip",
+        "delay_ms": 300,
+        "params": { "expected_ip": "192.168.1.10" }
+      },
+      {
+        "action": "find_files",
+        "delay_ms": 300,
+        "params": {
+          "directory": "{{root_dir}}",
+          "prefixes": "{{prefixes}}"
+        }
+      },
+      { "action": "launch_browser" }
+    ]
+  }
+}

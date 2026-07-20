@@ -10,6 +10,13 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "demo:reset": "node demo/reset.mjs",
+    "demo:queue": "node demo/queue.mjs",
+    "demo:success": "node demo/run.mjs success",
+    "demo:error": "node demo/run.mjs file-not-found",
+    "demo:retry": "node demo/run.mjs retry",
+    "demo:timeout": "node demo/run.mjs timeout",
+    "demo:all": "node demo/run.mjs success && node demo/run.mjs file-not-found && node demo/run.mjs retry && node demo/run.mjs timeout"
   }
 }

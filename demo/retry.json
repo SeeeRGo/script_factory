@@ -1,0 +1,22 @@
+{
+  "timeout_ms": 8000,
+  "retry_policy": {
+    "max_attempts": 2,
+    "backoff_ms": 700
+  },
+  "script": {
+    "steps": [
+      { "action": "launch_browser", "delay_ms": 300 },
+      {
+        "action": "auth_ecp",
+        "delay_ms": 300,
+        "params": { "fail_attempts": 1 }
+      },
+      {
+        "action": "navigate",
+        "delay_ms": 300,
+        "params": { "url": "https://online.sbis.ru" }
+      }
+    ]
+  }
+}

@@ -4,8 +4,8 @@ info:
   description: Управление очередью и выполнением JSON-сценариев.
   version: 0.1.0
 servers:
-  - url: http://localhost:3000/api/v2
-    description: Локальный сервер разработки
+  - url: http://localhost:33001/api/v2
+    description: API в Docker Compose
   - url: /api/v2
     description: Относительный путь для развёртывания на том же домене
 tags:
@@ -59,6 +59,11 @@ components:
           type: number
           minimum: 0
           description: Длительность тестового действия для демо этапа 2.
+          example: 250
+        delay_ms:
+          type: number
+          minimum: 0
+          description: Альтернативное имя искусственной задержки для демонстрационных сценариев.
           example: 250
     JsonScript:
       type: object
@@ -170,6 +175,13 @@ components:
           example: VALIDATION_ERROR
         message:
           type: string
+        retryable:
+          type: boolean
+        step_index:
+          type: integer
+          description: Номер шага, начиная с 1.
+        action:
+          type: string
         details:
           type: object
           additionalProperties: true
@@ -186,6 +198,12 @@ components:
         priority:
           type: integer
         attempts:
+          type: integer
+        max_attempts:
+          type: integer
+        backoff_ms:
+          type: integer
+        timeout_ms:
           type: integer
         created_at:
           type: string
@@ -303,24 +321,90 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/JobCreateRequest'
-            example:
-              priority: 100
-              timeout_ms: 30000
-              retry_policy:
-                max_attempts: 2
-                backoff_ms: 500
-              context:
-                root_dir: /reports/incoming
-                loaded_dir: /reports/loaded
-              script:
-                steps:
-                  - action: find_files
-                    params:
-                      directory: "{{root_dir}}"
-                      files: [FNS_2026.xml]
-                  - action: upload_files
-                    params:
-                      files: "{{found_files}}"
+            examples:
+              success:
+                summary: Успешная цепочка с подстановкой параметров
+                value:
+                  priority: 10
+                  timeout_ms: 15000
+                  retry_policy:
+                    max_attempts: 2
+                    backoff_ms: 500
+                  script:
+                    context:
+                      current_ip: 192.168.1.10
+                      root_dir: ./demo-data/incoming
+                      loaded_dir: ./demo-data/loaded
+                      prefixes: [FNS, SFR, ROSSTAT]
+                    steps:
+                      - action: check_ip
+                        delay_ms: 250
+                        params: { expected_ip: 192.168.1.10 }
+                      - action: find_files
+                        delay_ms: 250
+                        params:
+                          directory: "{{root_dir}}"
+                          prefixes: "{{prefixes}}"
+                      - action: launch_browser
+                        delay_ms: 250
+                      - action: navigate
+                        delay_ms: 250
+                        params: { url: https://online.sbis.ru }
+                      - action: auth_ecp
+                        delay_ms: 250
+                      - action: upload_files
+                        delay_ms: 250
+                        params: { files: "{{found_files}}" }
+                      - action: validate_report
+                        delay_ms: 250
+                        params: { valid: true }
+                      - action: submit_if_valid
+                        delay_ms: 250
+                      - action: move_files
+                        delay_ms: 250
+                        params:
+                          files: "{{found_files}}"
+                          destination: "{{loaded_dir}}"
+              fileNotFound:
+                summary: Нормализованная ошибка FILE_NOT_FOUND
+                value:
+                  timeout_ms: 5000
+                  retry_policy: { max_attempts: 1, backoff_ms: 200 }
+                  script:
+                    context:
+                      root_dir: ./demo-data/empty
+                      prefixes: [FNS]
+                    steps:
+                      - action: find_files
+                        delay_ms: 300
+                        params:
+                          directory: "{{root_dir}}"
+                          prefixes: "{{prefixes}}"
+              retry:
+                summary: Временный сбой СБИС Плагина и повторная попытка
+                value:
+                  timeout_ms: 8000
+                  retry_policy: { max_attempts: 2, backoff_ms: 700 }
+                  script:
+                    steps:
+                      - action: launch_browser
+                        delay_ms: 300
+                      - action: auth_ecp
+                        delay_ms: 300
+                        params: { fail_attempts: 1 }
+                      - action: navigate
+                        delay_ms: 300
+                        params: { url: https://online.sbis.ru }
+              timeout:
+                summary: Превышение тайм-аута шага
+                value:
+                  timeout_ms: 3000
+                  retry_policy: { max_attempts: 1, backoff_ms: 200 }
+                  script:
+                    steps:
+                      - action: noop
+                        timeout_ms: 250
+                        delay_ms: 1200
       responses:
         "201":
           description: Задание создано

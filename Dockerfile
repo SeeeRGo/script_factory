@@ -5,10 +5,12 @@ WORKDIR /app
 COPY package.json ./
 COPY src ./src
 COPY public ./public
+COPY demo/fixtures ./demo/fixtures
 COPY openapi.yaml ./
 COPY swagger-ru.js ./
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data /app/demo-data/incoming /app/demo-data/loaded /app/demo-data/empty \
+    && cp -R /app/demo/fixtures/. /app/demo-data/incoming/
 
 ENV NODE_ENV=production
 ENV PORT=3000

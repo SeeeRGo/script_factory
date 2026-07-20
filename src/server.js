@@ -219,7 +219,7 @@ async function readLegacyJsonState() {
     return true;
   } catch (error) {
     if (error?.code === 'ENOENT') return false;
-    throw createApiError('PERSISTENCE_LOAD_FAILED', `Failed to load legacy state: ${error.message}`, 500, false);
+    throw createApiError('PERSISTENCE_LOAD_FAILED', `Не удалось загрузить прежнее состояние: ${error.message}`, 500, false);
   }
 }
 
@@ -410,7 +410,7 @@ async function sendPublicFile(res, filename) {
   res.writeHead(200, {
     'Content-Type': contentTypes[path.extname(safeName)] ?? 'application/octet-stream',
     'Content-Length': body.length,
-    'Cache-Control': safeName === 'index.html' ? 'no-cache' : 'public, max-age=300'
+    'Cache-Control': safeName.endsWith('.html') ? 'no-cache' : 'public, max-age=300'
   });
   res.end(body);
 }
@@ -458,7 +458,7 @@ function createJobRecord(payload) {
     logs: []
   };
 
-  logJob(job, 'info', 'Job created', { uid: job.uid, priority: job.priority });
+  logJob(job, 'info', 'Задание создано', { uid: job.uid, priority: job.priority });
   return job;
 }
 
@@ -469,6 +469,9 @@ function summarizeJob(job) {
     status: job.status,
     priority: job.priority,
     attempts: job.attempts,
+    max_attempts: job.max_attempts,
+    backoff_ms: job.request.retry_policy?.backoff_ms ?? state.config.retry_policy.backoff_ms,
+    timeout_ms: job.timeout_ms,
     created_at: job.created_at,
     updated_at: job.updated_at,
     started_at: job.started_at,
@@ -514,6 +517,17 @@ function isRetryableError(error) {
   return Boolean(error?.retryable);
 }
 
+function serializeJobError(error) {
+  return {
+    code: error?.code || 'INTERNAL_ERROR',
+    message: error?.message || 'Непредвиденная ошибка выполнения',
+    retryable: Boolean(error?.retryable),
+    ...(Number.isInteger(error?.step_index) ? { step_index: error.step_index } : {}),
+    ...(typeof error?.action === 'string' ? { action: error.action } : {}),
+    ...(error?.details === undefined ? {} : { details: error.details })
+  };
+}
+
 function applyInterpreterEvent(job, event) {
   const execution = job.execution;
   if (event.type === 'script_started') {
@@ -552,7 +566,7 @@ function applyInterpreterEvent(job, event) {
         output: null,
         error: null
       });
-      logJob(job, 'info', `Step ${event.step_index + 1}/${execution.total_steps} started`, {
+      logJob(job, 'info', `Шаг ${event.step_index + 1}/${execution.total_steps} запущен`, {
         action: event.action,
         step_id: event.step_id,
         params: event.params
@@ -568,7 +582,7 @@ function applyInterpreterEvent(job, event) {
       execution.percent = execution.total_steps === 0
         ? 100
         : Math.round((execution.completed_steps / execution.total_steps) * 100);
-      logJob(job, 'info', `Step ${event.step_index + 1}/${execution.total_steps} completed`, {
+      logJob(job, 'info', `Шаг ${event.step_index + 1}/${execution.total_steps} завершён`, {
         action: event.action,
         step_id: event.step_id,
         duration_ms: event.duration_ms,
@@ -582,7 +596,7 @@ function applyInterpreterEvent(job, event) {
         error: event.error
       });
       execution.status = 'failed';
-      logJob(job, 'error', `Step ${event.step_index + 1}/${execution.total_steps} failed`, {
+      logJob(job, 'error', `Ошибка шага ${event.step_index + 1}/${execution.total_steps}`, {
         action: event.action,
         step_id: event.step_id,
         duration_ms: event.duration_ms,
@@ -607,15 +621,16 @@ async function executeJob(job) {
   const controller = new AbortController();
   state.controllers.set(job.job_id, controller);
   const timeoutTimer = setTimeout(() => {
-    controller.abort(createApiError('TIMEOUT_ERROR', `Job timed out after ${job.timeout_ms}ms`, 408, true));
+    controller.abort(createApiError('TIMEOUT_ERROR', `Задание превысило тайм-аут ${job.timeout_ms} мс`, 408, true));
   }, job.timeout_ms);
 
   try {
     job.attempts += 1;
     job.status = 'running';
+    job.error = null;
     job.started_at = job.started_at || nowIso();
     job.updated_at = nowIso();
-    logJob(job, 'info', 'Job started', { attempt: job.attempts });
+    logJob(job, 'info', 'Выполнение задания начато', { attempt: job.attempts });
 
     const script = job.request.script || {};
     const steps = Array.isArray(script.steps) ? script.steps : [];
@@ -628,13 +643,14 @@ async function executeJob(job) {
       registry: stepRegistry,
       defaultStepTimeoutMs: Math.min(job.timeout_ms, 10_000),
       initialContext: job.request.context ?? {},
+      attempt: job.attempts,
       onEvent: (event) => applyInterpreterEvent(job, event)
     });
 
     if (steps.length === 0 && simulatedDelay > 0) await abortableDelay(simulatedDelay, controller.signal);
 
     if (simulatedOutcome === 'validation_failed') {
-      throw createApiError('VALIDATION_ERROR', 'Simulated validation failure', 422, false);
+      throw createApiError('VALIDATION_ERROR', 'Имитация ошибки проверки', 422, false);
     }
 
     if (simulatedOutcome === 'timeout') {
@@ -642,47 +658,43 @@ async function executeJob(job) {
     }
 
     if (simulatedOutcome === 'retry_once' && job.attempts === 1) {
-      throw createApiError('PLUGIN_NOT_RUNNING', 'Transient plugin issue', 503, true);
+      throw createApiError('PLUGIN_NOT_RUNNING', 'Временная ошибка СБИС Плагина', 503, true);
     }
 
     job.status = 'success';
     job.result = {
-      message: 'Job completed successfully',
+      message: 'Задание успешно выполнено',
       ...interpreterResult,
       simulated_outcome: simulatedOutcome
     };
     job.finished_at = nowIso();
-    logJob(job, 'info', 'Job completed successfully', job.result);
+    logJob(job, 'info', 'Задание успешно выполнено', job.result);
   } catch (error) {
     if (error?.code === 'CANCELLED') {
       job.status = 'cancelled';
-      job.error = { code: error.code, message: error.message };
+      job.error = serializeJobError(error);
       job.execution.status = 'cancelled';
       job.execution.finished_at = nowIso();
       job.finished_at = nowIso();
-      logJob(job, 'warn', 'Job cancelled', job.error);
+      logJob(job, 'warn', 'Задание отменено', job.error);
       return;
     }
 
     if (error?.code === 'TIMEOUT_ERROR') {
       job.status = 'timeout';
-      job.error = {
-        code: error.code,
-        message: error.message,
-        ...(error?.details === undefined ? {} : { details: error.details })
-      };
+      job.error = serializeJobError(error);
       job.execution.status = 'timeout';
       job.execution.finished_at = nowIso();
       job.finished_at = nowIso();
-      logJob(job, 'error', 'Job timed out', job.error);
+      logJob(job, 'error', 'Превышен тайм-аут задания', job.error);
       return;
     }
 
     if (job.attempts < job.max_attempts && isRetryableError(error)) {
       job.status = 'retrying';
-      job.error = { code: error.code, message: error.message };
+      job.error = serializeJobError(error);
       job.execution.status = 'retrying';
-      logJob(job, 'warn', 'Job failed, scheduling retry', job.error);
+      logJob(job, 'warn', 'Ошибка выполнения, запланирована повторная попытка', job.error);
       try {
         await abortableDelay(job.request.retry_policy?.backoff_ms ?? state.config.retry_policy.backoff_ms, controller.signal);
       } catch (backoffError) {
@@ -690,11 +702,11 @@ async function executeJob(job) {
         job.execution.status = job.status;
         job.error = {
           code: backoffError?.code || 'CANCELLED',
-          message: backoffError?.message || 'Job cancelled during retry backoff'
+          message: backoffError?.message || 'Задание отменено во время ожидания повторной попытки'
         };
         job.finished_at = nowIso();
         job.execution.finished_at = job.finished_at;
-        logJob(job, job.status === 'timeout' ? 'error' : 'warn', `Job ${job.status} during retry backoff`, job.error);
+        logJob(job, job.status === 'timeout' ? 'error' : 'warn', 'Повторная попытка задания отменена', job.error);
         return;
       }
       job.status = 'queued';
@@ -707,15 +719,11 @@ async function executeJob(job) {
     job.status = error?.code === 'VALIDATION_ERROR' || error?.code === 'INVALID_SCRIPT'
       ? 'validation_failed'
       : 'failed';
-    job.error = {
-      code: error?.code || 'INTERNAL_ERROR',
-      message: error?.message || 'Unexpected failure',
-      ...(error?.details === undefined ? {} : { details: error.details })
-    };
+    job.error = serializeJobError(error);
     job.execution.status = job.status;
     job.execution.finished_at = nowIso();
     job.finished_at = nowIso();
-    logJob(job, 'error', 'Job failed', job.error);
+    logJob(job, 'error', 'Задание завершилось с ошибкой', job.error);
   } finally {
     clearTimeout(timeoutTimer);
     state.controllers.delete(job.job_id);
@@ -736,10 +744,10 @@ function drainQueue() {
         job.status = 'failed';
         job.error = {
           code: error?.code || 'INTERNAL_ERROR',
-          message: error?.message || 'Unexpected failure'
+          message: error?.message || 'Непредвиденная ошибка выполнения'
         };
         job.finished_at = nowIso();
-        logJob(job, 'error', 'Job crashed', job.error);
+        logJob(job, 'error', 'Аварийное завершение задания', job.error);
       })
       .finally(() => {
         state.activeCount -= 1;
@@ -755,7 +763,7 @@ async function readJsonBody(req) {
     req.on('data', (chunk) => {
       raw += chunk;
       if (Buffer.byteLength(raw) > MAX_BODY_SIZE) {
-        reject(createApiError('PAYLOAD_TOO_LARGE', 'Request body is too large', 413, false));
+        reject(createApiError('PAYLOAD_TOO_LARGE', 'Тело запроса слишком большое', 413, false));
         req.destroy();
       }
     });
@@ -767,7 +775,7 @@ async function readJsonBody(req) {
       try {
         resolve(JSON.parse(raw));
       } catch {
-        reject(createApiError('INVALID_JSON', 'Invalid JSON payload', 400, false));
+        reject(createApiError('INVALID_JSON', 'Некорректный JSON в теле запроса', 400, false));
       }
     });
     req.on('error', reject);
@@ -777,7 +785,7 @@ async function readJsonBody(req) {
 function requireApiKey(req) {
   const provided = req.headers['x-api-key'];
   if (!provided || provided !== API_KEY) {
-    throw createApiError('UNAUTHORIZED', 'Missing or invalid X-API-Key', 401, false);
+    throw createApiError('UNAUTHORIZED', 'Отсутствует или неверно указан X-API-Key', 401, false);
   }
 }
 
@@ -806,14 +814,14 @@ function validateConfigPatch(payload) {
 
   if (payload.max_parallel_jobs !== undefined) {
     if (!Number.isInteger(payload.max_parallel_jobs) || payload.max_parallel_jobs < 1) {
-      throw createApiError('INVALID_CONFIG', 'max_parallel_jobs must be a positive integer', 400, false);
+      throw createApiError('INVALID_CONFIG', 'max_parallel_jobs должен быть положительным целым числом', 400, false);
     }
     next.max_parallel_jobs = payload.max_parallel_jobs;
   }
 
   if (payload.default_job_timeout_ms !== undefined) {
     if (!Number.isInteger(payload.default_job_timeout_ms) || payload.default_job_timeout_ms < 1) {
-      throw createApiError('INVALID_CONFIG', 'default_job_timeout_ms must be a positive integer', 400, false);
+      throw createApiError('INVALID_CONFIG', 'default_job_timeout_ms должен быть положительным целым числом', 400, false);
     }
     next.default_job_timeout_ms = payload.default_job_timeout_ms;
   }
@@ -821,17 +829,17 @@ function validateConfigPatch(payload) {
   if (payload.retry_policy !== undefined) {
     const retry = payload.retry_policy;
     if (typeof retry !== 'object' || retry === null) {
-      throw createApiError('INVALID_CONFIG', 'retry_policy must be an object', 400, false);
+      throw createApiError('INVALID_CONFIG', 'retry_policy должен быть объектом', 400, false);
     }
     if (retry.max_attempts !== undefined) {
       if (!Number.isInteger(retry.max_attempts) || retry.max_attempts < 1) {
-        throw createApiError('INVALID_CONFIG', 'retry_policy.max_attempts must be a positive integer', 400, false);
+        throw createApiError('INVALID_CONFIG', 'retry_policy.max_attempts должен быть положительным целым числом', 400, false);
       }
       next.retry_policy.max_attempts = retry.max_attempts;
     }
     if (retry.backoff_ms !== undefined) {
       if (!Number.isInteger(retry.backoff_ms) || retry.backoff_ms < 0) {
-        throw createApiError('INVALID_CONFIG', 'retry_policy.backoff_ms must be a non-negative integer', 400, false);
+        throw createApiError('INVALID_CONFIG', 'retry_policy.backoff_ms должен быть неотрицательным целым числом', 400, false);
       }
       next.retry_policy.backoff_ms = retry.backoff_ms;
     }
@@ -843,25 +851,25 @@ function validateConfigPatch(payload) {
 function validateJobPayload(payload) {
   const errors = [];
   if (payload.priority !== undefined && !Number.isFinite(payload.priority)) {
-    errors.push({ path: 'priority', message: 'priority must be a finite number' });
+    errors.push({ path: 'priority', message: 'priority должен быть конечным числом' });
   }
   if (payload.timeout_ms !== undefined && (!Number.isInteger(payload.timeout_ms) || payload.timeout_ms < 1)) {
-    errors.push({ path: 'timeout_ms', message: 'timeout_ms must be a positive integer' });
+    errors.push({ path: 'timeout_ms', message: 'timeout_ms должен быть положительным целым числом' });
   }
   if (payload.context !== undefined && (!payload.context || typeof payload.context !== 'object' || Array.isArray(payload.context))) {
-    errors.push({ path: 'context', message: 'context must be an object' });
+    errors.push({ path: 'context', message: 'context должен быть объектом' });
   }
   if (payload.retry_policy !== undefined) {
     if (!payload.retry_policy || typeof payload.retry_policy !== 'object' || Array.isArray(payload.retry_policy)) {
-      errors.push({ path: 'retry_policy', message: 'retry_policy must be an object' });
+      errors.push({ path: 'retry_policy', message: 'retry_policy должен быть объектом' });
     } else {
       if (payload.retry_policy.max_attempts !== undefined
         && (!Number.isInteger(payload.retry_policy.max_attempts) || payload.retry_policy.max_attempts < 1)) {
-        errors.push({ path: 'retry_policy.max_attempts', message: 'max_attempts must be a positive integer' });
+        errors.push({ path: 'retry_policy.max_attempts', message: 'max_attempts должен быть положительным целым числом' });
       }
       if (payload.retry_policy.backoff_ms !== undefined
         && (!Number.isInteger(payload.retry_policy.backoff_ms) || payload.retry_policy.backoff_ms < 0)) {
-        errors.push({ path: 'retry_policy.backoff_ms', message: 'backoff_ms must be a non-negative integer' });
+        errors.push({ path: 'retry_policy.backoff_ms', message: 'backoff_ms должен быть неотрицательным целым числом' });
       }
     }
   }
@@ -887,6 +895,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (method === 'GET' && pathname === '/queue') {
+      await sendPublicFile(res, 'queue.html');
+      return;
+    }
+
     if (method === 'GET' && (pathname === '/app.js' || pathname === '/styles.css')) {
       await sendPublicFile(res, pathname.slice(1));
       return;
@@ -908,7 +921,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (!isVersionedPath(pathname)) {
-      sendJson(res, 404, { error: { code: 'NOT_FOUND', message: 'Route not found' } });
+      sendJson(res, 404, { error: { code: 'NOT_FOUND', message: 'Маршрут не найден' } });
       return;
     }
 
@@ -950,7 +963,7 @@ const server = http.createServer(async (req, res) => {
     if (method === 'POST' && resourcePath === '/jobs') {
       const payload = await readJsonBody(req);
       if (!payload || typeof payload !== 'object') {
-        throw createApiError('INVALID_PAYLOAD', 'Request body must be a JSON object', 400, false);
+        throw createApiError('INVALID_PAYLOAD', 'Тело запроса должно быть JSON-объектом', 400, false);
       }
       const idempotencyKeyHeader = req.headers['idempotency-key'];
       const idempotencyKey = Array.isArray(idempotencyKeyHeader) ? idempotencyKeyHeader[0] : idempotencyKeyHeader;
@@ -961,16 +974,16 @@ const server = http.createServer(async (req, res) => {
           ? idempotencyKey.trim()
           : `job_${randomUUID()}`;
       if (payload.script !== undefined && (typeof payload.script !== 'object' || payload.script === null)) {
-        throw createApiError('INVALID_PAYLOAD', 'script must be an object', 400, false);
+        throw createApiError('INVALID_PAYLOAD', 'Поле script должно быть объектом', 400, false);
       }
       const payloadErrors = validateJobPayload(payload);
       if (payloadErrors.length > 0) {
-        throw createApiError('INVALID_PAYLOAD', 'Job validation failed', 400, false, { errors: payloadErrors });
+        throw createApiError('INVALID_PAYLOAD', 'Задание не прошло проверку', 400, false, { errors: payloadErrors });
       }
       const script = payload.script ?? { steps: [] };
       const scriptErrors = validateScript(script, stepRegistry);
       if (scriptErrors.length > 0) {
-        throw createApiError('INVALID_SCRIPT', 'Script validation failed', 400, false, {
+        throw createApiError('INVALID_SCRIPT', 'Сценарий не прошёл проверку', 400, false, {
           errors: scriptErrors
         });
       }
@@ -1001,7 +1014,7 @@ const server = http.createServer(async (req, res) => {
       const job = state.jobs.get(jobId);
 
       if (!job) {
-        sendJson(res, 404, { error: { code: 'JOB_NOT_FOUND', message: 'Job not found' } });
+        sendJson(res, 404, { error: { code: 'JOB_NOT_FOUND', message: 'Задание не найдено' } });
         return;
       }
 
@@ -1022,7 +1035,7 @@ const server = http.createServer(async (req, res) => {
       const job = state.jobs.get(jobId);
 
       if (!job) {
-        sendJson(res, 404, { error: { code: 'JOB_NOT_FOUND', message: 'Job not found' } });
+        sendJson(res, 404, { error: { code: 'JOB_NOT_FOUND', message: 'Задание не найдено' } });
         return;
       }
 
@@ -1030,10 +1043,10 @@ const server = http.createServer(async (req, res) => {
         removeFromQueue(job.job_id);
         job.status = 'cancelled';
         job.finished_at = nowIso();
-        job.error = { code: 'CANCELLED', message: 'Job cancelled before execution' };
+        job.error = { code: 'CANCELLED', message: 'Задание отменено до начала выполнения' };
         job.execution.status = 'cancelled';
         job.execution.finished_at = job.finished_at;
-        logJob(job, 'warn', 'Job cancelled before execution', job.error);
+        logJob(job, 'warn', 'Задание отменено до начала выполнения', job.error);
         schedulePersist();
         sendJson(res, 200, { job: summarizeJob(job), cancelled: true });
         return;
@@ -1041,14 +1054,14 @@ const server = http.createServer(async (req, res) => {
 
       if (job.status === 'running' || job.status === 'retrying') {
         job.cancellation_requested = true;
-        state.controllers.get(job.job_id)?.abort(createApiError('CANCELLED', 'Job cancelled by user', 499, false));
-        logJob(job, 'warn', 'Cancellation requested by user');
+        state.controllers.get(job.job_id)?.abort(createApiError('CANCELLED', 'Задание отменено пользователем', 499, false));
+        logJob(job, 'warn', 'Пользователь запросил отмену задания');
         schedulePersist();
-        sendJson(res, 202, { job: summarizeJob(job), cancelled: false, message: 'Cancellation requested' });
+        sendJson(res, 202, { job: summarizeJob(job), cancelled: false, message: 'Запрошена отмена задания' });
         return;
       }
 
-      sendJson(res, 200, { job: summarizeJob(job), cancelled: false, message: 'Job is already finished' });
+      sendJson(res, 200, { job: summarizeJob(job), cancelled: false, message: 'Задание уже завершено' });
       return;
     }
 
@@ -1065,7 +1078,7 @@ const server = http.createServer(async (req, res) => {
     if (method === 'PUT' && resourcePath === '/system/config') {
       const payload = await readJsonBody(req);
       if (!payload || typeof payload !== 'object') {
-        throw createApiError('INVALID_PAYLOAD', 'Request body must be a JSON object', 400, false);
+        throw createApiError('INVALID_PAYLOAD', 'Тело запроса должно быть JSON-объектом', 400, false);
       }
       state.config = validateConfigPatch(payload);
       drainQueue();
@@ -1074,13 +1087,13 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    sendJson(res, 404, { error: { code: 'NOT_FOUND', message: 'Route not found' } });
+    sendJson(res, 404, { error: { code: 'NOT_FOUND', message: 'Маршрут не найден' } });
   } catch (error) {
     const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
     sendJson(res, statusCode, {
       error: {
         code: error?.code || 'INTERNAL_ERROR',
-        message: error?.message || 'Unexpected error',
+        message: error?.message || 'Непредвиденная ошибка',
         ...(error?.details === undefined ? {} : { details: error.details })
       }
     });

@@ -13,14 +13,23 @@ Requires Node.js 24+.
 The API listens on `http://localhost:3000`.
 The Execution Studio is available at `http://localhost:3000/`.
 Swagger UI is available at `http://localhost:3000/docs`.
+The visual queue monitor is available at `http://localhost:3000/queue`.
 
-The Docker Compose Swagger UI helper is available at `http://localhost:3002`.
+The Docker Compose Swagger UI helper is available at `http://localhost:33002`.
 In `docker compose`, it loads the spec from a mounted local file and preloads `X-API-Key: dev-secret`.
 
 ## Docker
 
 ```bash
 docker compose up --build
+```
+
+Перед запуском Docker Compose для демо выполните `npm run demo:reset`. Интерфейс
+очереди будет доступен на `http://localhost:33001/queue`, Swagger — на
+`http://localhost:33002`. Для запуска сценария из терминала задайте адрес API:
+
+```bash
+DEMO_API_URL=http://127.0.0.1:33001 npm run demo:success
 ```
 
 State is persisted to `data/state.sqlite` locally and `/app/data/state.sqlite` in Docker.
@@ -114,11 +123,71 @@ Set `API_KEY` to override the default.
 Swagger UI in `docker compose` preauthorizes the default dev key for convenience.
 `POST /api/v2/jobs` accepts an optional `Idempotency-Key` header. If omitted, the server generates `uid` automatically and returns it in the job response.
 
+## Демо этапа 2: JSON-steps Interpreter
+
+Демо показывает исполнение цепочки JSON-шагов, передачу результатов через контекст,
+подробные логи, нормализованные ошибки, retry и тайм-аут шага. Браузерные действия
+на этом этапе работают в mock-режиме; `find_files` и `move_files` используют реальную
+локальную файловую систему.
+
+Подготовка и запуск:
+
+```bash
+npm run demo:reset
+npm start
+```
+
+Откройте в браузере:
+
+- `http://localhost:3000/queue` — визуальная очередь с автообновлением;
+- `http://localhost:3000/docs` — Swagger UI с готовыми примерами запросов.
+
+Для подключения используется API-ключ `dev-secret`. В Swagger нажмите
+«Авторизация», а в мониторе очереди ключ уже подставлен для локального демо.
+
+В другом терминале можно запустить каждый сценарий отдельно:
+
+```bash
+npm run demo:success
+npm run demo:error
+npm run demo:retry
+npm run demo:timeout
+```
+
+Чтобы отдельно показать FIFO-очередь с приоритетами и анимированным прогрессом:
+
+```bash
+npm run demo:queue
+```
+
+Команда фиксирует `max_parallel_jobs = 1` и создаёт четыре задания. Первое начинает
+выполняться сразу, остальные сортируются по приоритету: `P10 → P30 → P50`.
+
+Или выполнить полный прогон:
+
+```bash
+npm run demo:all
+```
+
+Сценарии автоматически восстанавливают файлы в `demo-data`, создают задание,
+показывают смену статусов и выводят журнал. Для ручного запуска через Swagger перед
+успешным сценарием выполните `npm run demo:reset` и задайте новый `Idempotency-Key`.
+
+Рекомендуемый порядок показа:
+
+1. Открыть `/queue` и `/docs` в соседних вкладках.
+2. Выполнить `npm run demo:queue`, показать порядок приоритетов и движение карточек.
+3. Запустить пример `success`, показать прогресс шагов и открыть его логи.
+4. Запустить `fileNotFound`, показать `FILE_NOT_FOUND` и остановку цепочки.
+5. Запустить `retry`, показать переход `running → retrying → running → success`.
+6. При наличии времени запустить `timeout` и показать `TIMEOUT_ERROR`.
+
 ## Main routes
 
 - `GET /openapi.yaml`
 - `GET /docs`
 - `GET /` (Execution Studio)
+- `GET /queue` (визуальная очередь)
 - `GET /health`
 - `GET /api/v2/health`
 - `POST /api/v2/jobs`

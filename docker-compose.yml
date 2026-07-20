@@ -5,6 +5,7 @@ services:
       - "33001:33001"
     volumes:
       - ./data:/app/data
+      - ./demo-data:/app/demo-data
     environment:
       API_KEY: dev-secret
       PORT: 33001

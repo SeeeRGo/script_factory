@@ -53,7 +53,14 @@ test('serves the visual execution studio at the deployment root', async () => {
   const response = await fetch(`${origin}/`);
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /text\/html/);
-  assert.match(await response.text(), /Execution flow/);
+  assert.match(await response.text(), /Ход выполнения/);
+});
+
+test('serves the visual priority queue', async () => {
+  const response = await fetch(`${origin}/queue`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /text\/html/);
+  assert.match(await response.text(), /Монитор выполнения JSON-сценариев/);
 });
 
 test('exposes the interpreter action registry', async () => {
@@ -114,8 +121,8 @@ test('executes a script through the API and exposes visual step state and logs',
 
   const logResponse = await request(`/api/v2/jobs/${jobId}/logs`);
   const logBody = await logResponse.json();
-  assert.ok(logBody.logs.some((entry) => entry.message === 'Step 1/5 started'));
-  assert.ok(logBody.logs.some((entry) => entry.message === 'Job completed successfully'));
+  assert.ok(logBody.logs.some((entry) => entry.message === 'Шаг 1/5 запущен'));
+  assert.ok(logBody.logs.some((entry) => entry.message === 'Задание успешно выполнено'));
 });
 
 test('retries retryable normalized errors using the job policy', async () => {

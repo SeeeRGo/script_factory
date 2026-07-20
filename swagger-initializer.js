@@ -12,7 +12,7 @@ window.onload = function() {
     docExpansion: 'none',
     displayRequestDuration: true,
     requestInterceptor: (req) => {
-      if (req.url && req.url.startsWith('http://localhost:3001/')) {
+      if (req.url && req.url.startsWith('http://localhost:33001/')) {
         req.headers['X-API-Key'] = 'dev-secret';
       }
       return req;

@@ -1,3 +1,6 @@
+import { copyFile, mkdir, readdir, rename, unlink } from 'node:fs/promises';
+import path from 'node:path';
+
 const DEFAULT_STEP_TIMEOUT_MS = 10_000;
 
 export const ERROR_CODES = Object.freeze({
@@ -26,10 +29,10 @@ export class StepRegistry {
 
   register(action, handler) {
     if (typeof action !== 'string' || !action.trim()) {
-      throw new TypeError('Step action must be a non-empty string');
+      throw new TypeError('Действие шага должно быть непустой строкой');
     }
     if (typeof handler !== 'function') {
-      throw new TypeError(`Handler for ${action} must be a function`);
+      throw new TypeError(`Обработчик ${action} должен быть функцией`);
     }
     this.#handlers.set(action, handler);
     return this;
@@ -46,7 +49,7 @@ export class StepRegistry {
   async execute(action, input) {
     const handler = this.#handlers.get(action);
     if (!handler) {
-      throw new InterpreterError('UNKNOWN_ACTION', `Unsupported action: ${action}`, {
+      throw new InterpreterError('UNKNOWN_ACTION', `Неподдерживаемое действие: ${action}`, {
         statusCode: 400,
         details: { action }
       });
@@ -63,7 +66,7 @@ function asDelay(value, fallback = 100) {
 export function abortableDelay(ms, signal) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(signal.reason ?? new InterpreterError('CANCELLED', 'Operation cancelled', { statusCode: 499 }));
+      reject(signal.reason ?? new InterpreterError('CANCELLED', 'Операция отменена', { statusCode: 499 }));
       return;
     }
 
@@ -73,7 +76,7 @@ export function abortableDelay(ms, signal) {
     }, ms);
     const onAbort = () => {
       cleanup();
-      reject(signal.reason ?? new InterpreterError('CANCELLED', 'Operation cancelled', { statusCode: 499 }));
+      reject(signal.reason ?? new InterpreterError('CANCELLED', 'Операция отменена', { statusCode: 499 }));
     };
     const cleanup = () => {
       clearTimeout(timer);
@@ -90,10 +93,16 @@ function failWhen(params, names, code, message, options = {}) {
 }
 
 async function simulate(input) {
-  await abortableDelay(asDelay(input.step.duration_ms, input.params.duration_ms), input.signal);
+  await abortableDelay(asDelay(
+    input.step.delay_ms ?? input.step.duration_ms,
+    input.params.delay_ms ?? input.params.duration_ms
+  ), input.signal);
 }
 
-export function createDefaultStepRegistry() {
+export function createDefaultStepRegistry(options = {}) {
+  const workingDirectory = options.workingDirectory || process.cwd();
+  const resolvePath = (value) => path.isAbsolute(value) ? value : path.resolve(workingDirectory, value);
+
   return new StepRegistry()
     .register('noop', async (input) => {
       await simulate(input);
@@ -104,7 +113,7 @@ export function createDefaultStepRegistry() {
       const { params } = input;
       const currentIp = params.current_ip ?? input.context.current_ip;
       if (params.expected_ip && currentIp && params.expected_ip !== currentIp) {
-        throw new InterpreterError(ERROR_CODES.IP_MISMATCH, `Expected IP ${params.expected_ip}, got ${currentIp}`, {
+        throw new InterpreterError(ERROR_CODES.IP_MISMATCH, `Ожидался IP ${params.expected_ip}, получен ${currentIp}`, {
           statusCode: 400,
           details: { expected_ip: params.expected_ip, current_ip: currentIp }
         });
@@ -112,24 +121,25 @@ export function createDefaultStepRegistry() {
       return { current_ip: currentIp ?? params.expected_ip ?? null };
     })
     .register('launch_browser', async (input) => {
-      failWhen(input.params, ['fail', 'launch_failed'], ERROR_CODES.AUTH_ERROR, 'Browser launch failed');
+      failWhen(input.params, ['fail', 'launch_failed'], ERROR_CODES.AUTH_ERROR, 'Не удалось запустить браузер');
       await simulate(input);
       return { browser_launched: true, browser: input.params.browser ?? 'chromium' };
     })
     .register('navigate', async (input) => {
-      failWhen(input.params, ['fail', 'navigation_failed'], ERROR_CODES.AUTH_ERROR, 'Navigation failed', { retryable: true });
+      failWhen(input.params, ['fail', 'navigation_failed'], ERROR_CODES.AUTH_ERROR, 'Ошибка перехода в браузере', { retryable: true });
       await simulate(input);
       return { current_url: input.params.url ?? input.context.current_url ?? null };
     })
     .register('auth_ecp', async (input) => {
-      if (input.params.plugin_running === false) {
-        throw new InterpreterError(ERROR_CODES.PLUGIN_NOT_RUNNING, 'SBIS plugin is not running', {
+      if (input.params.plugin_running === false || input.attempt <= Number(input.params.fail_attempts || 0)) {
+        throw new InterpreterError(ERROR_CODES.PLUGIN_NOT_RUNNING, 'СБИС Плагин не запущен', {
           statusCode: 503,
-          retryable: true
+          retryable: true,
+          details: { attempt: input.attempt }
         });
       }
       if (input.params.authenticated === false || input.params.fail === true) {
-        throw new InterpreterError(ERROR_CODES.AUTH_ERROR, input.params.error_message || 'ECP authentication failed', {
+        throw new InterpreterError(ERROR_CODES.AUTH_ERROR, input.params.error_message || 'Не удалось выполнить авторизацию по ЭЦП', {
           statusCode: 401
         });
       }
@@ -138,20 +148,42 @@ export function createDefaultStepRegistry() {
     })
     .register('find_files', async (input) => {
       await simulate(input);
-      const files = input.params.files ?? input.context.found_files;
+      let files = input.params.files ?? input.context.found_files;
+      if (!Array.isArray(files) && typeof input.params.directory === 'string') {
+        const directory = resolvePath(input.params.directory);
+        const prefixes = Array.isArray(input.params.prefixes)
+          ? input.params.prefixes
+          : input.params.prefixes ? [input.params.prefixes] : [];
+        try {
+          const entries = await readdir(directory, { withFileTypes: true });
+          files = entries
+            .filter((entry) => entry.isFile())
+            .filter((entry) => prefixes.length === 0 || prefixes.some((prefix) => entry.name.startsWith(prefix)))
+            .map((entry) => path.join(directory, entry.name))
+            .sort();
+        } catch (error) {
+          if (error?.code === 'ENOENT') files = [];
+          else {
+            throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, 'Не удалось прочитать каталог с отчётами', {
+              statusCode: 404,
+              details: { directory, cause: error?.code }
+            });
+          }
+        }
+      }
       if (!Array.isArray(files) || files.length === 0) {
-        throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, 'No matching files found', { statusCode: 404 });
+        throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, 'Подходящие файлы не найдены', { statusCode: 404 });
       }
       return { found_files: files, files_found: files.length };
     })
     .register('upload_files', async (input) => {
-      failWhen(input.params, ['fail', 'upload_failed'], ERROR_CODES.UPLOAD_ERROR, 'File upload failed', {
+      failWhen(input.params, ['fail', 'upload_failed'], ERROR_CODES.UPLOAD_ERROR, 'Не удалось загрузить файлы', {
         statusCode: 502,
         retryable: true
       });
       const files = input.params.files ?? input.context.found_files;
       if (!Array.isArray(files) || files.length === 0) {
-        throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, 'No files available for upload', { statusCode: 404 });
+        throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, 'Нет файлов для загрузки', { statusCode: 404 });
       }
       await simulate(input);
       return { uploaded_files: files, files_uploaded: files.length };
@@ -159,7 +191,7 @@ export function createDefaultStepRegistry() {
     .register('validate_report', async (input) => {
       await simulate(input);
       if (input.params.valid === false || input.params.passed === false || input.params.fail === true) {
-        throw new InterpreterError(ERROR_CODES.VALIDATION_ERROR, input.params.error_message || 'Report validation failed', {
+        throw new InterpreterError(ERROR_CODES.VALIDATION_ERROR, input.params.error_message || 'Отчёт не прошёл проверку', {
           statusCode: 422,
           details: { protocol: input.params.protocol ?? null }
         });
@@ -168,11 +200,11 @@ export function createDefaultStepRegistry() {
     })
     .register('submit_if_valid', async (input) => {
       if (input.params.valid === false || input.context.report_valid === false) {
-        throw new InterpreterError(ERROR_CODES.VALIDATION_ERROR, 'Report cannot be submitted before successful validation', {
+        throw new InterpreterError(ERROR_CODES.VALIDATION_ERROR, 'Отчёт нельзя отправить до успешной проверки', {
           statusCode: 422
         });
       }
-      failWhen(input.params, ['fail', 'submit_failed'], ERROR_CODES.UPLOAD_ERROR, 'Report submission failed', {
+      failWhen(input.params, ['fail', 'submit_failed'], ERROR_CODES.UPLOAD_ERROR, 'Не удалось отправить отчёт', {
         statusCode: 502,
         retryable: true
       });
@@ -180,10 +212,40 @@ export function createDefaultStepRegistry() {
       return { submitted: true, submitted_at: new Date().toISOString() };
     })
     .register('move_files', async (input) => {
-      failWhen(input.params, ['fail', 'move_failed'], ERROR_CODES.UPLOAD_ERROR, 'Moving processed files failed');
+      failWhen(input.params, ['fail', 'move_failed'], ERROR_CODES.UPLOAD_ERROR, 'Не удалось переместить обработанные файлы');
       const files = input.params.files ?? input.context.found_files ?? [];
       await simulate(input);
-      return { moved_files: files, loaded_dir: input.params.destination ?? input.context.loaded_dir ?? null };
+      const loadedDir = input.params.destination ?? input.context.loaded_dir ?? null;
+      let movedFiles = files;
+      if (loadedDir && input.params.simulate !== true && files.length > 0 && files.every((file) => path.isAbsolute(file))) {
+        const destination = resolvePath(loadedDir);
+        await mkdir(destination, { recursive: true });
+        movedFiles = [];
+        for (const file of files) {
+          const target = path.join(destination, path.basename(file));
+          try {
+            await rename(file, target);
+          } catch (error) {
+            if (error?.code === 'EXDEV') {
+              await copyFile(file, target);
+              await unlink(file);
+            } else if (error?.code === 'ENOENT') {
+              throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, `Файл не найден: ${file}`, {
+                statusCode: 404,
+                details: { file }
+              });
+            } else {
+              throw new InterpreterError(ERROR_CODES.UPLOAD_ERROR, 'Не удалось переместить обработанные файлы', {
+                statusCode: 500,
+                retryable: error?.code === 'EBUSY',
+                details: { file, target, cause: error?.code }
+              });
+            }
+          }
+          movedFiles.push(target);
+        }
+      }
+      return { moved_files: movedFiles, loaded_dir: loadedDir };
     });
 }
 
@@ -211,38 +273,41 @@ function lookupContext(context, key) {
 export function validateScript(script, registry = createDefaultStepRegistry()) {
   const errors = [];
   if (!script || typeof script !== 'object' || Array.isArray(script)) {
-    return [{ path: 'script', message: 'script must be an object' }];
+    return [{ path: 'script', message: 'script должен быть объектом' }];
   }
   if (!Array.isArray(script.steps)) {
-    return [{ path: 'script.steps', message: 'steps must be an array' }];
+    return [{ path: 'script.steps', message: 'steps должен быть массивом' }];
   }
   if (script.context !== undefined && (!script.context || typeof script.context !== 'object' || Array.isArray(script.context))) {
-    errors.push({ path: 'script.context', message: 'context must be an object' });
+    errors.push({ path: 'script.context', message: 'context должен быть объектом' });
   }
   if (script.default_step_timeout_ms !== undefined
     && (!Number.isInteger(script.default_step_timeout_ms) || script.default_step_timeout_ms < 1)) {
-    errors.push({ path: 'script.default_step_timeout_ms', message: 'default_step_timeout_ms must be a positive integer' });
+    errors.push({ path: 'script.default_step_timeout_ms', message: 'default_step_timeout_ms должен быть положительным целым числом' });
   }
 
   script.steps.forEach((step, index) => {
     const path = `script.steps[${index}]`;
     if (!step || typeof step !== 'object' || Array.isArray(step)) {
-      errors.push({ path, message: 'step must be an object' });
+      errors.push({ path, message: 'шаг должен быть объектом' });
       return;
     }
     if (typeof step.action !== 'string' || !step.action.trim()) {
-      errors.push({ path: `${path}.action`, message: 'action must be a non-empty string' });
+      errors.push({ path: `${path}.action`, message: 'action должен быть непустой строкой' });
     } else if (!registry.has(step.action)) {
-      errors.push({ path: `${path}.action`, message: `unsupported action: ${step.action}` });
+      errors.push({ path: `${path}.action`, message: `неподдерживаемое действие: ${step.action}` });
     }
     if (step.params !== undefined && (!step.params || typeof step.params !== 'object' || Array.isArray(step.params))) {
-      errors.push({ path: `${path}.params`, message: 'params must be an object' });
+      errors.push({ path: `${path}.params`, message: 'params должен быть объектом' });
     }
     if (step.timeout_ms !== undefined && (!Number.isInteger(step.timeout_ms) || step.timeout_ms < 1)) {
-      errors.push({ path: `${path}.timeout_ms`, message: 'timeout_ms must be a positive integer' });
+      errors.push({ path: `${path}.timeout_ms`, message: 'timeout_ms должен быть положительным целым числом' });
     }
     if (step.duration_ms !== undefined && (!Number.isFinite(step.duration_ms) || step.duration_ms < 0)) {
-      errors.push({ path: `${path}.duration_ms`, message: 'duration_ms must be a non-negative number' });
+      errors.push({ path: `${path}.duration_ms`, message: 'duration_ms должен быть неотрицательным числом' });
+    }
+    if (step.delay_ms !== undefined && (!Number.isFinite(step.delay_ms) || step.delay_ms < 0)) {
+      errors.push({ path: `${path}.delay_ms`, message: 'delay_ms должен быть неотрицательным числом' });
     }
   });
   return errors;
@@ -250,7 +315,7 @@ export function validateScript(script, registry = createDefaultStepRegistry()) {
 
 function normalizeError(error) {
   if (error instanceof InterpreterError) return error;
-  return new InterpreterError(error?.code || 'INTERNAL_ERROR', error?.message || 'Unexpected interpreter error', {
+  return new InterpreterError(error?.code || 'INTERNAL_ERROR', error?.message || 'Непредвиденная ошибка интерпретатора', {
     cause: error,
     statusCode: error?.statusCode ?? 500,
     retryable: error?.retryable ?? false,
@@ -265,7 +330,7 @@ function stepWithTimeout(registry, action, input, timeoutMs) {
   if (input.signal?.aborted) onAbort();
 
   const timer = setTimeout(() => {
-    controller.abort(new InterpreterError(ERROR_CODES.TIMEOUT_ERROR, `Step ${action} timed out after ${timeoutMs}ms`, {
+    controller.abort(new InterpreterError(ERROR_CODES.TIMEOUT_ERROR, `Шаг ${action} превысил тайм-аут ${timeoutMs} мс`, {
       statusCode: 408,
       retryable: true,
       details: { action, timeout_ms: timeoutMs }
@@ -290,12 +355,13 @@ export async function executeScript(options) {
     registry = createDefaultStepRegistry(),
     defaultStepTimeoutMs = DEFAULT_STEP_TIMEOUT_MS,
     initialContext = {},
+    attempt = 1,
     onEvent = () => {}
   } = options;
 
   const validationErrors = validateScript(script, registry);
   if (validationErrors.length) {
-    throw new InterpreterError('INVALID_SCRIPT', 'Script validation failed', {
+    throw new InterpreterError('INVALID_SCRIPT', 'Сценарий не прошёл проверку', {
       statusCode: 400,
       details: { errors: validationErrors }
     });
@@ -321,7 +387,7 @@ export async function executeScript(options) {
     });
 
     try {
-      const output = await stepWithTimeout(registry, action, { step, params, context, signal }, timeoutMs);
+      const output = await stepWithTimeout(registry, action, { step, params, context, signal, attempt }, timeoutMs);
       if (output && typeof output === 'object') Object.assign(context, output);
       await onEvent({
         type: 'step_completed',
@@ -334,6 +400,13 @@ export async function executeScript(options) {
       });
     } catch (rawError) {
       const error = normalizeError(rawError);
+      error.step_index = index + 1;
+      error.action = action;
+      error.details = {
+        ...(error.details || {}),
+        step_index: index + 1,
+        action
+      };
       await onEvent({
         type: 'step_failed',
         ts: new Date().toISOString(),
@@ -341,7 +414,7 @@ export async function executeScript(options) {
         step_id: step.id ?? `step_${index + 1}`,
         action,
         duration_ms: Date.now() - stepStartedAt,
-        error: { code: error.code, message: error.message, details: error.details }
+        error: { code: error.code, message: error.message, retryable: error.retryable, details: error.details }
       });
       throw error;
     }

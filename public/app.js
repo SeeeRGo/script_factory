@@ -23,6 +23,17 @@ const sampleJob = {
 };
 
 const terminalStatuses = new Set(['success', 'failed', 'validation_failed', 'cancelled', 'timeout']);
+const statusLabels = {
+  preview: 'ПРЕДПРОСМОТР',
+  queued: 'В ОЧЕРЕДИ',
+  running: 'ВЫПОЛНЯЕТСЯ',
+  retrying: 'ПОВТОР',
+  success: 'УСПЕШНО',
+  failed: 'ОШИБКА',
+  validation_failed: 'ОШИБКА ПРОВЕРКИ',
+  cancelled: 'ОТМЕНЕНО',
+  timeout: 'ТАЙМ-АУТ'
+};
 const elements = Object.fromEntries([
   'api-key', 'toggle-key', 'script-editor', 'line-numbers', 'format', 'preview', 'run', 'editor-state',
   'connection', 'job-status', 'progress-value', 'step-count', 'attempt-count', 'duration-value',
@@ -52,15 +63,15 @@ async function api(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const details = data.error?.details?.errors?.map((item) => `${item.path}: ${item.message}`).join('; ');
-    throw new Error(details || data.error?.message || `Request failed (${response.status})`);
+    throw new Error(details || data.error?.message || `Ошибка запроса (${response.status})`);
   }
   return data;
 }
 
 function parseEditor() {
   const payload = JSON.parse(elements['script-editor'].value);
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('The editor must contain a JSON object.');
-  if (!payload.script || !Array.isArray(payload.script.steps)) throw new Error('Add a script.steps array.');
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Редактор должен содержать JSON-объект.');
+  if (!payload.script || !Array.isArray(payload.script.steps)) throw new Error('Добавьте массив script.steps.');
   return payload;
 }
 
@@ -71,17 +82,17 @@ function updateLineNumbers() {
 
 function formatDuration(ms) {
   if (!Number.isFinite(ms)) return '—';
-  if (ms < 1000) return `${ms} ms`;
-  return `${(ms / 1000).toFixed(2)} s`;
+  if (ms < 1000) return `${ms} мс`;
+  return `${(ms / 1000).toFixed(2)} с`;
 }
 
 function timeOnly(value) {
   if (!value) return '—';
-  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return new Date(value).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 function describeParams(params) {
-  if (!params || Object.keys(params).length === 0) return 'No parameters';
+  if (!params || Object.keys(params).length === 0) return 'Нет параметров';
   const text = Object.entries(params).slice(0, 2).map(([key, value]) => {
     const rendered = typeof value === 'object' ? JSON.stringify(value) : String(value);
     return `${key}: ${rendered}`;
@@ -98,7 +109,7 @@ function createStepRow(step, index) {
   const copy = document.createElement('div');
   copy.className = 'step-copy';
   const title = document.createElement('strong');
-  title.textContent = step.action || 'unknown';
+  title.textContent = step.action || 'неизвестно';
   const detail = document.createElement('p');
   detail.textContent = step.error ? `${step.error.code}: ${step.error.message}` : describeParams(step.params);
   copy.append(title, detail);
@@ -122,7 +133,7 @@ function renderExecution(job = null, previewSteps = null) {
   elements['flow-empty'].hidden = steps.length > 0;
 
   const status = job?.status || 'preview';
-  elements['job-status'].textContent = status.toUpperCase();
+  elements['job-status'].textContent = statusLabels[status] || status.toUpperCase();
   elements['job-status'].className = `status-pill ${status}`;
   const completed = execution?.completed_steps || 0;
   const total = execution?.total_steps ?? steps.length;
@@ -150,7 +161,7 @@ async function preview() {
   try {
     const payload = parseEditor();
     renderExecution(null, payload.script.steps);
-    setEditorState(`${payload.script.steps.length} valid JSON steps`);
+    setEditorState(`Корректных JSON-шагов: ${payload.script.steps.length}`);
   } catch (error) {
     setEditorState(error.message, true);
     showToast(error.message, true);
@@ -161,12 +172,12 @@ async function run() {
   try {
     const payload = parseEditor();
     elements.run.disabled = true;
-    setEditorState('Submitting…');
+    setEditorState('Отправка…');
     const data = await api('/jobs', { method: 'POST', body: JSON.stringify(payload) });
     selectedJobId = data.job.job_id;
     renderExecution(data.job);
-    setEditorState(`Started ${selectedJobId}`);
-    showToast('Script accepted by the interpreter.');
+    setEditorState(`Запущено ${selectedJobId}`);
+    showToast('Сценарий принят интерпретатором.');
     await loadJobs();
     await pollSelectedJob();
   } catch (error) {
@@ -192,7 +203,7 @@ async function pollSelectedJob() {
     if (!terminalStatuses.has(job.status)) {
       pollTimer = setTimeout(pollSelectedJob, 650);
     } else {
-      setEditorState(job.status === 'success' ? 'Run completed successfully' : `${job.status}: ${job.error?.message || 'Run stopped'}`, job.status !== 'success');
+      setEditorState(job.status === 'success' ? 'Запуск успешно завершён' : `${statusLabels[job.status] || job.status}: ${job.error?.message || 'Запуск остановлен'}`, job.status !== 'success');
       await loadJobs();
     }
   } catch (error) {
@@ -202,7 +213,7 @@ async function pollSelectedJob() {
 
 function renderLogs(logs) {
   if (!logs?.length) {
-    elements.logs.innerHTML = '<p class="muted">No events recorded yet.</p>';
+    elements.logs.innerHTML = '<p class="muted">Событий пока нет.</p>';
     return;
   }
   elements.logs.replaceChildren(...logs.map((log) => {
@@ -231,7 +242,7 @@ async function loadJobs() {
   try {
     const data = await api('/jobs?limit=20');
     if (!data.items.length) {
-      elements.jobs.innerHTML = '<p class="muted">No runs yet. Start one above.</p>';
+      elements.jobs.innerHTML = '<p class="muted">Запусков пока нет. Создайте первый выше.</p>';
       return;
     }
     elements.jobs.replaceChildren(...data.items.map((job) => {
@@ -242,10 +253,10 @@ async function loadJobs() {
       const id = document.createElement('strong');
       id.textContent = job.uid;
       const date = document.createElement('time');
-      date.textContent = new Date(job.created_at).toLocaleString();
+      date.textContent = new Date(job.created_at).toLocaleString('ru-RU');
       const status = document.createElement('span');
       status.className = `mini-status ${job.status}`;
-      status.textContent = job.status;
+      status.textContent = statusLabels[job.status] || job.status;
       button.append(id, status, date);
       button.addEventListener('click', () => {
         selectedJobId = job.job_id;
@@ -267,23 +278,23 @@ async function checkConnection() {
     const response = await fetch('/health');
     if (!response.ok) throw new Error();
     elements.connection.className = 'connection online';
-    elements.connection.lastChild.textContent = ' Online';
+    elements.connection.lastChild.textContent = ' Подключено';
   } catch {
     elements.connection.className = 'connection offline';
-    elements.connection.lastChild.textContent = ' Offline';
+    elements.connection.lastChild.textContent = ' Нет подключения';
   }
 }
 
 elements['script-editor'].addEventListener('input', () => {
   updateLineNumbers();
-  setEditorState('Edited · preview to validate');
+  setEditorState('Изменено · откройте предпросмотр для проверки');
 });
 elements['script-editor'].addEventListener('scroll', () => { elements['line-numbers'].scrollTop = elements['script-editor'].scrollTop; });
 elements.format.addEventListener('click', () => {
   try {
     elements['script-editor'].value = JSON.stringify(JSON.parse(elements['script-editor'].value), null, 2);
     updateLineNumbers();
-    setEditorState('JSON formatted');
+    setEditorState('JSON отформатирован');
   } catch (error) { showToast(error.message, true); }
 });
 elements.preview.addEventListener('click', preview);
@@ -296,7 +307,7 @@ elements['api-key'].addEventListener('change', () => {
 elements['toggle-key'].addEventListener('click', () => {
   const hidden = elements['api-key'].type === 'password';
   elements['api-key'].type = hidden ? 'text' : 'password';
-  elements['toggle-key'].textContent = hidden ? 'Hide' : 'Show';
+  elements['toggle-key'].textContent = hidden ? 'Скрыть' : 'Показать';
 });
 
 void checkConnection();

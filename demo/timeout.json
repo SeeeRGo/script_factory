@@ -1,0 +1,16 @@
+{
+  "timeout_ms": 3000,
+  "retry_policy": {
+    "max_attempts": 1,
+    "backoff_ms": 200
+  },
+  "script": {
+    "steps": [
+      {
+        "action": "noop",
+        "timeout_ms": 250,
+        "delay_ms": 1200
+      }
+    ]
+  }
+}
