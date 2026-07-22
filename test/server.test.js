@@ -53,7 +53,19 @@ test('serves the visual execution studio at the deployment root', async () => {
   const response = await fetch(`${origin}/`);
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /text\/html/);
-  assert.match(await response.text(), /Ход выполнения/);
+  const html = await response.text();
+  assert.match(html, /Демо-маршрут на 12 минут/);
+  assert.match(html, /Редактор сценариев/);
+  assert.match(html, /Ход выполнения/);
+});
+
+test('serves ready-to-run demo scenarios to the studio', async () => {
+  const response = await fetch(`${origin}/scenarios.js`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /javascript/);
+  const source = await response.text();
+  assert.match(source, /Отчёт отправлен/);
+  assert.match(source, /Повтор после сбоя/);
 });
 
 test('serves the visual priority queue', async () => {

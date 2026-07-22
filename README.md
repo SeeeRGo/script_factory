@@ -36,7 +36,9 @@ State is persisted to `data/state.sqlite` locally and `/app/data/state.sqlite` i
 
 ## Execution Studio
 
-Open `/` to edit a JSON job, preview its step graph, start it, and follow live progress. The view shows resolved step parameters, status, timing, attempts, normalized errors, recent jobs, and interpreter logs. It uses the same API key and same-origin API as the service, so it also works in the single Railway container.
+Open `/` for a 12-minute guided demo with four ready-to-run scenarios: success, file-not-found, retry, and timeout. Each card includes presenter talking points and can either load its JSON into the editor or run immediately. The same editor supports creating a scenario from a clean template, previewing its step graph, starting it, and following live progress.
+
+The view shows resolved step parameters, status, timing, attempts, normalized errors, recent jobs, and interpreter logs. It uses the same API key and same-origin API as the service, so it also works in the single Railway container.
 
 The default `dev-secret` is prefilled for local development. For other environments, enter the configured `API_KEY`; it is stored only in the current browser's local storage.
 
@@ -139,6 +141,7 @@ npm start
 
 Откройте в браузере:
 
+- `http://localhost:3000/` — основной 12-минутный маршрут, готовые сценарии и редактор;
 - `http://localhost:3000/queue` — визуальная очередь с автообновлением;
 - `http://localhost:3000/docs` — Swagger UI с готовыми примерами запросов.
 

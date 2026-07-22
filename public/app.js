@@ -1,26 +1,4 @@
-const sampleJob = {
-  priority: 100,
-  timeout_ms: 30000,
-  context: {
-    root_dir: '/reports/incoming',
-    loaded_dir: '/reports/loaded',
-    prefixes: ['FNS', 'SFR', 'ROSSTAT']
-  },
-  script: {
-    default_step_timeout_ms: 5000,
-    steps: [
-      { id: 'network', action: 'check_ip', params: { expected_ip: '10.0.0.25', current_ip: '10.0.0.25' }, duration_ms: 350 },
-      { id: 'browser', action: 'launch_browser', params: { browser: 'chromium' }, duration_ms: 500 },
-      { id: 'portal', action: 'navigate', params: { url: 'https://online.sbis.ru' }, duration_ms: 450 },
-      { id: 'identity', action: 'auth_ecp', params: { plugin_running: true }, duration_ms: 600 },
-      { id: 'reports', action: 'find_files', params: { directory: '{{root_dir}}', files: ['FNS_2026.xml', 'SFR_2026.xml'] }, duration_ms: 450 },
-      { id: 'upload', action: 'upload_files', params: { files: '{{found_files}}' }, duration_ms: 700 },
-      { id: 'validate', action: 'validate_report', params: { valid: true }, duration_ms: 500 },
-      { id: 'submit', action: 'submit_if_valid', params: {}, duration_ms: 450 },
-      { id: 'archive', action: 'move_files', params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }, duration_ms: 350 }
-    ]
-  }
-};
+import { blankScenario, demoScenarios } from './scenarios.js';
 
 const terminalStatuses = new Set(['success', 'failed', 'validation_failed', 'cancelled', 'timeout']);
 const statusLabels = {
@@ -37,14 +15,16 @@ const statusLabels = {
 const elements = Object.fromEntries([
   'api-key', 'toggle-key', 'script-editor', 'line-numbers', 'format', 'preview', 'run', 'editor-state',
   'connection', 'job-status', 'progress-value', 'step-count', 'attempt-count', 'duration-value',
-  'progress-bar', 'flow', 'flow-empty', 'jobs', 'logs', 'selected-job', 'refresh-jobs', 'toast'
+  'progress-bar', 'flow', 'flow-empty', 'jobs', 'logs', 'selected-job', 'refresh-jobs', 'toast',
+  'scenario-list', 'scenario-current', 'new-script'
 ].map((id) => [id, document.getElementById(id)]));
 
 let selectedJobId = null;
+let activeScenarioId = demoScenarios[0].id;
 let pollTimer = null;
 let toastTimer = null;
 
-elements['script-editor'].value = JSON.stringify(sampleJob, null, 2);
+elements['script-editor'].value = JSON.stringify(demoScenarios[0].payload, null, 2);
 elements['api-key'].value = localStorage.getItem('script-factory-api-key') || 'dev-secret';
 updateLineNumbers();
 
@@ -78,6 +58,68 @@ function parseEditor() {
 function updateLineNumbers() {
   const count = elements['script-editor'].value.split('\n').length;
   elements['line-numbers'].textContent = Array.from({ length: count }, (_, index) => index + 1).join('\n');
+}
+
+function renderScenarioLibrary() {
+  elements['scenario-list'].replaceChildren(...demoScenarios.map((scenario) => {
+    const article = document.createElement('article');
+    article.className = `scenario-card ${scenario.tone}${scenario.id === activeScenarioId ? ' selected' : ''}`;
+    article.dataset.scenarioId = scenario.id;
+
+    const top = document.createElement('div');
+    top.className = 'scenario-card-top';
+    top.innerHTML = `<span class="scenario-number">${scenario.number}</span><span class="scenario-time">${scenario.talkTime}</span>`;
+
+    const title = document.createElement('h3');
+    title.textContent = scenario.title;
+    const summary = document.createElement('p');
+    summary.className = 'scenario-summary';
+    summary.textContent = scenario.summary;
+
+    const points = document.createElement('ul');
+    points.className = 'scenario-points';
+    points.replaceChildren(...scenario.points.map((point) => {
+      const item = document.createElement('li');
+      item.textContent = point;
+      return item;
+    }));
+
+    const meta = document.createElement('div');
+    meta.className = 'scenario-meta';
+    const result = document.createElement('span');
+    result.className = `scenario-result ${scenario.tone}`;
+    result.textContent = scenario.result;
+    const runtime = document.createElement('span');
+    runtime.textContent = scenario.runtime;
+    meta.append(result, runtime);
+
+    const actions = document.createElement('div');
+    actions.className = 'scenario-actions';
+    actions.innerHTML = `
+      <button class="scenario-open" type="button" data-action="open">В редактор</button>
+      <button class="scenario-run" type="button" data-action="run">Запустить <span>→</span></button>
+    `;
+
+    article.append(top, title, summary, points, meta, actions);
+    return article;
+  }));
+}
+
+function setEditorPayload(payload, label, scenarioId = null) {
+  activeScenarioId = scenarioId;
+  elements['script-editor'].value = JSON.stringify(payload, null, 2);
+  elements['scenario-current'].textContent = label;
+  updateLineNumbers();
+  renderScenarioLibrary();
+  void preview();
+}
+
+function loadScenario(scenarioId, scroll = true) {
+  const scenario = demoScenarios.find((item) => item.id === scenarioId);
+  if (!scenario) return;
+  setEditorPayload(scenario.payload, `Демо · ${scenario.title}`, scenario.id);
+  if (scroll) document.querySelector('.studio').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  showToast(`«${scenario.title}» загружен в редактор.`);
 }
 
 function formatDuration(ms) {
@@ -169,6 +211,7 @@ async function preview() {
 }
 
 async function run() {
+  if (elements.run.disabled) return;
   try {
     const payload = parseEditor();
     elements.run.disabled = true;
@@ -286,6 +329,9 @@ async function checkConnection() {
 }
 
 elements['script-editor'].addEventListener('input', () => {
+  activeScenarioId = null;
+  elements['scenario-current'].textContent = 'Пользовательский сценарий';
+  document.querySelectorAll('.scenario-card').forEach((card) => card.classList.remove('selected'));
   updateLineNumbers();
   setEditorState('Изменено · откройте предпросмотр для проверки');
 });
@@ -299,6 +345,18 @@ elements.format.addEventListener('click', () => {
 });
 elements.preview.addEventListener('click', preview);
 elements.run.addEventListener('click', run);
+elements['scenario-list'].addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-action]');
+  const card = button?.closest('[data-scenario-id]');
+  if (!button || !card) return;
+  loadScenario(card.dataset.scenarioId);
+  if (button.dataset.action === 'run') void run();
+});
+elements['new-script'].addEventListener('click', () => {
+  setEditorPayload(blankScenario, 'Новый сценарий');
+  elements['script-editor'].focus();
+  showToast('Чистый шаблон готов к редактированию.');
+});
 elements['refresh-jobs'].addEventListener('click', loadJobs);
 elements['api-key'].addEventListener('change', () => {
   localStorage.setItem('script-factory-api-key', elements['api-key'].value);
@@ -310,6 +368,7 @@ elements['toggle-key'].addEventListener('click', () => {
   elements['toggle-key'].textContent = hidden ? 'Скрыть' : 'Показать';
 });
 
+renderScenarioLibrary();
 void checkConnection();
 void preview();
 void loadJobs();

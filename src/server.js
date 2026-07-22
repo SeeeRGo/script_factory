@@ -900,7 +900,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (method === 'GET' && (pathname === '/app.js' || pathname === '/styles.css')) {
+    if (method === 'GET' && (pathname === '/app.js' || pathname === '/scenarios.js' || pathname === '/styles.css')) {
       await sendPublicFile(res, pathname.slice(1));
       return;
     }

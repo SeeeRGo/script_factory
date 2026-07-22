@@ -29,6 +29,29 @@
         <p class="hero-copy">Соберите сценарий автоматизации, проследите изменение контекста и разберите нормализованные ошибки прямо в браузере.</p>
       </section>
 
+      <section class="demo-library" aria-labelledby="demo-library-title">
+        <div class="demo-library-heading">
+          <div>
+            <p class="eyebrow">ГОТОВО К ПОКАЗУ</p>
+            <h2 id="demo-library-title">Демо-маршрут на 12 минут</h2>
+            <p>Начните с минутного обзора, затем идите слева направо: от штатной цепочки к управляемым сбоям. В карточках уже есть тезисы для рассказа.</p>
+          </div>
+          <div class="demo-total" aria-label="Общая длительность демо">
+            <strong>12</strong>
+            <span>минут<br>весь показ</span>
+          </div>
+        </div>
+        <div class="scenario-grid" id="scenario-list"></div>
+      </section>
+
+      <section class="workspace-heading" id="editor">
+        <div>
+          <p class="eyebrow">САМОСТОЯТЕЛЬНАЯ РАБОТА</p>
+          <h2>Редактор сценариев</h2>
+        </div>
+        <p>Загрузите готовый пример и меняйте его прямо здесь — или начните с чистого шаблона. Предпросмотр проверит структуру до отправки.</p>
+      </section>
+
       <section class="toolbar" aria-label="Настройки подключения">
         <label for="api-key">API-ключ</label>
         <input id="api-key" type="password" autocomplete="off" value="dev-secret">
@@ -41,9 +64,15 @@
           <div class="panel-heading">
             <div>
               <span class="panel-index">01</span>
-              <h2>Сценарий</h2>
+              <div class="editor-title">
+                <h2>Сценарий</h2>
+                <span id="scenario-current">Демо · Отчёт отправлен</span>
+              </div>
             </div>
-            <button class="text-button" id="format" type="button">Форматировать JSON</button>
+            <div class="editor-actions">
+              <button class="text-button" id="new-script" type="button">Новый</button>
+              <button class="text-button" id="format" type="button">Форматировать JSON</button>
+            </div>
           </div>
           <div class="editor-shell">
             <div class="line-numbers" id="line-numbers" aria-hidden="true">1</div>
