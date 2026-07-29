@@ -57,6 +57,8 @@
   - `GET /system/resources`
   - `GET/PUT /system/config`
 - Реализовать локальную очередь FIFO с приоритетом.
+- Возвращать в health-check идентификатор УН и локальное состояние очереди:
+  число ожидающих и выполняющихся заданий, лимит параллельности и свободные слоты.
 - Реализовать статусы `queued`, `running`, `retrying`, `success`, `failed`, `validation_failed`, `cancelled`, `timeout`.
 - Реализовать `retry_policy`, таймауты и идемпотентность по `uid`.
 - Добавить базовую авторизацию через `X-API-Key`.
@@ -85,11 +87,16 @@
   - `auth_ecp`
   - `find_files`
   - `upload_files`
+  - `download_files`
   - `validate_report`
   - `submit_if_valid`
   - `move_files`
-- Реализовать нормализованную модель ошибок: `IP_MISMATCH`, `FILE_NOT_FOUND`, `AUTH_ERROR`, `UPLOAD_ERROR`, `VALIDATION_ERROR`, `TIMEOUT_ERROR`, `PLUGIN_NOT_RUNNING`.
+- Реализовать нормализованную модель ошибок: `IP_MISMATCH`, `FILE_NOT_FOUND`,
+  `AUTH_ERROR`, `UPLOAD_ERROR`, `DOWNLOAD_ERROR`, `VALIDATION_ERROR`,
+  `TIMEOUT_ERROR`, `PLUGIN_NOT_RUNNING`.
 - Добавить unit/integration тесты интерпретатора.
+- Возвращать в `result` идентификаторы `job_id`, `uid`, `un_id` и файловые
+  артефакты скачивания в согласованном формате `artifacts[]`.
 
 Демо:
 
@@ -109,6 +116,8 @@
 - Настроить работу с окнами, диалогами и выбором ЭЦП.
 - Реализовать поиск отчетов по префиксам и органам: `FNS`, `SFR`, `ROSSTAT`.
 - Реализовать загрузку одного или нескольких файлов.
+- Заменить mock-обработчик `download_files` реальным скачиванием и заполнять
+  метаданные артефактов: путь, размер, MIME-тип и SHA-256.
 - Реализовать проверку протокола валидации.
 - Реализовать отправку отчета при успешной проверке.
 - Реализовать перенос файлов в `Загружено`.

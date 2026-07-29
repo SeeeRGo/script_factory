@@ -1,3 +1,23 @@
+function receiptDownloadStep(durationMs) {
+  return {
+    id: 'receipt',
+    action: 'download_files',
+    params: {
+      destination: '{{receipt_dir}}',
+      files: [
+        {
+          filename: 'submission-receipt.pdf',
+          source_url: 'https://online.sbis.ru/reports/receipt.pdf',
+          mime_type: 'application/pdf',
+          size_bytes: 48231,
+          checksum_sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+        }
+      ]
+    },
+    duration_ms: durationMs
+  };
+}
+
 export const demoScenarios = [
   {
     id: 'happy-path',
@@ -10,7 +30,7 @@ export const demoScenarios = [
     summary: 'Полный путь отчёта: от проверки сети до переноса файлов в архив.',
     points: [
       'Шаги выполняются строго по порядку',
-      'Результат шага попадает в общий контекст',
+      'Скачанная квитанция появляется в result.artifacts',
       'Прогресс и журнал обновляются во время запуска'
     ],
     payload: {
@@ -22,6 +42,7 @@ export const demoScenarios = [
           current_ip: '192.168.1.10',
           root_dir: '/demo/incoming',
           loaded_dir: '/demo/loaded',
+          receipt_dir: '/demo/downloads',
           prefixes: ['FNS', 'SFR', 'ROSSTAT']
         },
         default_step_timeout_ms: 1500,
@@ -34,6 +55,7 @@ export const demoScenarios = [
           { id: 'upload', action: 'upload_files', params: { files: '{{found_files}}' }, duration_ms: 650 },
           { id: 'validate', action: 'validate_report', params: { valid: true }, duration_ms: 500 },
           { id: 'submit', action: 'submit_if_valid', params: {}, duration_ms: 450 },
+          receiptDownloadStep(320),
           { id: 'archive', action: 'move_files', params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }, duration_ms: 350 }
         ]
       }
@@ -51,7 +73,7 @@ export const demoScenarios = [
     points: [
       'Ошибка имеет стабильный код FILE_NOT_FOUND',
       'Четыре подготовительных шага уже завершены',
-      'Загрузка, проверка и отправка остаются в ожидании'
+      'Загрузка, отправка и скачивание квитанции ожидают'
     ],
     payload: {
       priority: 20,
@@ -62,6 +84,7 @@ export const demoScenarios = [
           current_ip: '192.168.1.10',
           root_dir: '/demo/empty',
           loaded_dir: '/demo/loaded',
+          receipt_dir: '/demo/downloads',
           prefixes: ['FNS']
         },
         default_step_timeout_ms: 1200,
@@ -74,6 +97,7 @@ export const demoScenarios = [
           { id: 'upload', action: 'upload_files', params: { files: '{{found_files}}' }, duration_ms: 300 },
           { id: 'validate', action: 'validate_report', params: { valid: true }, duration_ms: 250 },
           { id: 'submit', action: 'submit_if_valid', params: {}, duration_ms: 220 },
+          receiptDownloadStep(200),
           { id: 'archive', action: 'move_files', params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }, duration_ms: 200 }
         ]
       }
@@ -91,7 +115,7 @@ export const demoScenarios = [
     points: [
       'Сбой возникает после подготовки файлов и портала',
       'Очередь выдерживает backoff 700 мс',
-      'Вторая попытка успешно проходит все девять шагов'
+      'Вторая попытка успешно проходит все десять шагов'
     ],
     payload: {
       priority: 30,
@@ -102,6 +126,7 @@ export const demoScenarios = [
           current_ip: '192.168.1.10',
           root_dir: '/demo/incoming',
           loaded_dir: '/demo/loaded',
+          receipt_dir: '/demo/downloads',
           prefixes: ['FNS', 'SFR']
         },
         default_step_timeout_ms: 1200,
@@ -114,6 +139,7 @@ export const demoScenarios = [
           { id: 'upload', action: 'upload_files', params: { files: '{{found_files}}' }, duration_ms: 300 },
           { id: 'validate', action: 'validate_report', params: { valid: true }, duration_ms: 220 },
           { id: 'submit', action: 'submit_if_valid', params: {}, duration_ms: 220 },
+          receiptDownloadStep(200),
           { id: 'archive', action: 'move_files', params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }, duration_ms: 180 }
         ]
       }
@@ -142,6 +168,7 @@ export const demoScenarios = [
           current_ip: '192.168.1.10',
           root_dir: '/demo/incoming',
           loaded_dir: '/demo/loaded',
+          receipt_dir: '/demo/downloads',
           prefixes: ['FNS', 'SFR']
         },
         default_step_timeout_ms: 1200,
@@ -154,6 +181,7 @@ export const demoScenarios = [
           { id: 'upload', action: 'upload_files', params: { files: '{{found_files}}' }, duration_ms: 300 },
           { id: 'validate', action: 'validate_report', params: { valid: true }, duration_ms: 220 },
           { id: 'submit', action: 'submit_if_valid', params: {}, duration_ms: 220 },
+          receiptDownloadStep(200),
           { id: 'archive', action: 'move_files', params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }, duration_ms: 180 }
         ]
       }

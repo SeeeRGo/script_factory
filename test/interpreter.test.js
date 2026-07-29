@@ -20,6 +20,7 @@ test('the default registry contains every Stage 2 action', () => {
     'auth_ecp',
     'find_files',
     'upload_files',
+    'download_files',
     'validate_report',
     'submit_if_valid',
     'move_files'
@@ -79,14 +80,23 @@ test('a complete report workflow passes context between steps and emits lifecycl
         { action: 'upload_files', params: { files: '{{found_files}}' }, duration_ms: 1 },
         { action: 'validate_report', params: { valid: true }, duration_ms: 1 },
         { action: 'submit_if_valid', params: {}, duration_ms: 1 },
+        {
+          id: 'receipt',
+          action: 'download_files',
+          params: {
+            destination: '{{download_dir}}',
+            files: [{ filename: 'receipt.pdf', source_url: 'https://example.test/receipt.pdf', size_bytes: 128 }]
+          },
+          duration_ms: 1
+        },
         { action: 'move_files', params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }, duration_ms: 1 }
       ]
     },
-    initialContext: { root_dir: '/incoming', loaded_dir: '/loaded' },
+    initialContext: { root_dir: '/incoming', loaded_dir: '/loaded', download_dir: '/downloads' },
     onEvent: (event) => events.push(event)
   });
 
-  assert.equal(result.steps_executed, 9);
+  assert.equal(result.steps_executed, 10);
   assert.equal(result.context.browser_launched, true);
   assert.equal(result.context.current_url, 'https://online.sbis.ru');
   assert.equal(result.context.authenticated, true);
@@ -94,11 +104,15 @@ test('a complete report workflow passes context between steps and emits lifecycl
   assert.deepEqual(result.context.uploaded_files, ['FNS.xml']);
   assert.equal(result.context.report_valid, true);
   assert.equal(result.context.submitted, true);
+  assert.deepEqual(result.context.downloaded_files, ['/downloads/receipt.pdf']);
+  assert.equal(result.context.artifacts[0].kind, 'downloaded_file');
+  assert.equal(result.context.artifacts[0].filename, 'receipt.pdf');
+  assert.equal(result.context.artifacts[0].size_bytes, 128);
   assert.equal(result.context.loaded_dir, '/loaded');
   assert.equal(events[0].type, 'script_started');
   assert.equal(events.at(-1).type, 'script_completed');
-  assert.equal(events.filter((event) => event.type === 'step_started').length, 9);
-  assert.equal(events.filter((event) => event.type === 'step_completed').length, 9);
+  assert.equal(events.filter((event) => event.type === 'step_started').length, 10);
+  assert.equal(events.filter((event) => event.type === 'step_completed').length, 10);
 });
 
 test('file steps find reports by prefix and move them on the real filesystem', async (t) => {
@@ -141,6 +155,7 @@ for (const scenario of [
   ['auth_ecp', { authenticated: false }, ERROR_CODES.AUTH_ERROR],
   ['auth_ecp', { plugin_running: false }, ERROR_CODES.PLUGIN_NOT_RUNNING],
   ['upload_files', { files: ['a.xml'], upload_failed: true }, ERROR_CODES.UPLOAD_ERROR],
+  ['download_files', { files: ['receipt.pdf'], download_failed: true }, ERROR_CODES.DOWNLOAD_ERROR],
   ['validate_report', { valid: false }, ERROR_CODES.VALIDATION_ERROR]
 ]) {
   const [action, params, expectedCode] = scenario;

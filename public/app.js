@@ -142,6 +142,14 @@ function describeParams(params) {
   return text.length > 110 ? `${text.slice(0, 107)}…` : text;
 }
 
+function describeOutput(output) {
+  if (!output || Object.keys(output).length === 0) return 'Шаг завершён';
+  if (Array.isArray(output.artifacts) && output.artifacts.length > 0) {
+    return `Скачано: ${output.artifacts.map((artifact) => artifact.filename).join(', ')}`;
+  }
+  return `Результат · ${describeParams(output)}`;
+}
+
 function createStepRow(step, index) {
   const row = document.createElement('div');
   row.className = `flow-step ${step.status || 'pending'}`;
@@ -153,7 +161,11 @@ function createStepRow(step, index) {
   const title = document.createElement('strong');
   title.textContent = step.action || 'неизвестно';
   const detail = document.createElement('p');
-  detail.textContent = step.error ? `${step.error.code}: ${step.error.message}` : describeParams(step.params);
+  detail.textContent = step.error
+    ? `${step.error.code}: ${step.error.message}`
+    : step.status === 'success'
+      ? describeOutput(step.output)
+      : describeParams(step.params);
   copy.append(title, detail);
   const duration = document.createElement('span');
   duration.className = 'step-time';
@@ -320,8 +332,9 @@ async function checkConnection() {
   try {
     const response = await fetch('/health');
     if (!response.ok) throw new Error();
+    const health = await response.json();
     elements.connection.className = 'connection online';
-    elements.connection.lastChild.textContent = ' Подключено';
+    elements.connection.lastChild.textContent = ` Подключено · ${health.un_id}`;
   } catch {
     elements.connection.className = 'connection offline';
     elements.connection.lastChild.textContent = ' Нет подключения';

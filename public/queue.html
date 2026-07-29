@@ -386,10 +386,16 @@
 
       async function refresh() {
         try {
-          const data = await api('/api/v2/jobs?limit=100');
+          const [data, health] = await Promise.all([
+            api('/api/v2/jobs?limit=100'),
+            fetch('/health').then((response) => {
+              if (!response.ok) throw new Error(`HTTP ${response.status}`);
+              return response.json();
+            })
+          ]);
           render(data.items, data.total);
           elements['status-dot'].className = 'status-dot online';
-          elements['connection-text'].textContent = 'API подключён';
+          elements['connection-text'].textContent = `УН ${health.un_id} · в работе ${health.queue.running} · в очереди ${health.queue.queued}`;
           elements['updated-at'].textContent = `· обновлено ${formatDate(new Date())}`;
           if (selectedJobId) void showJob(selectedJobId, false);
         } catch (error) {

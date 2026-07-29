@@ -8,6 +8,7 @@ services:
       - ./demo-data:/app/demo-data
     environment:
       API_KEY: ${API_KEY:-dev-secret}
+      UN_ID: ${UN_ID:?UN_ID must be set in .env}
       WEB_LOGIN: ${WEB_LOGIN:?WEB_LOGIN must be set in .env}
       WEB_PASSWORD: ${WEB_PASSWORD:?WEB_PASSWORD must be set in .env}
       WEB_SESSION_TTL_HOURS: ${WEB_SESSION_TTL_HOURS:-12}

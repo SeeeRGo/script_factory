@@ -6,7 +6,7 @@ Stage 2 MVP for the distributed script execution service described in `plan-real
 
 ```bash
 cp .env.example .env
-# Set WEB_LOGIN and WEB_PASSWORD in .env
+# Set UN_ID, WEB_LOGIN and WEB_PASSWORD in .env
 npm start
 ```
 
@@ -20,6 +20,7 @@ The visual queue monitor is available at `http://localhost:3000/queue`.
 The browser interface requires a login. Credentials are read from `WEB_LOGIN` and
 `WEB_PASSWORD` in `.env`; the password is never sent back to the browser. A successful
 login creates an HttpOnly session cookie that expires after 12 hours by default.
+`UN_ID` identifies the machine in healthchecks, jobs, and execution results.
 
 The Docker Compose Swagger UI helper is available at `http://localhost:33002`.
 In `docker compose`, it loads the spec from a mounted local file and preloads `X-API-Key: dev-secret`.
@@ -58,11 +59,15 @@ The interpreter validates scripts before they enter the queue. Each step support
 - `timeout_ms`: optional per-step timeout;
 - `duration_ms`: mock adapter duration for Stage 2 demonstrations and tests.
 
-Registered actions are `noop`, `check_ip`, `launch_browser`, `navigate`, `auth_ecp`, `find_files`, `upload_files`, `validate_report`, `submit_if_valid`, and `move_files`. `GET /api/v2/interpreter/actions` returns the runtime registry.
+Registered actions are `noop`, `check_ip`, `launch_browser`, `navigate`, `auth_ecp`, `find_files`, `upload_files`, `download_files`, `validate_report`, `submit_if_valid`, and `move_files`. `GET /api/v2/interpreter/actions` returns the runtime registry.
 
 Exact context expressions preserve their JSON type, so `"{{found_files}}"` resolves to an array rather than a string. Step outputs are merged into the context for subsequent steps. The execution result returns the final context.
 
-The normalized workflow errors are `IP_MISMATCH`, `FILE_NOT_FOUND`, `AUTH_ERROR`, `UPLOAD_ERROR`, `VALIDATION_ERROR`, `TIMEOUT_ERROR`, and `PLUGIN_NOT_RUNNING`.
+Downloaded files are returned in `result.artifacts` with `artifact_id`, `filename`,
+`local_path`, source URL, content type, size, and checksum metadata. Every successful
+result also includes `job_id`, `uid`, and `un_id`.
+
+The normalized workflow errors are `IP_MISMATCH`, `FILE_NOT_FOUND`, `AUTH_ERROR`, `UPLOAD_ERROR`, `DOWNLOAD_ERROR`, `VALIDATION_ERROR`, `TIMEOUT_ERROR`, and `PLUGIN_NOT_RUNNING`.
 
 Example:
 
@@ -114,6 +119,7 @@ Set these Railway variables:
 
 ```text
 API_KEY=<production-secret>
+UN_ID=<stable-machine-identifier>
 WEB_LOGIN=<interface-login>
 WEB_PASSWORD=<strong-interface-password>
 WEB_COOKIE_SECURE=true
@@ -145,7 +151,7 @@ Swagger UI in `docker compose` preauthorizes the default dev key for convenience
 
 ```bash
 cp .env.example .env
-# Укажите WEB_LOGIN и WEB_PASSWORD
+# Укажите UN_ID, WEB_LOGIN и WEB_PASSWORD
 npm run demo:reset
 npm start
 ```

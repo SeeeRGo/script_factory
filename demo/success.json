@@ -10,6 +10,7 @@
       "current_ip": "192.168.1.10",
       "root_dir": "./demo-data/incoming",
       "loaded_dir": "./demo-data/loaded",
+      "receipt_dir": "./demo-data/downloads",
       "prefixes": ["FNS", "SFR", "ROSSTAT"]
     },
     "steps": [
@@ -49,6 +50,23 @@
         "params": { "valid": true }
       },
       { "action": "submit_if_valid", "timeout_ms": 1000, "delay_ms": 250 },
+      {
+        "id": "receipt",
+        "action": "download_files",
+        "timeout_ms": 1000,
+        "delay_ms": 250,
+        "params": {
+          "destination": "{{receipt_dir}}",
+          "files": [
+            {
+              "filename": "submission-receipt.pdf",
+              "source_url": "https://online.sbis.ru/reports/receipt.pdf",
+              "mime_type": "application/pdf",
+              "size_bytes": 48231
+            }
+          ]
+        }
+      },
       {
         "action": "move_files",
         "timeout_ms": 1000,

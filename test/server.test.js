@@ -8,6 +8,7 @@ import test from 'node:test';
 const API_KEY = 'integration-secret';
 const WEB_LOGIN = 'integration-user';
 const WEB_PASSWORD = 'integration-password';
+const UN_ID = 'un-integration-01';
 const PORT = 36000 + Math.floor(Math.random() * 2000);
 const origin = `http://127.0.0.1:${PORT}`;
 let child;
@@ -58,6 +59,7 @@ test.before(async () => {
       PORT: String(PORT),
       HOST: '127.0.0.1',
       API_KEY,
+      UN_ID,
       WEB_LOGIN,
       WEB_PASSWORD,
       DATA_DIR: dataDir
@@ -104,6 +106,67 @@ test('creates an HttpOnly browser session after login', () => {
   assert.match(webSetCookie, /script_factory_session=/);
   assert.match(webSetCookie, /HttpOnly/);
   assert.match(webSetCookie, /SameSite=Lax/);
+});
+
+test('healthcheck exposes this UN and its local queue state', async () => {
+  for (const pathname of ['/health', '/api/v2/health']) {
+    const response = await fetch(`${origin}${pathname}`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.status, 'ok');
+    assert.equal(body.un_id, UN_ID);
+    assert.equal(body.queue.queued, 0);
+    assert.equal(body.queue.running, 0);
+    assert.equal(body.queue.max_parallel_jobs, 1);
+    assert.equal(body.queue.available_slots, 1);
+    assert.equal(body.queue.status, 'idle');
+  }
+
+  const resourcesResponse = await request('/api/v2/system/resources');
+  assert.equal(resourcesResponse.status, 200);
+  const resources = await resourcesResponse.json();
+  assert.equal(resources.un_id, UN_ID);
+  assert.deepEqual(resources.queue, {
+    status: 'idle',
+    queued: 0,
+    running: 0,
+    max_parallel_jobs: 1,
+    available_slots: 1
+  });
+});
+
+test('healthcheck reflects active and queued jobs on this UN', async () => {
+  const createJob = async (uid) => {
+    const response = await request('/api/v2/jobs', {
+      method: 'POST',
+      body: JSON.stringify({
+        uid,
+        script: { steps: [{ action: 'noop', duration_ms: 350 }] }
+      })
+    });
+    return (await response.json()).job.job_id;
+  };
+
+  const firstJobId = await createJob(`health-running-${Date.now()}`);
+  const secondJobId = await createJob(`health-queued-${Date.now()}`);
+  const health = await fetch(`${origin}/health`).then((response) => response.json());
+  assert.equal(health.un_id, UN_ID);
+  assert.deepEqual(health.queue, {
+    status: 'busy',
+    queued: 1,
+    running: 1,
+    max_parallel_jobs: 1,
+    available_slots: 0
+  });
+
+  for (const jobId of [firstJobId, secondJobId]) {
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      const job = await request(`/api/v2/jobs/${jobId}`).then((response) => response.json()).then((body) => body.job);
+      if (job.status === 'success') break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
 });
 
 test('serves the visual execution studio to an authenticated browser', async () => {
@@ -159,6 +222,7 @@ test('exposes the interpreter action registry', async () => {
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.ok(body.actions.includes('find_files'));
+  assert.ok(body.actions.includes('download_files'));
   assert.ok(body.actions.includes('submit_if_valid'));
 });
 
@@ -174,18 +238,34 @@ test('rejects invalid scripts before queueing them', async () => {
 });
 
 test('executes a script through the API and exposes visual step state and logs', async () => {
+  const externalUid = `integration-${Date.now()}`;
   const createResponse = await request('/api/v2/jobs', {
     method: 'POST',
     body: JSON.stringify({
-      uid: `integration-${Date.now()}`,
+      uid: externalUid,
       timeout_ms: 5000,
-      context: { root_dir: '/incoming', loaded_dir: '/loaded' },
+      context: { root_dir: '/incoming', loaded_dir: '/loaded', download_dir: '/downloads' },
       script: {
         steps: [
           { action: 'find_files', params: { directory: '{{root_dir}}', files: ['FNS.xml'] }, duration_ms: 2 },
           { action: 'upload_files', params: { files: '{{found_files}}' }, duration_ms: 2 },
           { action: 'validate_report', params: { valid: true }, duration_ms: 2 },
           { action: 'submit_if_valid', params: {}, duration_ms: 2 },
+          {
+            id: 'receipt',
+            action: 'download_files',
+            params: {
+              destination: '{{download_dir}}',
+              files: [{
+                filename: 'receipt.pdf',
+                source_url: 'https://example.test/receipt.pdf',
+                mime_type: 'application/pdf',
+                size_bytes: 128,
+                checksum_sha256: 'abc123'
+              }]
+            },
+            duration_ms: 2
+          },
           { action: 'move_files', params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }, duration_ms: 2 }
         ]
       }
@@ -205,14 +285,31 @@ test('executes a script through the API and exposes visual step state and logs',
   }
 
   assert.equal(job.status, 'success');
+  assert.equal(job.un_id, UN_ID);
   assert.equal(job.execution.percent, 100);
-  assert.equal(job.execution.completed_steps, 5);
+  assert.equal(job.execution.completed_steps, 6);
   assert.ok(job.execution.steps.every((step) => step.status === 'success'));
   assert.deepEqual(job.result.context.uploaded_files, ['FNS.xml']);
+  assert.equal(job.result.job_id, jobId);
+  assert.equal(job.result.uid, externalUid);
+  assert.equal(job.result.un_id, UN_ID);
+  assert.equal(job.result.artifacts.length, 1);
+  const { created_at: artifactCreatedAt, ...artifact } = job.result.artifacts[0];
+  assert.deepEqual(artifact, {
+    artifact_id: 'receipt_1',
+    kind: 'downloaded_file',
+    filename: 'receipt.pdf',
+    local_path: '/downloads/receipt.pdf',
+    source_url: 'https://example.test/receipt.pdf',
+    mime_type: 'application/pdf',
+    size_bytes: 128,
+    checksum_sha256: 'abc123'
+  });
+  assert.ok(Number.isFinite(Date.parse(artifactCreatedAt)));
 
   const logResponse = await request(`/api/v2/jobs/${jobId}/logs`);
   const logBody = await logResponse.json();
-  assert.ok(logBody.logs.some((entry) => entry.message === 'Шаг 1/5 запущен'));
+  assert.ok(logBody.logs.some((entry) => entry.message === 'Шаг 1/6 запущен'));
   assert.ok(logBody.logs.some((entry) => entry.message === 'Задание успешно выполнено'));
 });
 

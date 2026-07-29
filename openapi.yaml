@@ -44,7 +44,7 @@ components:
           example: locate-reports
         action:
           type: string
-          enum: [noop, check_ip, launch_browser, navigate, auth_ecp, find_files, upload_files, validate_report, submit_if_valid, move_files]
+          enum: [noop, check_ip, launch_browser, navigate, auth_ecp, find_files, upload_files, download_files, validate_report, submit_if_valid, move_files]
           example: find_files
         params:
           type: object
@@ -86,7 +86,7 @@ components:
       properties:
         uid:
           type: string
-          description: Необязательный идентификатор идемпотентности. Также поддерживается Idempotency-Key.
+          description: Идентификатор задания во внешней системе и ключ идемпотентности. Также поддерживается Idempotency-Key.
         priority:
           type: integer
           description: Чем меньше значение, тем выше приоритет.
@@ -185,12 +185,128 @@ components:
         details:
           type: object
           additionalProperties: true
+    Artifact:
+      type: object
+      required: [artifact_id, kind, filename, local_path]
+      properties:
+        artifact_id:
+          type: string
+          description: Стабильный идентификатор артефакта в рамках результата задания.
+        kind:
+          type: string
+          enum: [downloaded_file]
+        filename:
+          type: string
+        local_path:
+          type: string
+          description: Путь к файлу на УН, выполнившей задание.
+        source_url:
+          type: string
+          format: uri
+          nullable: true
+        mime_type:
+          type: string
+          nullable: true
+        size_bytes:
+          type: integer
+          minimum: 0
+          nullable: true
+        checksum_sha256:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    JobResult:
+      type: object
+      nullable: true
+      required: [job_id, uid, un_id, artifacts]
+      properties:
+        job_id:
+          type: string
+        uid:
+          type: string
+          description: Идентификатор задания во внешней системе.
+        un_id:
+          type: string
+          description: Идентификатор УН, выполнившей задание.
+        message:
+          type: string
+        steps_executed:
+          type: integer
+        duration_ms:
+          type: integer
+        context:
+          type: object
+          additionalProperties: true
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Artifact'
+        simulated_outcome:
+          type: string
+    QueueHealth:
+      type: object
+      required: [status, queued, running, max_parallel_jobs, available_slots]
+      properties:
+        status:
+          type: string
+          enum: [idle, processing, busy]
+        queued:
+          type: integer
+          minimum: 0
+        running:
+          type: integer
+          minimum: 0
+        max_parallel_jobs:
+          type: integer
+          minimum: 1
+        available_slots:
+          type: integer
+          minimum: 0
+    HealthResponse:
+      type: object
+      required: [status, service, request_id, un_id, queue]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        service:
+          type: string
+        request_id:
+          type: string
+        un_id:
+          type: string
+        queue:
+          $ref: '#/components/schemas/QueueHealth'
+    SystemResources:
+      type: object
+      properties:
+        un_id:
+          type: string
+        uptime_seconds:
+          type: integer
+        memory_usage:
+          type: object
+          additionalProperties: true
+        jobs_total:
+          type: integer
+        jobs_running:
+          type: integer
+        jobs_queued:
+          type: integer
+        queue:
+          $ref: '#/components/schemas/QueueHealth'
+        node_version:
+          type: string
     Job:
       type: object
       properties:
         job_id:
           type: string
         uid:
+          type: string
+        un_id:
           type: string
         status:
           type: string
@@ -220,9 +336,7 @@ components:
           format: date-time
           nullable: true
         result:
-          type: object
-          nullable: true
-          additionalProperties: true
+          $ref: '#/components/schemas/JobResult'
         error:
           $ref: '#/components/schemas/ErrorBody'
         execution:
@@ -270,6 +384,10 @@ paths:
       responses:
         "200":
           description: Сервис доступен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
   /interpreter/actions:
     get:
       tags: [Интерпретатор]
@@ -335,6 +453,7 @@ paths:
                       current_ip: 192.168.1.10
                       root_dir: ./demo-data/incoming
                       loaded_dir: ./demo-data/loaded
+                      receipt_dir: ./demo-data/downloads
                       prefixes: [FNS, SFR, ROSSTAT]
                     steps:
                       - action: check_ip
@@ -360,6 +479,16 @@ paths:
                         params: { valid: true }
                       - action: submit_if_valid
                         delay_ms: 250
+                      - id: receipt
+                        action: download_files
+                        delay_ms: 250
+                        params:
+                          destination: "{{receipt_dir}}"
+                          files:
+                            - filename: submission-receipt.pdf
+                              source_url: https://online.sbis.ru/reports/receipt.pdf
+                              mime_type: application/pdf
+                              size_bytes: 48231
                       - action: move_files
                         delay_ms: 250
                         params:
@@ -481,6 +610,10 @@ paths:
       responses:
         "200":
           description: Ресурсы системы
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemResources'
   /system/config:
     get:
       tags: [Система]

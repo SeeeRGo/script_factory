@@ -16,6 +16,7 @@ const HOST = process.env.HOST || '127.0.0.1';
 const API_KEY = process.env.API_KEY || 'dev-secret';
 const WEB_LOGIN = process.env.WEB_LOGIN;
 const WEB_PASSWORD = process.env.WEB_PASSWORD;
+const UN_ID = process.env.UN_ID;
 const configuredSessionHours = Number(process.env.WEB_SESSION_TTL_HOURS || 12);
 const WEB_SESSION_TTL_SECONDS = Number.isFinite(configuredSessionHours)
   ? Math.floor(Math.max(60, configuredSessionHours * 60 * 60))
@@ -62,9 +63,9 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function validateWebAuthConfig() {
-  if (!WEB_LOGIN || !WEB_PASSWORD) {
-    throw new Error('WEB_LOGIN и WEB_PASSWORD должны быть заданы в .env или переменных окружения');
+function validateRuntimeConfig() {
+  if (!WEB_LOGIN || !WEB_PASSWORD || !UN_ID) {
+    throw new Error('WEB_LOGIN, WEB_PASSWORD и UN_ID должны быть заданы в .env или переменных окружения');
   }
 }
 
@@ -570,7 +571,7 @@ function createJobRecord(payload) {
     logs: []
   };
 
-  logJob(job, 'info', 'Задание создано', { uid: job.uid, priority: job.priority });
+  logJob(job, 'info', 'Задание создано', { uid: job.uid, un_id: UN_ID, priority: job.priority });
   return job;
 }
 
@@ -578,6 +579,7 @@ function summarizeJob(job) {
   return {
     job_id: job.job_id,
     uid: job.uid,
+    un_id: UN_ID,
     status: job.status,
     priority: job.priority,
     attempts: job.attempts,
@@ -777,6 +779,12 @@ async function executeJob(job) {
     job.result = {
       message: 'Задание успешно выполнено',
       ...interpreterResult,
+      job_id: job.job_id,
+      uid: job.uid,
+      un_id: UN_ID,
+      artifacts: Array.isArray(interpreterResult.context?.artifacts)
+        ? interpreterResult.context.artifacts
+        : [],
       simulated_outcome: simulatedOutcome
     };
     job.finished_at = nowIso();
@@ -910,13 +918,38 @@ function stripBasePath(pathname) {
   return pathname.slice(BASE_PATH.length) || '/';
 }
 
+function buildQueueHealth() {
+  const maxParallelJobs = state.config.max_parallel_jobs;
+  const running = state.running.size;
+  const queued = state.queue.length;
+  return {
+    status: running >= maxParallelJobs ? 'busy' : queued > 0 || running > 0 ? 'processing' : 'idle',
+    queued,
+    running,
+    max_parallel_jobs: maxParallelJobs,
+    available_slots: Math.max(0, maxParallelJobs - running)
+  };
+}
+
+function buildHealthResponse(requestId) {
+  return {
+    status: 'ok',
+    service: 'script-factory',
+    request_id: requestId,
+    un_id: UN_ID,
+    queue: buildQueueHealth()
+  };
+}
+
 function buildSystemResources() {
   return {
+    un_id: UN_ID,
     uptime_seconds: Math.floor((Date.now() - state.startedAt) / 1000),
     memory_usage: process.memoryUsage(),
     jobs_total: state.jobs.size,
     jobs_running: state.running.size,
     jobs_queued: state.queue.length,
+    queue: buildQueueHealth(),
     node_version: process.version
   };
 }
@@ -998,7 +1031,7 @@ const server = http.createServer(async (req, res) => {
     const method = req.method || 'GET';
 
     if (pathname === '/health') {
-      sendJson(res, 200, { status: 'ok', service: 'script-factory', request_id: requestId });
+      sendJson(res, 200, buildHealthResponse(requestId));
       return;
     }
 
@@ -1087,7 +1120,7 @@ const server = http.createServer(async (req, res) => {
     const resourcePath = stripBasePath(pathname);
 
     if (method === 'GET' && resourcePath === '/health') {
-      sendJson(res, 200, { status: 'ok', service: 'script-factory', request_id: requestId });
+      sendJson(res, 200, buildHealthResponse(requestId));
       return;
     }
 
@@ -1252,7 +1285,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 async function main() {
-  validateWebAuthConfig();
+  validateRuntimeConfig();
   state.config = defaultConfig();
   await loadPersistedState();
   schedulePersist();

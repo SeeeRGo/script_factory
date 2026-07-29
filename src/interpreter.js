@@ -8,6 +8,7 @@ export const ERROR_CODES = Object.freeze({
   FILE_NOT_FOUND: 'FILE_NOT_FOUND',
   AUTH_ERROR: 'AUTH_ERROR',
   UPLOAD_ERROR: 'UPLOAD_ERROR',
+  DOWNLOAD_ERROR: 'DOWNLOAD_ERROR',
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   TIMEOUT_ERROR: 'TIMEOUT_ERROR',
   PLUGIN_NOT_RUNNING: 'PLUGIN_NOT_RUNNING'
@@ -99,6 +100,47 @@ async function simulate(input) {
   ), input.signal);
 }
 
+function downloadedFileArtifact(file, index, input) {
+  const descriptor = typeof file === 'string' ? { source: file } : { ...(file || {}) };
+  const rawSource = descriptor.source_url ?? descriptor.url ?? descriptor.source ?? null;
+  let sourceUrl = descriptor.source_url ?? descriptor.url ?? null;
+  if (!sourceUrl && typeof descriptor.source === 'string') {
+    try {
+      sourceUrl = new URL(descriptor.source).href;
+    } catch {
+      sourceUrl = null;
+    }
+  }
+  let inferredFilename = descriptor.filename ?? descriptor.name;
+  if (!inferredFilename && typeof rawSource === 'string') {
+    try {
+      inferredFilename = path.basename(new URL(rawSource).pathname);
+    } catch {
+      inferredFilename = path.basename(rawSource);
+    }
+  }
+  const filename = inferredFilename || `download_${index + 1}`;
+  const destination = descriptor.destination
+    ?? input.params.destination
+    ?? input.context.download_dir
+    ?? null;
+  const localPath = descriptor.local_path
+    ?? descriptor.path
+    ?? (destination ? path.join(destination, filename) : sourceUrl ? filename : rawSource ?? filename);
+
+  return {
+    artifact_id: descriptor.artifact_id ?? `${input.step.id ?? `step_${input.step_index + 1}`}_${index + 1}`,
+    kind: 'downloaded_file',
+    filename,
+    local_path: localPath,
+    source_url: sourceUrl,
+    mime_type: descriptor.mime_type ?? descriptor.content_type ?? null,
+    size_bytes: Number.isFinite(descriptor.size_bytes) ? descriptor.size_bytes : null,
+    checksum_sha256: descriptor.checksum_sha256 ?? null,
+    created_at: new Date().toISOString()
+  };
+}
+
 export function createDefaultStepRegistry(options = {}) {
   const workingDirectory = options.workingDirectory || process.cwd();
   const resolvePath = (value) => path.isAbsolute(value) ? value : path.resolve(workingDirectory, value);
@@ -187,6 +229,29 @@ export function createDefaultStepRegistry(options = {}) {
       }
       await simulate(input);
       return { uploaded_files: files, files_uploaded: files.length };
+    })
+    .register('download_files', async (input) => {
+      failWhen(input.params, ['fail', 'download_failed'], ERROR_CODES.DOWNLOAD_ERROR, 'Не удалось скачать файлы', {
+        statusCode: 502,
+        retryable: true
+      });
+      const files = Array.isArray(input.params.files)
+        ? input.params.files
+        : input.params.file !== undefined
+          ? [input.params.file]
+          : input.params.url
+            ? [{ source_url: input.params.url, filename: input.params.filename }]
+            : [];
+      if (files.length === 0) {
+        throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, 'Не указаны файлы для скачивания', { statusCode: 404 });
+      }
+      await simulate(input);
+      const artifacts = files.map((file, index) => downloadedFileArtifact(file, index, input));
+      return {
+        downloaded_files: artifacts.map((artifact) => artifact.local_path),
+        files_downloaded: artifacts.length,
+        artifacts
+      };
     })
     .register('validate_report', async (input) => {
       await simulate(input);
@@ -387,8 +452,21 @@ export async function executeScript(options) {
     });
 
     try {
-      const output = await stepWithTimeout(registry, action, { step, params, context, signal, attempt }, timeoutMs);
-      if (output && typeof output === 'object') Object.assign(context, output);
+      const output = await stepWithTimeout(registry, action, {
+        step,
+        step_index: index,
+        params,
+        context,
+        signal,
+        attempt
+      }, timeoutMs);
+      if (output && typeof output === 'object') {
+        const { artifacts, ...contextOutput } = output;
+        Object.assign(context, contextOutput);
+        if (Array.isArray(artifacts)) {
+          context.artifacts = [...(Array.isArray(context.artifacts) ? context.artifacts : []), ...artifacts];
+        }
+      }
       await onEvent({
         type: 'step_completed',
         ts: new Date().toISOString(),
