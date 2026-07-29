@@ -1,5 +1,8 @@
 .repo.git/
 node_modules/
 *.log
+.env
+.env.*
+!.env.example
 data/
 demo-data/

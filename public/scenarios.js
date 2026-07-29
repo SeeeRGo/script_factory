@@ -44,25 +44,37 @@ export const demoScenarios = [
     number: '02',
     title: 'Файл не найден',
     talkTime: '2 мин',
-    runtime: '≈ 1 сек',
+    runtime: '≈ 2 сек',
     result: 'ОШИБКА',
     tone: 'error',
-    summary: 'Предсказуемая остановка на поиске файла без запуска следующих шагов.',
+    summary: 'Портал готов к работе, но цепочка останавливается при поиске отчётов.',
     points: [
       'Ошибка имеет стабильный код FILE_NOT_FOUND',
-      'Виден точный шаг и параметры сбоя',
-      'Оставшиеся действия не выполняются'
+      'Четыре подготовительных шага уже завершены',
+      'Загрузка, проверка и отправка остаются в ожидании'
     ],
     payload: {
       priority: 20,
       timeout_ms: 5000,
       retry_policy: { max_attempts: 1, backoff_ms: 200 },
       script: {
-        context: { current_ip: '192.168.1.10', root_dir: '/demo/empty', prefixes: ['FNS'] },
+        context: {
+          current_ip: '192.168.1.10',
+          root_dir: '/demo/empty',
+          loaded_dir: '/demo/loaded',
+          prefixes: ['FNS']
+        },
+        default_step_timeout_ms: 1200,
         steps: [
-          { id: 'network', action: 'check_ip', params: { expected_ip: '192.168.1.10' }, duration_ms: 350 },
+          { id: 'network', action: 'check_ip', params: { expected_ip: '192.168.1.10' }, duration_ms: 220 },
+          { id: 'browser', action: 'launch_browser', params: { browser: 'chromium' }, duration_ms: 250 },
+          { id: 'portal', action: 'navigate', params: { url: 'https://online.sbis.ru' }, duration_ms: 250 },
+          { id: 'identity', action: 'auth_ecp', params: { plugin_running: true }, duration_ms: 350 },
           { id: 'files', action: 'find_files', params: { directory: '{{root_dir}}', prefixes: '{{prefixes}}', files: [] }, duration_ms: 450 },
-          { id: 'browser', action: 'launch_browser', params: { browser: 'chromium' }, duration_ms: 300 }
+          { id: 'upload', action: 'upload_files', params: { files: '{{found_files}}' }, duration_ms: 300 },
+          { id: 'validate', action: 'validate_report', params: { valid: true }, duration_ms: 250 },
+          { id: 'submit', action: 'submit_if_valid', params: {}, duration_ms: 220 },
+          { id: 'archive', action: 'move_files', params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }, duration_ms: 200 }
         ]
       }
     }
@@ -72,24 +84,37 @@ export const demoScenarios = [
     number: '03',
     title: 'Повтор после сбоя',
     talkTime: '3 мин',
-    runtime: '≈ 3 сек',
+    runtime: '≈ 4 сек',
     result: '2-Я ПОПЫТКА',
     tone: 'retry',
-    summary: 'Плагин ЭЦП недоступен один раз, после паузы задание восстанавливается.',
+    summary: 'Полная цепочка повторяется после временного сбоя плагина ЭЦП.',
     points: [
-      'Первая попытка завершается retryable-ошибкой',
+      'Сбой возникает после подготовки файлов и портала',
       'Очередь выдерживает backoff 700 мс',
-      'Повторный запуск успешно проходит всю цепочку'
+      'Вторая попытка успешно проходит все девять шагов'
     ],
     payload: {
       priority: 30,
       timeout_ms: 8000,
       retry_policy: { max_attempts: 2, backoff_ms: 700 },
       script: {
+        context: {
+          current_ip: '192.168.1.10',
+          root_dir: '/demo/incoming',
+          loaded_dir: '/demo/loaded',
+          prefixes: ['FNS', 'SFR']
+        },
+        default_step_timeout_ms: 1200,
         steps: [
-          { id: 'browser', action: 'launch_browser', params: { browser: 'chromium' }, duration_ms: 350 },
-          { id: 'identity', action: 'auth_ecp', params: { fail_attempts: 1 }, duration_ms: 450 },
-          { id: 'portal', action: 'navigate', params: { url: 'https://online.sbis.ru' }, duration_ms: 350 }
+          { id: 'network', action: 'check_ip', params: { expected_ip: '192.168.1.10' }, duration_ms: 180 },
+          { id: 'files', action: 'find_files', params: { directory: '{{root_dir}}', prefixes: '{{prefixes}}', files: ['FNS_2026_Q2.xml', 'SFR_2026_Q2.xml'] }, duration_ms: 250 },
+          { id: 'browser', action: 'launch_browser', params: { browser: 'chromium' }, duration_ms: 220 },
+          { id: 'portal', action: 'navigate', params: { url: 'https://online.sbis.ru' }, duration_ms: 220 },
+          { id: 'identity', action: 'auth_ecp', params: { fail_attempts: 1 }, duration_ms: 350 },
+          { id: 'upload', action: 'upload_files', params: { files: '{{found_files}}' }, duration_ms: 300 },
+          { id: 'validate', action: 'validate_report', params: { valid: true }, duration_ms: 220 },
+          { id: 'submit', action: 'submit_if_valid', params: {}, duration_ms: 220 },
+          { id: 'archive', action: 'move_files', params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }, duration_ms: 180 }
         ]
       }
     }
@@ -99,22 +124,37 @@ export const demoScenarios = [
     number: '04',
     title: 'Контроль тайм-аута',
     talkTime: '2 мин',
-    runtime: '< 1 сек',
+    runtime: '≈ 2 сек',
     result: 'ТАЙМ-АУТ',
     tone: 'timeout',
-    summary: 'Долгий шаг прерывается по собственному лимиту и возвращает понятную ошибку.',
+    summary: 'Портал открыт, но зависшая авторизация по ЭЦП прерывается по лимиту.',
     points: [
-      'Лимит задаётся отдельно для каждого шага',
+      'Авторизация ограничена собственными 300 мс',
       'Зависший исполнитель не блокирует очередь',
-      'Причина и длительность остаются в журнале'
+      'Следующие бизнес-шаги остаются в ожидании'
     ],
     payload: {
       priority: 40,
-      timeout_ms: 3000,
+      timeout_ms: 5000,
       retry_policy: { max_attempts: 1, backoff_ms: 200 },
       script: {
+        context: {
+          current_ip: '192.168.1.10',
+          root_dir: '/demo/incoming',
+          loaded_dir: '/demo/loaded',
+          prefixes: ['FNS', 'SFR']
+        },
+        default_step_timeout_ms: 1200,
         steps: [
-          { id: 'slow-operation', action: 'noop', timeout_ms: 300, duration_ms: 1400 }
+          { id: 'network', action: 'check_ip', params: { expected_ip: '192.168.1.10' }, duration_ms: 180 },
+          { id: 'files', action: 'find_files', params: { directory: '{{root_dir}}', prefixes: '{{prefixes}}', files: ['FNS_2026_Q2.xml', 'SFR_2026_Q2.xml'] }, duration_ms: 250 },
+          { id: 'browser', action: 'launch_browser', params: { browser: 'chromium' }, duration_ms: 220 },
+          { id: 'portal', action: 'navigate', params: { url: 'https://online.sbis.ru' }, duration_ms: 220 },
+          { id: 'identity', action: 'auth_ecp', params: { plugin_running: true }, timeout_ms: 300, duration_ms: 1400 },
+          { id: 'upload', action: 'upload_files', params: { files: '{{found_files}}' }, duration_ms: 300 },
+          { id: 'validate', action: 'validate_report', params: { valid: true }, duration_ms: 220 },
+          { id: 'submit', action: 'submit_if_valid', params: {}, duration_ms: 220 },
+          { id: 'archive', action: 'move_files', params: { files: '{{found_files}}', destination: '{{loaded_dir}}' }, duration_ms: 180 }
         ]
       }
     }

@@ -226,7 +226,8 @@
 
       @media (max-width: 560px) {
         .shell { width: min(100% - 24px, 1520px); padding-top: 18px; }
-        .nav { display: none; }
+        .nav { justify-content: flex-end; }
+        .nav > a, .nav > #refresh-button { display: none; }
         .key-form { flex-direction: column; }
         .key-form input { width: 100%; }
         .kpis { grid-template-columns: 1fr 1fr; gap: 9px; }
@@ -248,6 +249,9 @@
         <nav class="nav">
           <a href="/docs">Документация API</a>
           <button class="ghost-button" id="refresh-button" type="button">Обновить</button>
+          <form action="/auth/logout" method="post">
+            <button class="ghost-button" type="submit">Выйти</button>
+          </form>
         </nav>
       </header>
 

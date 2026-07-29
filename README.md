@@ -5,6 +5,8 @@ Stage 2 MVP for the distributed script execution service described in `plan-real
 ## Start locally
 
 ```bash
+cp .env.example .env
+# Set WEB_LOGIN and WEB_PASSWORD in .env
 npm start
 ```
 
@@ -14,6 +16,10 @@ The API listens on `http://localhost:3000`.
 The Execution Studio is available at `http://localhost:3000/`.
 Swagger UI is available at `http://localhost:3000/docs`.
 The visual queue monitor is available at `http://localhost:3000/queue`.
+
+The browser interface requires a login. Credentials are read from `WEB_LOGIN` and
+`WEB_PASSWORD` in `.env`; the password is never sent back to the browser. A successful
+login creates an HttpOnly session cookie that expires after 12 hours by default.
 
 The Docker Compose Swagger UI helper is available at `http://localhost:33002`.
 In `docker compose`, it loads the spec from a mounted local file and preloads `X-API-Key: dev-secret`.
@@ -108,6 +114,9 @@ Set these Railway variables:
 
 ```text
 API_KEY=<production-secret>
+WEB_LOGIN=<interface-login>
+WEB_PASSWORD=<strong-interface-password>
+WEB_COOKIE_SECURE=true
 DATA_DIR=/app/data
 HOST=0.0.0.0
 ```
@@ -135,6 +144,8 @@ Swagger UI in `docker compose` preauthorizes the default dev key for convenience
 Подготовка и запуск:
 
 ```bash
+cp .env.example .env
+# Укажите WEB_LOGIN и WEB_PASSWORD
 npm run demo:reset
 npm start
 ```

@@ -46,6 +46,9 @@ button { color: inherit; }
 .brand-mark i:nth-child(3) { height: 65%; }
 nav { display: flex; align-items: center; gap: 28px; font-size: 13px; }
 nav a { color: var(--ink); text-underline-offset: 4px; }
+.logout-form { margin: 0; }
+.logout-button { border: 0; padding: 0; background: none; color: var(--muted); cursor: pointer; font-size: 12px; }
+.logout-button:hover { color: var(--red); }
 .connection { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
 .connection i { width: 7px; height: 7px; border-radius: 50%; background: #b4b8b2; box-shadow: 0 0 0 4px rgba(180,184,178,.18); }
 .connection.online i { background: #37a36d; box-shadow: 0 0 0 4px rgba(55,163,109,.14); }
@@ -200,7 +203,9 @@ textarea { width: 100%; height: 100%; resize: none; border: 0; outline: 0; paddi
 }
 @media (max-width: 640px) {
   .site-header { padding: 0 18px; }
+  nav { gap: 14px; }
   nav .connection { display: none; }
+  nav a[href="/docs"] { display: none; }
   main { width: calc(100% - 24px); }
   .hero { padding: 45px 4px 35px; }
   .demo-library { margin-left: -12px; margin-right: -12px; padding: 24px 16px; border-radius: 0; }

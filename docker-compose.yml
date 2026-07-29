@@ -7,7 +7,11 @@ services:
       - ./data:/app/data
       - ./demo-data:/app/demo-data
     environment:
-      API_KEY: dev-secret
+      API_KEY: ${API_KEY:-dev-secret}
+      WEB_LOGIN: ${WEB_LOGIN:?WEB_LOGIN must be set in .env}
+      WEB_PASSWORD: ${WEB_PASSWORD:?WEB_PASSWORD must be set in .env}
+      WEB_SESSION_TTL_HOURS: ${WEB_SESSION_TTL_HOURS:-12}
+      WEB_COOKIE_SECURE: ${WEB_COOKIE_SECURE:-false}
       PORT: 33001
       HOST: 0.0.0.0
       DATA_DIR: /app/data

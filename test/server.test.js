@@ -6,9 +6,13 @@ import path from 'node:path';
 import test from 'node:test';
 
 const API_KEY = 'integration-secret';
+const WEB_LOGIN = 'integration-user';
+const WEB_PASSWORD = 'integration-password';
 const PORT = 36000 + Math.floor(Math.random() * 2000);
 const origin = `http://127.0.0.1:${PORT}`;
 let child;
+let webCookie;
+let webSetCookie;
 
 async function waitForServer() {
   const deadline = Date.now() + 8000;
@@ -35,22 +39,75 @@ async function request(pathname, options = {}) {
   });
 }
 
+async function webRequest(pathname, options = {}) {
+  return fetch(`${origin}${pathname}`, {
+    ...options,
+    headers: {
+      Cookie: webCookie,
+      ...(options.headers || {})
+    }
+  });
+}
+
 test.before(async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'script-factory-test-'));
   child = spawn(process.execPath, ['src/server.js'], {
     cwd: path.resolve(import.meta.dirname, '..'),
-    env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', API_KEY, DATA_DIR: dataDir },
+    env: {
+      ...process.env,
+      PORT: String(PORT),
+      HOST: '127.0.0.1',
+      API_KEY,
+      WEB_LOGIN,
+      WEB_PASSWORD,
+      DATA_DIR: dataDir
+    },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   await waitForServer();
+
+  const loginResponse = await fetch(`${origin}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login: WEB_LOGIN, password: WEB_PASSWORD })
+  });
+  if (!loginResponse.ok) throw new Error('Test login failed');
+  webSetCookie = loginResponse.headers.get('set-cookie');
+  webCookie = webSetCookie.split(';')[0];
 });
 
 test.after(() => {
   child?.kill('SIGTERM');
 });
 
-test('serves the visual execution studio at the deployment root', async () => {
-  const response = await fetch(`${origin}/`);
+test('redirects an unauthenticated browser to the login screen', async () => {
+  const response = await fetch(`${origin}/queue?view=active`, { redirect: 'manual' });
+  assert.equal(response.status, 303);
+  assert.equal(response.headers.get('location'), '/login?next=%2Fqueue%3Fview%3Dactive');
+});
+
+test('serves a minimal login screen and rejects invalid credentials', async () => {
+  const pageResponse = await fetch(`${origin}/login`);
+  assert.equal(pageResponse.status, 200);
+  assert.match(await pageResponse.text(), /Вход в систему/);
+
+  const loginResponse = await fetch(`${origin}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login: WEB_LOGIN, password: 'wrong-password' })
+  });
+  assert.equal(loginResponse.status, 401);
+  assert.equal((await loginResponse.json()).error.code, 'INVALID_CREDENTIALS');
+});
+
+test('creates an HttpOnly browser session after login', () => {
+  assert.match(webSetCookie, /script_factory_session=/);
+  assert.match(webSetCookie, /HttpOnly/);
+  assert.match(webSetCookie, /SameSite=Lax/);
+});
+
+test('serves the visual execution studio to an authenticated browser', async () => {
+  const response = await webRequest('/');
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /text\/html/);
   const html = await response.text();
@@ -69,10 +126,32 @@ test('serves ready-to-run demo scenarios to the studio', async () => {
 });
 
 test('serves the visual priority queue', async () => {
-  const response = await fetch(`${origin}/queue`);
+  const response = await webRequest('/queue');
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /text\/html/);
   assert.match(await response.text(), /Монитор выполнения JSON-сценариев/);
+});
+
+test('logout invalidates the browser session', async () => {
+  const loginResponse = await fetch(`${origin}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login: WEB_LOGIN, password: WEB_PASSWORD })
+  });
+  const cookie = loginResponse.headers.get('set-cookie').split(';')[0];
+  const logoutResponse = await fetch(`${origin}/auth/logout`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { Cookie: cookie }
+  });
+  assert.equal(logoutResponse.status, 303);
+  assert.equal(logoutResponse.headers.get('location'), '/login');
+
+  const protectedResponse = await fetch(`${origin}/`, {
+    redirect: 'manual',
+    headers: { Cookie: cookie }
+  });
+  assert.equal(protectedResponse.status, 303);
 });
 
 test('exposes the interpreter action registry', async () => {

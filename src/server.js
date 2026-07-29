@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
@@ -14,6 +14,14 @@ import {
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
 const API_KEY = process.env.API_KEY || 'dev-secret';
+const WEB_LOGIN = process.env.WEB_LOGIN;
+const WEB_PASSWORD = process.env.WEB_PASSWORD;
+const configuredSessionHours = Number(process.env.WEB_SESSION_TTL_HOURS || 12);
+const WEB_SESSION_TTL_SECONDS = Number.isFinite(configuredSessionHours)
+  ? Math.floor(Math.max(60, configuredSessionHours * 60 * 60))
+  : 12 * 60 * 60;
+const WEB_COOKIE_SECURE = process.env.WEB_COOKIE_SECURE === 'true';
+const WEB_SESSION_COOKIE = 'script_factory_session';
 const BASE_PATH = '/api/v2';
 const MAX_BODY_SIZE = 1024 * 1024;
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
@@ -25,6 +33,7 @@ const SWAGGER_LOCALIZATION_FILE = path.join(process.cwd(), 'swagger-ru.js');
 const PERSIST_DEBOUNCE_MS = Number(process.env.PERSIST_DEBOUNCE_MS || 50);
 const CORS_ALLOWED_HEADERS = 'X-API-Key, Idempotency-Key, Content-Type, Accept, Origin, Authorization';
 const CORS_ALLOWED_METHODS = 'GET, POST, PUT, OPTIONS';
+const webSessions = new Map();
 
 const state = {
   startedAt: Date.now(),
@@ -51,6 +60,86 @@ let db = null;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function validateWebAuthConfig() {
+  if (!WEB_LOGIN || !WEB_PASSWORD) {
+    throw new Error('WEB_LOGIN и WEB_PASSWORD должны быть заданы в .env или переменных окружения');
+  }
+}
+
+function secureTextEqual(provided, expected) {
+  const providedBuffer = Buffer.from(String(provided ?? ''), 'utf8');
+  const expectedBuffer = Buffer.from(String(expected ?? ''), 'utf8');
+  return providedBuffer.length === expectedBuffer.length && timingSafeEqual(providedBuffer, expectedBuffer);
+}
+
+function parseCookies(req) {
+  return Object.fromEntries(String(req.headers.cookie || '')
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const separator = part.indexOf('=');
+      if (separator === -1) return [part, ''];
+      const value = part.slice(separator + 1);
+      try {
+        return [part.slice(0, separator), decodeURIComponent(value)];
+      } catch {
+        return [part.slice(0, separator), ''];
+      }
+    }));
+}
+
+function sessionToken(req) {
+  return parseCookies(req)[WEB_SESSION_COOKIE];
+}
+
+function isWebAuthenticated(req) {
+  const token = sessionToken(req);
+  if (!token) return false;
+  const session = webSessions.get(token);
+  if (!session || session.expiresAt <= Date.now()) {
+    webSessions.delete(token);
+    return false;
+  }
+  return true;
+}
+
+function createWebSession() {
+  const now = Date.now();
+  for (const [token, session] of webSessions) {
+    if (session.expiresAt <= now) webSessions.delete(token);
+  }
+  const token = randomBytes(32).toString('base64url');
+  webSessions.set(token, { expiresAt: now + WEB_SESSION_TTL_SECONDS * 1000 });
+  return token;
+}
+
+function sessionCookie(token, maxAge = WEB_SESSION_TTL_SECONDS) {
+  return [
+    `${WEB_SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Lax',
+    `Max-Age=${maxAge}`,
+    ...(WEB_COOKIE_SECURE ? ['Secure'] : [])
+  ].join('; ');
+}
+
+function redirect(res, location) {
+  res.writeHead(303, {
+    Location: location,
+    'Cache-Control': 'no-store'
+  });
+  res.end();
+}
+
+function requireWebAuth(req, res, requestUrl) {
+  if (isWebAuthenticated(req)) return true;
+  const next = encodeURIComponent(`${requestUrl.pathname}${requestUrl.search}`);
+  redirect(res, `/login?next=${next}`);
+  return false;
 }
 
 function defaultConfig() {
@@ -354,9 +443,32 @@ function sendSwaggerUi(res) {
         margin: 0;
         background: #fff;
       }
+      .auth-bar {
+        min-height: 44px;
+        padding: 0 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #d8dde3;
+        background: #f7f8fa;
+        font: 13px system-ui, sans-serif;
+      }
+      .auth-bar a { color: #17211c; }
+      .auth-bar form { margin: 0; }
+      .auth-bar button {
+        border: 0;
+        background: none;
+        color: #69736d;
+        cursor: pointer;
+        font: inherit;
+      }
     </style>
   </head>
   <body>
+    <div class="auth-bar">
+      <a href="/">← Фабрика сценариев</a>
+      <form action="/auth/logout" method="post"><button type="submit">Выйти</button></form>
+    </div>
     <div id="swagger-ui"></div>
     <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
     <script src="/swagger-ru.js"></script>
@@ -890,6 +1002,45 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (method === 'GET' && pathname === '/login') {
+      if (isWebAuthenticated(req)) {
+        redirect(res, '/');
+        return;
+      }
+      await sendPublicFile(res, 'login.html');
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/auth/login') {
+      const payload = await readJsonBody(req);
+      const loginMatches = secureTextEqual(payload?.login, WEB_LOGIN);
+      const passwordMatches = secureTextEqual(payload?.password, WEB_PASSWORD);
+      if (!loginMatches || !passwordMatches) {
+        sendJson(res, 401, { error: { code: 'INVALID_CREDENTIALS', message: 'Неверный логин или пароль' } });
+        return;
+      }
+      const token = createWebSession();
+      res.setHeader('Set-Cookie', sessionCookie(token));
+      sendJson(res, 200, { authenticated: true });
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/auth/logout') {
+      const token = sessionToken(req);
+      if (token) webSessions.delete(token);
+      res.setHeader('Set-Cookie', sessionCookie('', 0));
+      redirect(res, '/login');
+      return;
+    }
+
+    const protectedWebPath = pathname === '/'
+      || pathname === '/index.html'
+      || pathname === '/queue'
+      || pathname === '/docs'
+      || pathname === '/openapi.yaml'
+      || pathname === '/swagger-ru.js';
+    if (method === 'GET' && protectedWebPath && !requireWebAuth(req, res, requestUrl)) return;
+
     if (method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
       await sendPublicFile(res, 'index.html');
       return;
@@ -1101,6 +1252,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 async function main() {
+  validateWebAuthConfig();
   state.config = defaultConfig();
   await loadPersistedState();
   schedulePersist();

@@ -14,6 +14,7 @@ test('homepage demo route is short, complete, and made of valid scripts', () => 
     assert.ok(scenario.runtime);
     assert.ok(scenario.result);
     assert.ok(scenario.points.length >= 3);
+    assert.equal(scenario.payload.script.steps.length, 9, `${scenario.id} должен выглядеть как полный рабочий процесс`);
     assert.deepEqual(validateScript(scenario.payload.script), [], scenario.id);
   }
 });
