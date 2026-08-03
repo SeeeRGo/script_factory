@@ -1,16 +1,31 @@
-# Script Factory
+# Script Factory · Stage 3
 
-Stage 2 MVP for the distributed script execution service described in `plan-realizacii.md`. It includes the local priority queue, persistent jobs, a registry-driven JSON-steps interpreter, normalized execution errors, and a browser view of every scripting step.
+Stage 3 of the distributed script execution service described in `plan-realizacii.md`.
+The service accepts native Chrome DevTools Recorder JSON, validates it with
+`@puppeteer/replay`, executes it in real Chromium through the persistent priority queue,
+and exposes step-by-step progress, logs, identifiers, and screenshot artifacts. The
+Stage 2 JSON-steps interpreter remains backward compatible.
+
+Документация этапа 3:
+
+- [как записывать и передавать новые браузерные сценарии](docs/script-creation.md);
+- [готовый 15-минутный план демонстрации](docs/demo-stage-3.md);
+- [эталонный сценарий отправки письма](demo/browser-replay-send-email.json).
 
 ## Start locally
 
 ```bash
 cp .env.example .env
 # Set UN_ID, WEB_LOGIN and WEB_PASSWORD in .env
+npm install
 npm start
 ```
 
 Requires Node.js 24+.
+
+Install dependencies once with `npm install`. Chromium must be available locally;
+set `PUPPETEER_EXECUTABLE_PATH` if it is outside a standard system path. The Docker
+image installs Chromium automatically.
 
 The API listens on `http://localhost:3000`.
 The Execution Studio is available at `http://localhost:3000/`.
@@ -43,7 +58,11 @@ State is persisted to `data/state.sqlite` locally and `/app/data/state.sqlite` i
 
 ## Execution Studio
 
-Open `/` for a 12-minute guided demo with four ready-to-run scenarios: success, file-not-found, retry, and timeout. Each card includes presenter talking points and can either load its JSON into the editor or run immediately. The same editor supports creating a scenario from a clean template, previewing its step graph, starting it, and following live progress.
+Open `/` for a Stage 3 guided demo. The first ready-to-run scenario performs 18 real
+browser steps: it logs into the local demo mail, composes and sends a message, verifies
+the sent item, and returns a screenshot. The Stage 2 success, file-not-found, retry, and
+timeout scenarios remain available for diagnostics. The editor starts from a native
+Recorder template and accepts arbitrary exported flows.
 
 The view shows resolved step parameters, status, timing, attempts, normalized errors, recent jobs, and interpreter logs. It uses the same API key and same-origin API as the service, so it also works in the single Railway container.
 
@@ -67,7 +86,9 @@ Downloaded files are returned in `result.artifacts` with `artifact_id`, `filenam
 `local_path`, source URL, content type, size, and checksum metadata. Every successful
 result also includes `job_id`, `uid`, and `un_id`.
 
-The normalized workflow errors are `IP_MISMATCH`, `FILE_NOT_FOUND`, `AUTH_ERROR`, `UPLOAD_ERROR`, `DOWNLOAD_ERROR`, `VALIDATION_ERROR`, `TIMEOUT_ERROR`, and `PLUGIN_NOT_RUNNING`.
+The normalized workflow errors are `IP_MISMATCH`, `FILE_NOT_FOUND`, `AUTH_ERROR`,
+`UPLOAD_ERROR`, `DOWNLOAD_ERROR`, `VALIDATION_ERROR`, `TIMEOUT_ERROR`,
+`PLUGIN_NOT_RUNNING`, `BROWSER_LAUNCH_ERROR`, and `BROWSER_REPLAY_ERROR`.
 
 Example:
 

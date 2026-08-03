@@ -8,8 +8,11 @@ import {
   abortableDelay,
   createDefaultStepRegistry,
   executeScript,
+  isPuppeteerReplayScript,
   validateScript
 } from './interpreter.js';
+import { executeBrowserReplay } from './browser-replay.js';
+import { createDemoMail } from './demo-mail.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -17,6 +20,8 @@ const API_KEY = process.env.API_KEY || 'dev-secret';
 const WEB_LOGIN = process.env.WEB_LOGIN;
 const WEB_PASSWORD = process.env.WEB_PASSWORD;
 const UN_ID = process.env.UN_ID;
+const DEMO_MAIL_LOGIN = process.env.DEMO_MAIL_LOGIN || 'demo.user';
+const DEMO_MAIL_PASSWORD = process.env.DEMO_MAIL_PASSWORD || 'demo-password';
 const configuredSessionHours = Number(process.env.WEB_SESSION_TTL_HOURS || 12);
 const WEB_SESSION_TTL_SECONDS = Number.isFinite(configuredSessionHours)
   ? Math.floor(Math.max(60, configuredSessionHours * 60 * 60))
@@ -26,6 +31,7 @@ const WEB_SESSION_COOKIE = 'script_factory_session';
 const BASE_PATH = '/api/v2';
 const MAX_BODY_SIZE = 1024 * 1024;
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+const ARTIFACTS_DIR = path.join(DATA_DIR, 'artifacts');
 const STATE_FILE = path.join(DATA_DIR, 'state.sqlite');
 const LEGACY_STATE_FILE = path.join(DATA_DIR, 'state.json');
 const OPENAPI_FILE = path.join(process.cwd(), 'openapi.yaml');
@@ -35,6 +41,7 @@ const PERSIST_DEBOUNCE_MS = Number(process.env.PERSIST_DEBOUNCE_MS || 50);
 const CORS_ALLOWED_HEADERS = 'X-API-Key, Idempotency-Key, Content-Type, Accept, Origin, Authorization';
 const CORS_ALLOWED_METHODS = 'GET, POST, PUT, OPTIONS';
 const webSessions = new Map();
+const demoMail = createDemoMail({ login: DEMO_MAIL_LOGIN, password: DEMO_MAIL_PASSWORD });
 
 const state = {
   startedAt: Date.now(),
@@ -341,7 +348,7 @@ function createExecution(script = {}) {
     steps: steps.map((step, index) => ({
       index,
       id: step.id ?? `step_${index + 1}`,
-      action: step.action ?? 'unknown',
+      action: step.action ?? step.type ?? 'unknown',
       status: 'pending',
       attempt: null,
       started_at: null,
@@ -526,6 +533,40 @@ async function sendPublicFile(res, filename) {
     'Cache-Control': safeName.endsWith('.html') ? 'no-cache' : 'public, max-age=300'
   });
   res.end(body);
+}
+
+async function sendArtifactFile(res, pathname) {
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts.length !== 3 || parts[0] !== 'artifacts') {
+    sendJson(res, 404, { error: { code: 'ARTIFACT_NOT_FOUND', message: 'Артефакт не найден' } });
+    return;
+  }
+  const [, jobId, encodedFilename] = parts;
+  const filename = path.basename(decodeURIComponent(encodedFilename));
+  const job = state.jobs.get(jobId);
+  const artifact = job?.result?.artifacts?.find((item) => item.filename === filename);
+  const artifactRoot = path.resolve(ARTIFACTS_DIR);
+  const localPath = artifact?.local_path ? path.resolve(artifact.local_path) : null;
+  if (!artifact || !localPath || !localPath.startsWith(`${artifactRoot}${path.sep}`)) {
+    sendJson(res, 404, { error: { code: 'ARTIFACT_NOT_FOUND', message: 'Артефакт не найден' } });
+    return;
+  }
+  try {
+    const body = await readFile(localPath);
+    res.writeHead(200, {
+      'Content-Type': artifact.mime_type || 'application/octet-stream',
+      'Content-Length': body.length,
+      'Content-Disposition': `inline; filename="${filename.replaceAll('"', '')}"`,
+      'Cache-Control': 'private, max-age=300'
+    });
+    res.end(body);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      sendJson(res, 404, { error: { code: 'ARTIFACT_NOT_FOUND', message: 'Файл артефакта отсутствует на УН' } });
+      return;
+    }
+    throw error;
+  }
 }
 
 function applyCorsHeaders(res) {
@@ -750,29 +791,52 @@ async function executeJob(job) {
     const steps = Array.isArray(script.steps) ? script.steps : [];
     const simulatedOutcome = script.simulate?.outcome || 'success';
     const simulatedDelay = Number.isFinite(script.simulate?.delay_ms) ? script.simulate.delay_ms : 250;
+    const browserReplay = isPuppeteerReplayScript(script);
+    const runtimeContext = {
+      demo_mail_url: `${process.env.SERVICE_BASE_URL || `http://127.0.0.1:${PORT}`}/demo/mail`,
+      mail_login: DEMO_MAIL_LOGIN,
+      mail_password: DEMO_MAIL_PASSWORD,
+      ...(job.request.context ?? {})
+    };
 
-    const interpreterResult = await executeScript({
-      script: { ...script, steps },
-      signal: controller.signal,
-      registry: stepRegistry,
-      defaultStepTimeoutMs: Math.min(job.timeout_ms, 10_000),
-      initialContext: job.request.context ?? {},
-      attempt: job.attempts,
-      onEvent: (event) => applyInterpreterEvent(job, event)
-    });
+    const interpreterResult = browserReplay
+      ? await executeBrowserReplay({
+        script,
+        context: runtimeContext,
+        signal: controller.signal,
+        timeoutMs: Math.min(job.timeout_ms, 30_000),
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
+        headless: process.env.BROWSER_HEADLESS !== 'false',
+        artifactDirectory: path.join(ARTIFACTS_DIR, job.job_id),
+        publicArtifactBasePath: `/artifacts/${encodeURIComponent(job.job_id)}`,
+        jobId: job.job_id,
+        onEvent: (event) => applyInterpreterEvent(job, event),
+        onBrowserLog: (level, message) => logJob(job, level, message)
+      })
+      : await executeScript({
+        script: { ...script, steps },
+        signal: controller.signal,
+        registry: stepRegistry,
+        defaultStepTimeoutMs: Math.min(job.timeout_ms, 10_000),
+        initialContext: job.request.context ?? {},
+        attempt: job.attempts,
+        onEvent: (event) => applyInterpreterEvent(job, event)
+      });
 
-    if (steps.length === 0 && simulatedDelay > 0) await abortableDelay(simulatedDelay, controller.signal);
+    if (!browserReplay) {
+      if (steps.length === 0 && simulatedDelay > 0) await abortableDelay(simulatedDelay, controller.signal);
 
-    if (simulatedOutcome === 'validation_failed') {
-      throw createApiError('VALIDATION_ERROR', 'Имитация ошибки проверки', 422, false);
-    }
+      if (simulatedOutcome === 'validation_failed') {
+        throw createApiError('VALIDATION_ERROR', 'Имитация ошибки проверки', 422, false);
+      }
 
-    if (simulatedOutcome === 'timeout') {
-      await abortableDelay(job.timeout_ms + 50, controller.signal);
-    }
+      if (simulatedOutcome === 'timeout') {
+        await abortableDelay(job.timeout_ms + 50, controller.signal);
+      }
 
-    if (simulatedOutcome === 'retry_once' && job.attempts === 1) {
-      throw createApiError('PLUGIN_NOT_RUNNING', 'Временная ошибка СБИС Плагина', 503, true);
+      if (simulatedOutcome === 'retry_once' && job.attempts === 1) {
+        throw createApiError('PLUGIN_NOT_RUNNING', 'Временная ошибка СБИС Плагина', 503, true);
+      }
     }
 
     job.status = 'success';
@@ -785,7 +849,8 @@ async function executeJob(job) {
       artifacts: Array.isArray(interpreterResult.context?.artifacts)
         ? interpreterResult.context.artifacts
         : [],
-      simulated_outcome: simulatedOutcome
+      runtime: browserReplay ? 'puppeteer-replay' : 'json-steps',
+      ...(!browserReplay ? { simulated_outcome: simulatedOutcome } : {})
     };
     job.finished_at = nowIso();
     logJob(job, 'info', 'Задание успешно выполнено', job.result);
@@ -840,6 +905,17 @@ async function executeJob(job) {
       ? 'validation_failed'
       : 'failed';
     job.error = serializeJobError(error);
+    const diagnosticArtifact = error?.details?.artifact;
+    if (diagnosticArtifact) {
+      job.result = {
+        message: 'Браузерный сценарий завершился с ошибкой; сохранён диагностический скриншот',
+        job_id: job.job_id,
+        uid: job.uid,
+        un_id: UN_ID,
+        artifacts: [diagnosticArtifact],
+        runtime: 'puppeteer-replay'
+      };
+    }
     job.execution.status = job.status;
     job.execution.finished_at = nowIso();
     job.finished_at = nowIso();
@@ -937,7 +1013,12 @@ function buildHealthResponse(requestId) {
     service: 'script-factory',
     request_id: requestId,
     un_id: UN_ID,
-    queue: buildQueueHealth()
+    queue: buildQueueHealth(),
+    browser_replay: {
+      available: true,
+      engine: '@puppeteer/replay',
+      headless: process.env.BROWSER_HEADLESS !== 'false'
+    }
   };
 }
 
@@ -950,6 +1031,11 @@ function buildSystemResources() {
     jobs_running: state.running.size,
     jobs_queued: state.queue.length,
     queue: buildQueueHealth(),
+    browser_replay: {
+      available: true,
+      headless: process.env.BROWSER_HEADLESS !== 'false',
+      demo_mail_messages: demoMail.messageCount
+    },
     node_version: process.version
   };
 }
@@ -1035,6 +1121,18 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (pathname.startsWith('/demo/mail/api/') && await demoMail.handle(req, res, requestUrl)) return;
+
+    if (method === 'GET' && (pathname === '/demo/mail' || pathname === '/demo/mail/')) {
+      await sendPublicFile(res, 'demo-mail.html');
+      return;
+    }
+
+    if (method === 'GET' && (pathname === '/demo-mail.js' || pathname === '/demo-mail.css')) {
+      await sendPublicFile(res, pathname.slice(1));
+      return;
+    }
+
     if (method === 'GET' && pathname === '/login') {
       if (isWebAuthenticated(req)) {
         redirect(res, '/');
@@ -1073,6 +1171,12 @@ const server = http.createServer(async (req, res) => {
       || pathname === '/openapi.yaml'
       || pathname === '/swagger-ru.js';
     if (method === 'GET' && protectedWebPath && !requireWebAuth(req, res, requestUrl)) return;
+
+    if (method === 'GET' && pathname.startsWith('/artifacts/')) {
+      if (!requireWebAuth(req, res, requestUrl)) return;
+      await sendArtifactFile(res, pathname);
+      return;
+    }
 
     if (method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
       await sendPublicFile(res, 'index.html');

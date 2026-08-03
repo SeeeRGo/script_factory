@@ -18,7 +18,67 @@ function receiptDownloadStep(durationMs) {
   };
 }
 
+const stage3Subject = `Автоматизация Stage 3 · ${new Date().toLocaleString('ru-RU')}`;
+
+function browserMailReplay() {
+  return {
+    title: 'Этап 3 · Вход в почту и отправка письма',
+    timeout: 10000,
+    steps: [
+      { type: 'setViewport', width: 1280, height: 900, deviceScaleFactor: 1, isMobile: false, hasTouch: false, isLandscape: false },
+      { type: 'navigate', url: '{{demo_mail_url}}' },
+      { type: 'waitForElement', selectors: [['#mail-login-form'], ['aria/Вход в почту']], visible: true },
+      { type: 'click', selectors: [['#mail-login'], ['aria/Логин']], offsetX: 110, offsetY: 18 },
+      { type: 'change', selectors: [['#mail-login'], ['aria/Логин']], value: '{{mail_login}}' },
+      { type: 'click', selectors: [['#mail-password'], ['aria/Пароль']], offsetX: 110, offsetY: 18 },
+      { type: 'change', selectors: [['#mail-password'], ['aria/Пароль']], value: '{{mail_password}}' },
+      { type: 'click', selectors: [['#mail-login-submit'], ['aria/Войти']], offsetX: 150, offsetY: 20 },
+      { type: 'waitForElement', selectors: [['#mail-compose'], ['aria/Написать']], visible: true },
+      { type: 'click', selectors: [['#mail-compose'], ['aria/Написать']], offsetX: 75, offsetY: 20 },
+      { type: 'waitForElement', selectors: [['#mail-compose-panel:not([hidden])']], visible: true },
+      { type: 'change', selectors: [['#mail-to'], ['aria/Кому']], value: '{{mail_to}}' },
+      { type: 'change', selectors: [['#mail-subject'], ['aria/Тема']], value: '{{mail_subject}}' },
+      { type: 'change', selectors: [['#mail-body'], ['aria/Сообщение']], value: '{{mail_body}}' },
+      { type: 'click', selectors: [['#mail-send'], ['aria/Отправить']], offsetX: 55, offsetY: 20 },
+      { type: 'waitForElement', selectors: [['#mail-send-success:not([hidden])'], ['text/Письмо отправлено']], visible: true },
+      { type: 'click', selectors: [['#mail-folder-sent'], ['text/Отправленные']], offsetX: 80, offsetY: 18 },
+      {
+        type: 'waitForElement',
+        selectors: [[`.sent-message[data-subject="${stage3Subject}"]`]],
+        visible: true,
+        attributes: { 'data-subject': stage3Subject }
+      }
+    ]
+  };
+}
+
 export const demoScenarios = [
+  {
+    id: 'browser-mail-replay',
+    number: 'S3',
+    title: 'Письмо отправляет браузер',
+    talkTime: '6 мин',
+    runtime: '≈ 5–10 сек',
+    result: 'REAL BROWSER',
+    tone: 'success',
+    summary: 'Chrome Recorder JSON входит в почту, создаёт письмо и подтверждает его появление в отправленных.',
+    points: [
+      '18 нативных шагов Puppeteer Replay без специальных action-обработчиков',
+      'Логин, ожидания, ввод данных и проверка результата выполняются Chromium',
+      'Итоговый скриншот сохраняется в result.artifacts'
+    ],
+    payload: {
+      priority: 5,
+      timeout_ms: 45000,
+      retry_policy: { max_attempts: 1, backoff_ms: 500 },
+      context: {
+        mail_to: 'demo.recipient@example.test',
+        mail_subject: stage3Subject,
+        mail_body: 'Письмо создано и отправлено реальным браузером из Puppeteer Replay JSON. Ручное вмешательство не потребовалось.'
+      },
+      script: browserMailReplay()
+    }
+  },
   {
     id: 'happy-path',
     number: '01',
@@ -191,18 +251,15 @@ export const demoScenarios = [
 
 export const blankScenario = {
   priority: 100,
-  timeout_ms: 10000,
+  timeout_ms: 30000,
   retry_policy: { max_attempts: 1, backoff_ms: 500 },
+  context: { target_url: 'https://example.org' },
   script: {
-    context: {},
-    default_step_timeout_ms: 3000,
+    title: 'Новый сценарий Chrome Recorder',
+    timeout: 10000,
     steps: [
-      {
-        id: 'step-1',
-        action: 'noop',
-        params: {},
-        duration_ms: 500
-      }
+      { type: 'setViewport', width: 1280, height: 800, deviceScaleFactor: 1, isMobile: false, hasTouch: false, isLandscape: false },
+      { type: 'navigate', url: '{{target_url}}' }
     ]
   }
 };

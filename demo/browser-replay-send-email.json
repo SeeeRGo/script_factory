@@ -1,0 +1,108 @@
+{
+  "title": "Этап 3 · Вход в почту и отправка письма",
+  "timeout": 10000,
+  "steps": [
+    {
+      "type": "setViewport",
+      "width": 1280,
+      "height": 900,
+      "deviceScaleFactor": 1,
+      "isMobile": false,
+      "hasTouch": false,
+      "isLandscape": false
+    },
+    {
+      "type": "navigate",
+      "url": "{{demo_mail_url}}"
+    },
+    {
+      "type": "waitForElement",
+      "selectors": [["#mail-login-form"], ["aria/Вход в почту"]],
+      "visible": true
+    },
+    {
+      "type": "click",
+      "selectors": [["#mail-login"], ["aria/Логин"]],
+      "offsetX": 110,
+      "offsetY": 18
+    },
+    {
+      "type": "change",
+      "selectors": [["#mail-login"], ["aria/Логин"]],
+      "value": "{{mail_login}}"
+    },
+    {
+      "type": "click",
+      "selectors": [["#mail-password"], ["aria/Пароль"]],
+      "offsetX": 110,
+      "offsetY": 18
+    },
+    {
+      "type": "change",
+      "selectors": [["#mail-password"], ["aria/Пароль"]],
+      "value": "{{mail_password}}"
+    },
+    {
+      "type": "click",
+      "selectors": [["#mail-login-submit"], ["aria/Войти"]],
+      "offsetX": 150,
+      "offsetY": 20
+    },
+    {
+      "type": "waitForElement",
+      "selectors": [["#mail-compose"], ["aria/Написать"]],
+      "visible": true
+    },
+    {
+      "type": "click",
+      "selectors": [["#mail-compose"], ["aria/Написать"]],
+      "offsetX": 75,
+      "offsetY": 20
+    },
+    {
+      "type": "waitForElement",
+      "selectors": [["#mail-compose-panel:not([hidden])"]],
+      "visible": true
+    },
+    {
+      "type": "change",
+      "selectors": [["#mail-to"], ["aria/Кому"]],
+      "value": "{{mail_to}}"
+    },
+    {
+      "type": "change",
+      "selectors": [["#mail-subject"], ["aria/Тема"]],
+      "value": "{{mail_subject}}"
+    },
+    {
+      "type": "change",
+      "selectors": [["#mail-body"], ["aria/Сообщение"]],
+      "value": "{{mail_body}}"
+    },
+    {
+      "type": "click",
+      "selectors": [["#mail-send"], ["aria/Отправить"]],
+      "offsetX": 55,
+      "offsetY": 20
+    },
+    {
+      "type": "waitForElement",
+      "selectors": [["#mail-send-success:not([hidden])"], ["text/Письмо отправлено"]],
+      "visible": true
+    },
+    {
+      "type": "click",
+      "selectors": [["#mail-folder-sent"], ["text/Отправленные"]],
+      "offsetX": 80,
+      "offsetY": 18
+    },
+    {
+      "type": "waitForElement",
+      "selectors": [[".sent-message[data-subject=\"{{mail_subject}}\"]"]],
+      "visible": true,
+      "attributes": {
+        "data-subject": "{{mail_subject}}"
+      }
+    }
+  ]
+}

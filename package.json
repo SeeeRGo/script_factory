@@ -1,9 +1,9 @@
 {
   "name": "script-factory",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Minimal MVP API for distributed script execution planning.",
+  "description": "Queued JSON automation service with native Chrome Recorder and Puppeteer Replay execution.",
   "engines": {
     "node": ">=24"
   },
@@ -17,6 +17,11 @@
     "demo:error": "node demo/run.mjs file-not-found",
     "demo:retry": "node demo/run.mjs retry",
     "demo:timeout": "node demo/run.mjs timeout",
+    "demo:browser": "node demo/run-browser.mjs",
     "demo:all": "node demo/run.mjs success && node demo/run.mjs file-not-found && node demo/run.mjs retry && node demo/run.mjs timeout"
+  },
+  "dependencies": {
+    "@puppeteer/replay": "^4.0.2",
+    "puppeteer": "^25.4.0"
   }
 }

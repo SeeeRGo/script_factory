@@ -26,22 +26,22 @@
     <main>
       <section class="hero">
         <div>
-          <p class="eyebrow">ИНТЕРПРЕТАТОР JSON-ШАГОВ · ЭТАП 2</p>
-          <h1>Каждый шаг виден.<br><em>Каждый запуск понятен.</em></h1>
+          <p class="eyebrow">PUPPETEER REPLAY · ЭТАП 3</p>
+          <h1>Записали в Chrome.<br><em>Воспроизвели в очереди.</em></h1>
         </div>
-        <p class="hero-copy">Соберите сценарий автоматизации, проследите изменение контекста и разберите нормализованные ошибки прямо в браузере.</p>
+        <p class="hero-copy">Загрузите JSON из Chrome DevTools Recorder: сервис сам запустит Chromium, выполнит реальные действия и сохранит наглядный результат.</p>
       </section>
 
       <section class="demo-library" aria-labelledby="demo-library-title">
         <div class="demo-library-heading">
           <div>
             <p class="eyebrow">ГОТОВО К ПОКАЗУ</p>
-            <h2 id="demo-library-title">Демо-маршрут на 12 минут</h2>
-            <p>Начните с минутного обзора, затем идите слева направо: от штатной цепочки к управляемым сбоям. В карточках уже есть тезисы для рассказа.</p>
+            <h2 id="demo-library-title">Демо-маршрут этапа 3</h2>
+            <p>Начните с реальной отправки письма через Chromium, затем покажите очередь, результат и диагностические сценарии. В карточках уже есть тезисы для рассказа.</p>
           </div>
           <div class="demo-total" aria-label="Общая длительность демо">
-            <strong>12</strong>
-            <span>минут<br>весь показ</span>
+            <strong>15</strong>
+            <span>минут<br>основной показ</span>
           </div>
         </div>
         <div class="scenario-grid" id="scenario-list"></div>
@@ -69,7 +69,7 @@
               <span class="panel-index">01</span>
               <div class="editor-title">
                 <h2>Сценарий</h2>
-                <span id="scenario-current">Демо · Отчёт отправлен</span>
+                <span id="scenario-current">Демо · Письмо отправляет браузер</span>
               </div>
             </div>
             <div class="editor-actions">
@@ -112,6 +112,10 @@
             <span>{ }</span>
             <h3>Здесь появится ваш сценарий</h3>
             <p>Откройте предпросмотр или запустите JSON-сценарий.</p>
+          </div>
+          <div class="artifact-section" id="artifact-section" hidden>
+            <div class="artifact-heading"><strong>Результат браузера</strong><span>Нажмите, чтобы открыть полностью</span></div>
+            <div class="artifacts" id="artifacts"></div>
           </div>
         </div>
       </section>

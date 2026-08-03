@@ -69,7 +69,7 @@ h1 em { color: var(--green); font-style: normal; }
 .demo-total { min-width: 155px; display: flex; align-items: center; gap: 13px; padding-left: 23px; border-left: 1px solid #445049; }
 .demo-total strong { color: var(--lime); font: 500 39px/1 'DM Mono', monospace; }
 .demo-total span { color: #aeb7b2; font-size: 11px; line-height: 1.5; }
-.scenario-grid { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid #465049; }
+.scenario-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid #465049; }
 .scenario-card { min-width: 0; padding: 20px; display: flex; flex-direction: column; border-right: 1px solid #465049; background: #202924; transition: background .18s ease, box-shadow .18s ease; }
 .scenario-card:last-child { border-right: 0; }
 .scenario-card:hover { background: #25302a; }
@@ -164,6 +164,18 @@ textarea { width: 100%; height: 100%; resize: none; border: 0; outline: 0; paddi
 .empty-state > span { width: 68px; height: 68px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; font: 18px 'DM Mono', monospace; color: var(--green); }
 .empty-state h3 { margin: 18px 0 7px; color: var(--ink); font-size: 14px; }
 .empty-state p { margin: 0; font-size: 12px; }
+.artifact-section { margin: 0 25px 25px; padding-top: 18px; border-top: 1px solid var(--line); }
+.artifact-section[hidden] { display: none; }
+.artifact-heading { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
+.artifact-heading strong { font-size: 12px; }
+.artifact-heading span { color: var(--muted); font-size: 10px; }
+.artifacts { display: grid; gap: 10px; }
+.artifact-card { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 12px; overflow: hidden; border: 1px solid var(--line); color: var(--ink); text-decoration: none; background: #f5f4ef; }
+.artifact-card:hover { border-color: var(--green); }
+.artifact-card img { width: 110px; height: 72px; object-fit: cover; object-position: top; background: #e5e5df; }
+.artifact-card span { min-width: 0; display: flex; flex-direction: column; gap: 4px; padding-right: 12px; }
+.artifact-card strong { overflow: hidden; text-overflow: ellipsis; font: 500 11px 'DM Mono', monospace; }
+.artifact-card small { color: var(--muted); font-size: 9px; }
 
 .lower-grid { display: grid; grid-template-columns: .8fr 1.2fr; margin-top: 22px; gap: 22px; }
 .jobs-panel, .logs-panel { min-height: 360px; box-shadow: none; }

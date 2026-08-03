@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
-  description: Управление очередью и выполнением JSON-сценариев.
-  version: 0.1.0
+  description: Управление очередью и выполнением JSON-сценариев, включая нативные записи Chrome Recorder через Puppeteer Replay.
+  version: 0.2.0
 servers:
   - url: http://localhost:33001/api/v2
     description: API в Docker Compose
@@ -67,6 +67,7 @@ components:
           example: 250
     JsonScript:
       type: object
+      description: Обратно совместимый сценарий внутренних JSON Steps этапа 2.
       required: [steps]
       properties:
         context:
@@ -81,6 +82,44 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ScriptStep'
+    ReplayStep:
+      type: object
+      required: [type]
+      description: Стандартный шаг Chrome DevTools Recorder. Набор полей зависит от type и проверяется @puppeteer/replay.
+      properties:
+        type:
+          type: string
+          enum: [setViewport, navigate, click, doubleClick, change, hover, scroll, keyDown, keyUp, waitForElement, waitForExpression, emulateNetworkConditions, close]
+        timeout:
+          type: integer
+          minimum: 1
+          maximum: 30000
+        selectors:
+          type: array
+          description: Альтернативные CSS, ARIA, text, XPath или pierce-селекторы Recorder.
+          items: {}
+      additionalProperties: true
+    PuppeteerReplayScript:
+      type: object
+      required: [title, steps]
+      description: Нативный JSON, экспортированный через Chrome DevTools Recorder → Export → JSON.
+      properties:
+        title:
+          type: string
+        timeout:
+          type: integer
+          minimum: 1
+          maximum: 30000
+        selectorAttribute:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReplayStep'
+    AnyScript:
+      oneOf:
+        - $ref: '#/components/schemas/PuppeteerReplayScript'
+        - $ref: '#/components/schemas/JsonScript'
     JobCreateRequest:
       type: object
       properties:
@@ -102,7 +141,7 @@ components:
           additionalProperties: true
           description: Начальный контекст интерпретатора, переопределяющий одноимённые значения сценария.
         script:
-          $ref: '#/components/schemas/JsonScript'
+          $ref: '#/components/schemas/AnyScript'
     ExecutionStep:
       type: object
       properties:
@@ -112,6 +151,7 @@ components:
           type: string
         action:
           type: string
+          description: action для JSON Steps или type для Puppeteer Replay.
         status:
           type: string
           enum: [pending, running, success, failed]
@@ -194,7 +234,7 @@ components:
           description: Стабильный идентификатор артефакта в рамках результата задания.
         kind:
           type: string
-          enum: [downloaded_file]
+          enum: [downloaded_file, browser_screenshot]
         filename:
           type: string
         local_path:
@@ -204,6 +244,10 @@ components:
           type: string
           format: uri
           nullable: true
+        public_url:
+          type: string
+          nullable: true
+          description: Защищённая ссылка интерфейса на артефакт, если он доступен для просмотра.
         mime_type:
           type: string
           nullable: true
@@ -245,6 +289,9 @@ components:
             $ref: '#/components/schemas/Artifact'
         simulated_outcome:
           type: string
+        runtime:
+          type: string
+          enum: [json-steps, puppeteer-replay]
     QueueHealth:
       type: object
       required: [status, queued, running, max_parallel_jobs, available_slots]
@@ -279,6 +326,15 @@ components:
           type: string
         queue:
           $ref: '#/components/schemas/QueueHealth'
+        browser_replay:
+          type: object
+          properties:
+            available:
+              type: boolean
+            engine:
+              type: string
+            headless:
+              type: boolean
     SystemResources:
       type: object
       properties:
@@ -440,6 +496,42 @@ paths:
             schema:
               $ref: '#/components/schemas/JobCreateRequest'
             examples:
+              browserReplay:
+                summary: Нативный Chrome Recorder JSON — отправка письма
+                value:
+                  uid: mail-stage3-00042
+                  priority: 5
+                  timeout_ms: 45000
+                  context:
+                    mail_to: demo.recipient@example.test
+                    mail_subject: Проверка автоматизации
+                    mail_body: Письмо отправлено реальным Chromium.
+                  script:
+                    title: Вход в почту и отправка письма
+                    timeout: 10000
+                    steps:
+                      - type: setViewport
+                        width: 1280
+                        height: 900
+                        deviceScaleFactor: 1
+                        isMobile: false
+                        hasTouch: false
+                        isLandscape: false
+                      - type: navigate
+                        url: "{{demo_mail_url}}"
+                      - type: change
+                        selectors: [["#mail-login"], ["aria/Логин"]]
+                        value: "{{mail_login}}"
+                      - type: change
+                        selectors: [["#mail-password"], ["aria/Пароль"]]
+                        value: "{{mail_password}}"
+                      - type: click
+                        selectors: [["#mail-login-submit"], ["aria/Войти"]]
+                        offsetX: 150
+                        offsetY: 20
+                      - type: waitForElement
+                        selectors: [["#mail-compose"]]
+                        visible: true
               success:
                 summary: Успешная цепочка с подстановкой параметров
                 value:

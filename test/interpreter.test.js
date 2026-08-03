@@ -45,6 +45,29 @@ test('script validation reports contract errors with JSON paths', () => {
   ]);
 });
 
+test('validates native Chrome Recorder flows without registering actions', () => {
+  assert.deepEqual(validateScript({
+    title: 'Recorder flow',
+    timeout: 5000,
+    steps: [
+      { type: 'navigate', url: 'https://example.test' },
+      { type: 'waitForElement', selectors: [['#ready']], visible: true }
+    ]
+  }), []);
+
+  const invalid = validateScript({ title: 'Broken flow', steps: [{ type: 'click', selectors: [['#button']] }] });
+  assert.equal(invalid[0].path, 'script');
+  assert.match(invalid[0].message, /offsetX/);
+
+  assert.deepEqual(validateScript({
+    title: 'Non-portable flow',
+    steps: [{ type: 'customStep', name: 'external-code', parameters: {} }]
+  }), [{
+    path: 'script.steps[0].type',
+    message: 'customStep не является переносимым браузерным действием; используйте стандартный шаг Chrome Recorder'
+  }]);
+});
+
 test('parameter templates preserve exact values and interpolate nested context', () => {
   const context = {
     root_dir: '/reports/incoming',

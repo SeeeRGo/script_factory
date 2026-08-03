@@ -1,5 +1,6 @@
 import { copyFile, mkdir, readdir, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
+import { parse as parsePuppeteerReplay } from '@puppeteer/replay';
 
 const DEFAULT_STEP_TIMEOUT_MS = 10_000;
 
@@ -11,7 +12,9 @@ export const ERROR_CODES = Object.freeze({
   DOWNLOAD_ERROR: 'DOWNLOAD_ERROR',
   VALIDATION_ERROR: 'VALIDATION_ERROR',
   TIMEOUT_ERROR: 'TIMEOUT_ERROR',
-  PLUGIN_NOT_RUNNING: 'PLUGIN_NOT_RUNNING'
+  PLUGIN_NOT_RUNNING: 'PLUGIN_NOT_RUNNING',
+  BROWSER_LAUNCH_ERROR: 'BROWSER_LAUNCH_ERROR',
+  BROWSER_REPLAY_ERROR: 'BROWSER_REPLAY_ERROR'
 });
 
 export class InterpreterError extends Error {
@@ -343,6 +346,24 @@ export function validateScript(script, registry = createDefaultStepRegistry()) {
   if (!Array.isArray(script.steps)) {
     return [{ path: 'script.steps', message: 'steps должен быть массивом' }];
   }
+  if (isPuppeteerReplayScript(script)) {
+    try {
+      const flow = parsePuppeteerReplay(script);
+      const customStepIndex = flow.steps.findIndex((step) => step.type === 'customStep');
+      if (customStepIndex >= 0) {
+        return [{
+          path: `script.steps[${customStepIndex}].type`,
+          message: 'customStep не является переносимым браузерным действием; используйте стандартный шаг Chrome Recorder'
+        }];
+      }
+      return [];
+    } catch (error) {
+      return [{
+        path: 'script',
+        message: `некорректная запись Puppeteer Replay: ${error?.message || 'неизвестная ошибка'}`
+      }];
+    }
+  }
   if (script.context !== undefined && (!script.context || typeof script.context !== 'object' || Array.isArray(script.context))) {
     errors.push({ path: 'script.context', message: 'context должен быть объектом' });
   }
@@ -376,6 +397,13 @@ export function validateScript(script, registry = createDefaultStepRegistry()) {
     }
   });
   return errors;
+}
+
+export function isPuppeteerReplayScript(script) {
+  if (!script || typeof script !== 'object' || Array.isArray(script) || !Array.isArray(script.steps)) return false;
+  if (script.format === 'puppeteer-replay') return true;
+  return typeof script.title === 'string'
+    && (script.steps.length === 0 || script.steps.some((step) => typeof step?.type === 'string'));
 }
 
 function normalizeError(error) {

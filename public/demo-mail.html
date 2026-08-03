@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Почта · Демо Stage 3</title>
+    <link rel="stylesheet" href="/demo-mail.css">
+  </head>
+  <body>
+    <main class="mail-app">
+      <section class="mail-login" id="mail-login-view">
+        <div class="mail-brand"><span>СФ</span><strong>Почта</strong></div>
+        <p class="mail-kicker">ДЕМОНСТРАЦИОННЫЙ СЕРВИС</p>
+        <h1>Вход в почту</h1>
+        <p>Эта страница специально создана для воспроизводимого показа браузерной автоматизации.</p>
+        <form id="mail-login-form">
+          <label for="mail-login">Логин</label>
+          <input id="mail-login" name="login" autocomplete="username" required>
+          <label for="mail-password">Пароль</label>
+          <input id="mail-password" name="password" type="password" autocomplete="current-password" required>
+          <p class="form-error" id="mail-login-error" role="alert" hidden></p>
+          <button id="mail-login-submit" type="submit">Войти</button>
+        </form>
+      </section>
+
+      <section class="mailbox" id="mailbox-view" hidden>
+        <header>
+          <div class="mail-brand"><span>СФ</span><strong>Почта</strong></div>
+          <div><span id="mail-account"></span><button class="link-button" id="mail-logout" type="button">Выйти</button></div>
+        </header>
+        <div class="mailbox-grid">
+          <aside>
+            <button class="compose-button" id="mail-compose" type="button">＋ Написать</button>
+            <button class="folder-button active" id="mail-folder-inbox" type="button">Входящие <span>3</span></button>
+            <button class="folder-button" id="mail-folder-sent" type="button">Отправленные <span id="mail-sent-count">0</span></button>
+          </aside>
+          <section class="mail-content">
+            <div id="mail-inbox-view">
+              <p class="mail-kicker">ВХОДЯЩИЕ</p>
+              <h1>Доброе утро</h1>
+              <div class="message-row"><strong>Служба мониторинга</strong><span>Узел работает штатно</span><time>09:42</time></div>
+              <div class="message-row"><strong>Команда проекта</strong><span>Материалы к демонстрации</span><time>Вчера</time></div>
+              <div class="message-row"><strong>Администратор</strong><span>Добро пожаловать в демо-почту</span><time>Пн</time></div>
+            </div>
+            <div id="mail-sent-view" hidden>
+              <p class="mail-kicker">ОТПРАВЛЕННЫЕ</p>
+              <h1>Отправленные письма</h1>
+              <div id="mail-sent-list"></div>
+            </div>
+          </section>
+        </div>
+
+        <section class="compose-modal" id="mail-compose-panel" hidden>
+          <form id="mail-compose-form">
+            <header><strong>Новое письмо</strong><button id="mail-compose-close" type="button" aria-label="Закрыть">×</button></header>
+            <label for="mail-to">Кому</label>
+            <input id="mail-to" name="to" type="email" required>
+            <label for="mail-subject">Тема</label>
+            <input id="mail-subject" name="subject" required>
+            <label for="mail-body">Сообщение</label>
+            <textarea id="mail-body" name="body" rows="8" required></textarea>
+            <p class="form-error" id="mail-send-error" role="alert" hidden></p>
+            <footer><button id="mail-send" type="submit">Отправить</button></footer>
+          </form>
+        </section>
+        <div class="send-success" id="mail-send-success" role="status" hidden>✓ Письмо отправлено</div>
+      </section>
+    </main>
+    <script type="module" src="/demo-mail.js"></script>
+  </body>
+</html>

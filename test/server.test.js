@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,6 +9,8 @@ const API_KEY = 'integration-secret';
 const WEB_LOGIN = 'integration-user';
 const WEB_PASSWORD = 'integration-password';
 const UN_ID = 'un-integration-01';
+const DEMO_MAIL_LOGIN = 'browser-demo-user';
+const DEMO_MAIL_PASSWORD = 'browser-demo-password';
 const PORT = 36000 + Math.floor(Math.random() * 2000);
 const origin = `http://127.0.0.1:${PORT}`;
 let child;
@@ -62,6 +64,10 @@ test.before(async () => {
       UN_ID,
       WEB_LOGIN,
       WEB_PASSWORD,
+      DEMO_MAIL_LOGIN,
+      DEMO_MAIL_PASSWORD,
+      PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+      BROWSER_HEADLESS: 'true',
       DATA_DIR: dataDir
     },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -120,6 +126,8 @@ test('healthcheck exposes this UN and its local queue state', async () => {
     assert.equal(body.queue.max_parallel_jobs, 1);
     assert.equal(body.queue.available_slots, 1);
     assert.equal(body.queue.status, 'idle');
+    assert.equal(body.browser_replay.available, true);
+    assert.equal(body.browser_replay.engine, '@puppeteer/replay');
   }
 
   const resourcesResponse = await request('/api/v2/system/resources');
@@ -174,7 +182,7 @@ test('serves the visual execution studio to an authenticated browser', async () 
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /text\/html/);
   const html = await response.text();
-  assert.match(html, /Демо-маршрут на 12 минут/);
+  assert.match(html, /Демо-маршрут этапа 3/);
   assert.match(html, /Редактор сценариев/);
   assert.match(html, /Ход выполнения/);
 });
@@ -235,6 +243,32 @@ test('rejects invalid scripts before queueing them', async () => {
   const body = await response.json();
   assert.equal(body.error.code, 'INVALID_SCRIPT');
   assert.equal(body.error.details.errors[0].path, 'script.steps[0].action');
+});
+
+test('reports unresolved Replay templates as a normalized browser error', async () => {
+  const response = await request('/api/v2/jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      retry_policy: { max_attempts: 1, backoff_ms: 1 },
+      script: {
+        title: 'Missing context value',
+        steps: [{ type: 'navigate', url: '{{missing_url}}' }]
+      }
+    })
+  });
+  assert.equal(response.status, 201);
+  const jobId = (await response.json()).job.job_id;
+
+  let job;
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    job = (await (await request(`/api/v2/jobs/${jobId}`)).json()).job;
+    if (job.status === 'failed') break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(job.status, 'failed');
+  assert.equal(job.error.code, 'BROWSER_REPLAY_ERROR');
+  assert.match(job.error.message, /Не удалось подготовить Puppeteer Replay/);
 });
 
 test('executes a script through the API and exposes visual step state and logs', async () => {
@@ -357,4 +391,74 @@ test('cancels an active interpreter step through its abort signal', async () => 
   assert.equal(job.status, 'cancelled');
   assert.equal(job.error.code, 'CANCELLED');
   assert.equal(job.execution.status, 'cancelled');
+});
+
+test('executes an exported Puppeteer Replay flow and sends a real demo email', async () => {
+  const flow = JSON.parse(await readFile(
+    path.resolve(import.meta.dirname, '../demo/browser-replay-send-email.json'),
+    'utf8'
+  ));
+  const subject = `Browser E2E ${Date.now()}`;
+  const createResponse = await request('/api/v2/jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      uid: `browser-e2e-${Date.now()}`,
+      timeout_ms: 45000,
+      retry_policy: { max_attempts: 1, backoff_ms: 5 },
+      context: {
+        mail_to: 'integration-recipient@example.test',
+        mail_subject: subject,
+        mail_body: 'Это письмо отправлено сквозным тестом через Chrome Recorder JSON.'
+      },
+      script: flow
+    })
+  });
+  assert.equal(createResponse.status, 201);
+  const jobId = (await createResponse.json()).job.job_id;
+
+  let job;
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    job = (await (await request(`/api/v2/jobs/${jobId}`)).json()).job;
+    if (['success', 'failed', 'validation_failed', 'timeout'].includes(job.status)) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  assert.equal(job.status, 'success', JSON.stringify(job.error));
+  assert.equal(job.result.runtime, 'puppeteer-replay');
+  assert.equal(job.result.steps_executed, 18);
+  assert.equal(job.execution.completed_steps, 18);
+  assert.ok(job.execution.steps.every((step) => step.status === 'success'));
+  assert.deepEqual(job.execution.steps.slice(0, 3).map((step) => step.action), [
+    'setViewport', 'navigate', 'waitForElement'
+  ]);
+  const passwordStep = job.execution.steps.find((step) => step.action === 'change'
+    && JSON.stringify(step.params?.selectors).includes('mail-password'));
+  assert.equal(passwordStep.params.value, '••••••');
+  assert.doesNotMatch(JSON.stringify(job), new RegExp(DEMO_MAIL_PASSWORD));
+
+  const screenshot = job.result.artifacts.find((artifact) => artifact.kind === 'browser_screenshot');
+  assert.ok(screenshot);
+  assert.equal(screenshot.mime_type, 'image/png');
+  assert.ok(screenshot.size_bytes > 1000);
+
+  const artifactResponse = await webRequest(screenshot.public_url);
+  assert.equal(artifactResponse.status, 200);
+  assert.equal(artifactResponse.headers.get('content-type'), 'image/png');
+  assert.ok((await artifactResponse.arrayBuffer()).byteLength > 1000);
+
+  const mailLogin = await fetch(`${origin}/demo/mail/api/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ login: DEMO_MAIL_LOGIN, password: DEMO_MAIL_PASSWORD })
+  });
+  assert.equal(mailLogin.status, 200);
+  const mailCookie = mailLogin.headers.get('set-cookie').split(';')[0];
+  const mailState = await fetch(`${origin}/demo/mail/api/state`, {
+    headers: { Cookie: mailCookie }
+  }).then((response) => response.json());
+  const sentMessage = mailState.messages.find((message) => message.subject === subject);
+  assert.ok(sentMessage);
+  assert.equal(sentMessage.to, 'integration-recipient@example.test');
+  assert.match(sentMessage.body, /Chrome Recorder JSON/);
 });

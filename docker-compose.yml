@@ -13,6 +13,10 @@ services:
       WEB_PASSWORD: ${WEB_PASSWORD:?WEB_PASSWORD must be set in .env}
       WEB_SESSION_TTL_HOURS: ${WEB_SESSION_TTL_HOURS:-12}
       WEB_COOKIE_SECURE: ${WEB_COOKIE_SECURE:-false}
+      DEMO_MAIL_LOGIN: ${DEMO_MAIL_LOGIN:-demo.user}
+      DEMO_MAIL_PASSWORD: ${DEMO_MAIL_PASSWORD:-demo-password}
+      BROWSER_HEADLESS: ${BROWSER_HEADLESS:-true}
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
       PORT: 33001
       HOST: 0.0.0.0
       DATA_DIR: /app/data

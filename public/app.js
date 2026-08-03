@@ -16,7 +16,7 @@ const elements = Object.fromEntries([
   'api-key', 'toggle-key', 'script-editor', 'line-numbers', 'format', 'preview', 'run', 'editor-state',
   'connection', 'job-status', 'progress-value', 'step-count', 'attempt-count', 'duration-value',
   'progress-bar', 'flow', 'flow-empty', 'jobs', 'logs', 'selected-job', 'refresh-jobs', 'toast',
-  'scenario-list', 'scenario-current', 'new-script'
+  'scenario-list', 'scenario-current', 'new-script', 'artifacts', 'artifact-section'
 ].map((id) => [id, document.getElementById(id)]));
 
 let selectedJobId = null;
@@ -174,13 +174,20 @@ function createStepRow(step, index) {
   return row;
 }
 
+function previewStepParams(step) {
+  if (step.params) return step.params;
+  if (!step.type) return {};
+  const { type, id, ...params } = step;
+  return params;
+}
+
 function renderExecution(job = null, previewSteps = null) {
   const execution = job?.execution;
   const steps = execution?.steps || (previewSteps || []).map((step, index) => ({
     index,
-    action: step.action,
+    action: step.action || step.type,
     status: 'pending',
-    params: step.params || {},
+    params: previewStepParams(step),
     duration_ms: null
   }));
   elements.flow.replaceChildren(...steps.map(createStepRow));
@@ -197,6 +204,37 @@ function renderExecution(job = null, previewSteps = null) {
   elements['attempt-count'].textContent = job?.attempts || '—';
   elements['duration-value'].textContent = formatDuration(execution?.duration_ms);
   elements['progress-bar'].style.width = `${percent}%`;
+  renderArtifacts(job);
+}
+
+function renderArtifacts(job) {
+  const artifacts = job?.result?.artifacts || [];
+  elements['artifact-section'].hidden = artifacts.length === 0;
+  if (artifacts.length === 0) {
+    elements.artifacts.replaceChildren();
+    return;
+  }
+  elements.artifacts.replaceChildren(...artifacts.map((artifact) => {
+    const link = document.createElement('a');
+    link.className = 'artifact-card';
+    link.href = artifact.public_url || '#';
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    if (artifact.kind === 'browser_screenshot' && artifact.public_url) {
+      const image = document.createElement('img');
+      image.src = artifact.public_url;
+      image.alt = `Скриншот результата ${artifact.filename}`;
+      link.append(image);
+    }
+    const caption = document.createElement('span');
+    const name = document.createElement('strong');
+    name.textContent = artifact.filename;
+    const kind = document.createElement('small');
+    kind.textContent = artifact.kind;
+    caption.append(name, kind);
+    link.append(caption);
+    return link;
+  }));
 }
 
 function showToast(message, error = false) {
@@ -215,7 +253,8 @@ async function preview() {
   try {
     const payload = parseEditor();
     renderExecution(null, payload.script.steps);
-    setEditorState(`Корректных JSON-шагов: ${payload.script.steps.length}`);
+    const runtime = payload.script.steps.some((step) => step.type) ? 'Puppeteer Replay' : 'JSON Steps';
+    setEditorState(`${runtime} · шагов: ${payload.script.steps.length}`);
   } catch (error) {
     setEditorState(error.message, true);
     showToast(error.message, true);
