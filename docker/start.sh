@@ -39,6 +39,9 @@ if [ "$novnc_enabled" = "true" ]; then
   else
     x11vnc -display "$DISPLAY" -localhost -forever -shared -repeat -noxdamage -quiet \
       -rfbport "$vnc_port" -nopw &
+    if [ "${NOVNC_BIND_HOST:-127.0.0.1}" = "0.0.0.0" ]; then
+      echo "WARNING: Chromium live view is public and NOVNC_PASSWORD is empty" >&2
+    fi
   fi
 
   websockify --web=/usr/share/novnc "0.0.0.0:${novnc_internal_port}" "127.0.0.1:${vnc_port}" &

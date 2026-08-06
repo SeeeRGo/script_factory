@@ -129,6 +129,7 @@ test('healthcheck exposes this UN and its local queue state', async () => {
     assert.equal(body.browser_replay.available, true);
     assert.equal(body.browser_replay.engine, '@puppeteer/replay');
     assert.equal(body.browser_replay.live_view.enabled, false);
+    assert.match(body.browser_replay.live_view.embedded_url, /^\/browser-live\/vnc\.html/);
   }
 
   const resourcesResponse = await request('/api/v2/system/resources');

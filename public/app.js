@@ -377,7 +377,7 @@ async function checkConnection() {
     elements.connection.lastChild.textContent = ` Подключено · ${health.un_id}`;
     const liveView = health.browser_replay?.live_view;
     if (liveView?.enabled) {
-      const liveUrl = liveView.public_url
+      const liveUrl = liveView.embedded_url || liveView.public_url
         || `${location.protocol}//${location.hostname}:${liveView.port}${liveView.path}`;
       elements['browser-live-link'].href = liveUrl;
       elements['browser-live-link'].hidden = false;

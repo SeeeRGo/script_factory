@@ -47,11 +47,13 @@ In `docker compose`, it loads the spec from a mounted local file and preloads `X
 docker compose up --build
 ```
 
-Docker Compose включает presenter mode: Chromium работает в Xvfb и доступен через
-noVNC на `127.0.0.1:33303`. Для удалённого сервера пробросьте порты приложения и noVNC:
+Docker Compose включает presenter mode: Chromium работает в Xvfb, а встроенный noVNC
+открывается на главной странице через авторизованный same-origin proxy. Внутренний сервис
+работает на порту `33303`, но отдельно открывать его для iframe не требуется. Для прямого
+доступа только через SSH пробросьте порты приложения и noVNC:
 
 ```bash
-ssh -N -L 33001:127.0.0.1:33001 -L 33303:127.0.0.1:33303 user@server
+ssh -N -L 33001:127.0.0.1:33001 user@server
 ```
 
 Затем откройте `http://127.0.0.1:33001` и ссылку «Экран Chromium». Полная настройка,

@@ -37,6 +37,8 @@ const LEGACY_STATE_FILE = path.join(DATA_DIR, 'state.json');
 const OPENAPI_FILE = path.join(process.cwd(), 'openapi.yaml');
 const PUBLIC_DIR = path.join(process.cwd(), 'public');
 const SWAGGER_LOCALIZATION_FILE = path.join(process.cwd(), 'swagger-ru.js');
+const NOVNC_PROXY_PREFIX = '/browser-live';
+const NOVNC_INTERNAL_PORT = Number(process.env.NOVNC_INTERNAL_PORT || 33303);
 const PERSIST_DEBOUNCE_MS = Number(process.env.PERSIST_DEBOUNCE_MS || 50);
 const CORS_ALLOWED_HEADERS = 'X-API-Key, Idempotency-Key, Content-Type, Accept, Origin, Authorization';
 const CORS_ALLOWED_METHODS = 'GET, POST, PUT, OPTIONS';
@@ -148,6 +150,48 @@ function requireWebAuth(req, res, requestUrl) {
   const next = encodeURIComponent(`${requestUrl.pathname}${requestUrl.search}`);
   redirect(res, `/login?next=${next}`);
   return false;
+}
+
+function noVncProxyPath(requestUrl) {
+  const pathname = requestUrl.pathname.slice(NOVNC_PROXY_PREFIX.length) || '/';
+  return `${pathname}${requestUrl.search}`;
+}
+
+function proxyNoVncHttp(req, res, requestUrl) {
+  const proxyRequest = http.request({
+    hostname: '127.0.0.1',
+    port: NOVNC_INTERNAL_PORT,
+    method: req.method,
+    path: noVncProxyPath(requestUrl),
+    headers: { ...req.headers, host: `127.0.0.1:${NOVNC_INTERNAL_PORT}` }
+  }, (proxyResponse) => {
+    res.writeHead(proxyResponse.statusCode || 502, proxyResponse.headers);
+    proxyResponse.pipe(res);
+  });
+  proxyRequest.on('error', (error) => {
+    if (!res.headersSent) {
+      sendJson(res, 502, {
+        error: { code: 'NOVNC_UNAVAILABLE', message: `Экран Chromium недоступен: ${error.message}` }
+      });
+    } else {
+      res.destroy(error);
+    }
+  });
+  req.pipe(proxyRequest);
+}
+
+function rejectUpgrade(socket, statusCode, statusMessage) {
+  socket.end(`HTTP/1.1 ${statusCode} ${statusMessage}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+}
+
+function writeUpgradeResponse(socket, response) {
+  const lines = [`HTTP/1.1 ${response.statusCode || 101} ${response.statusMessage || 'Switching Protocols'}`];
+  for (const [name, rawValue] of Object.entries(response.headers)) {
+    for (const value of Array.isArray(rawValue) ? rawValue : [rawValue]) {
+      if (value !== undefined) lines.push(`${name}: ${value}`);
+    }
+  }
+  socket.write(`${lines.join('\r\n')}\r\n\r\n`);
 }
 
 function defaultConfig() {
@@ -1029,7 +1073,8 @@ function buildHealthResponse(requestId) {
         enabled: noVncConfigured && !headless,
         port: Number(process.env.NOVNC_PUBLIC_PORT || 33303),
         public_url: process.env.NOVNC_PUBLIC_URL || null,
-        path: '/vnc.html?autoconnect=1&resize=scale&path=websockify'
+        path: '/vnc.html?autoconnect=1&resize=scale&path=websockify',
+        embedded_url: `${NOVNC_PROXY_PREFIX}/vnc.html?autoconnect=1&resize=scale&path=websockify`
       }
     }
   };
@@ -1177,6 +1222,16 @@ const server = http.createServer(async (req, res) => {
       if (token) webSessions.delete(token);
       res.setHeader('Set-Cookie', sessionCookie('', 0));
       redirect(res, '/login');
+      return;
+    }
+
+    if (method === 'GET' && (pathname === NOVNC_PROXY_PREFIX || pathname.startsWith(`${NOVNC_PROXY_PREFIX}/`))) {
+      if (process.env.NOVNC_ENABLED !== 'true') {
+        sendJson(res, 404, { error: { code: 'NOVNC_DISABLED', message: 'Живой экран Chromium отключён' } });
+        return;
+      }
+      if (!requireWebAuth(req, res, requestUrl)) return;
+      proxyNoVncHttp(req, res, requestUrl);
       return;
     }
 
@@ -1402,6 +1457,44 @@ const server = http.createServer(async (req, res) => {
       }
     });
   }
+});
+
+server.on('upgrade', (req, socket, head) => {
+  let requestUrl;
+  try {
+    requestUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  } catch {
+    rejectUpgrade(socket, 400, 'Bad Request');
+    return;
+  }
+
+  if (requestUrl.pathname !== `${NOVNC_PROXY_PREFIX}/websockify`) {
+    rejectUpgrade(socket, 404, 'Not Found');
+    return;
+  }
+  if (process.env.NOVNC_ENABLED !== 'true' || !isWebAuthenticated(req)) {
+    rejectUpgrade(socket, 401, 'Unauthorized');
+    return;
+  }
+
+  const proxyRequest = http.request({
+    hostname: '127.0.0.1',
+    port: NOVNC_INTERNAL_PORT,
+    method: 'GET',
+    path: '/websockify',
+    headers: { ...req.headers, host: `127.0.0.1:${NOVNC_INTERNAL_PORT}` }
+  });
+  proxyRequest.on('upgrade', (proxyResponse, proxySocket, proxyHead) => {
+    writeUpgradeResponse(socket, proxyResponse);
+    if (head.length > 0) proxySocket.write(head);
+    if (proxyHead.length > 0) socket.write(proxyHead);
+    proxySocket.on('error', () => socket.destroy());
+    socket.on('error', () => proxySocket.destroy());
+    proxySocket.pipe(socket).pipe(proxySocket);
+  });
+  proxyRequest.on('response', () => rejectUpgrade(socket, 502, 'Bad Gateway'));
+  proxyRequest.on('error', () => rejectUpgrade(socket, 502, 'Bad Gateway'));
+  proxyRequest.end();
 });
 
 async function main() {
