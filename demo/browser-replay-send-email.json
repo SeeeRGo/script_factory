@@ -82,6 +82,12 @@
       "assertedEvents": [{ "type": "navigation" }]
     },
     {
+      "title": "Принять условия Yahoo при необходимости",
+      "description": "При первом входе принимает consent-экран Yahoo; при повторном запуске сразу продолжает работу.",
+      "type": "waitForExpression",
+      "expression": "(() => { if (location.hostname !== 'guce.yahoo.com') return true; if (globalThis.__scriptFactoryYahooConsentClicked) return false; const buttons = [...document.querySelectorAll('button, input[type=\"submit\"]')]; const accept = buttons.find((button) => button.name === 'agree' || button.value === 'agree' || button.classList.contains('accept-all') || /^(accept all|alles accepteren|принять все|alle akzeptieren|tout accepter|aceptar todo|accetta tutto)$/i.test((button.innerText || button.value || '').trim())); if (!accept) return false; globalThis.__scriptFactoryYahooConsentClicked = true; accept.click(); return false; })()"
+    },
+    {
       "title": "Дождаться почтового ящика",
       "description": "Подтверждает успешный вход появлением кнопки Compose.",
       "type": "waitForElement",

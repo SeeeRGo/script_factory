@@ -20,6 +20,20 @@ function receiptDownloadStep(durationMs) {
 
 const stage3Subject = `Автоматизация Stage 3 · ${new Date().toLocaleString('ru-RU')}`;
 const yandexQuery = 'официальная документация Node.js';
+const yahooConsentExpression = `(() => {
+  if (location.hostname !== 'guce.yahoo.com') return true;
+  if (globalThis.__scriptFactoryYahooConsentClicked) return false;
+  const buttons = [...document.querySelectorAll('button, input[type="submit"]')];
+  const accept = buttons.find((button) => button.name === 'agree'
+    || button.value === 'agree'
+    || button.classList.contains('accept-all')
+    || /^(accept all|alles accepteren|принять все|alle akzeptieren|tout accepter|aceptar todo|accetta tutto)$/i
+      .test((button.innerText || button.value || '').trim()));
+  if (!accept) return false;
+  globalThis.__scriptFactoryYahooConsentClicked = true;
+  accept.click();
+  return false;
+})()`;
 
 function browserMailReplay() {
   return {
@@ -36,6 +50,7 @@ function browserMailReplay() {
       { title: 'Выбрать поле пароля', description: 'Устанавливает фокус в поле пароля Yahoo.', type: 'click', selectors: [['#login-passwd'], ['input[name="password"]'], ['input[type="password"]']], offsetX: 150, offsetY: 24 },
       { title: 'Ввести пароль Yahoo', description: 'Берёт пароль из YAHOO_MAIL_PASSWORD; значение скрывается в прогрессе и логах.', type: 'change', selectors: [['#login-passwd'], ['input[name="password"]'], ['input[type="password"]']], value: '{{yahoo_password}}' },
       { title: 'Войти в почту', description: 'Отправляет форму пароля и переходит в Yahoo Mail.', type: 'click', selectors: [['button[name="verifyPassword"]'], ['#login-signin'], ['button[type="submit"]'], ['aria/Next']], offsetX: 150, offsetY: 24, assertedEvents: [{ type: 'navigation' }] },
+      { title: 'Принять условия Yahoo при необходимости', description: 'При первом входе принимает consent-экран Yahoo; при повторном запуске сразу продолжает работу.', type: 'waitForExpression', expression: yahooConsentExpression },
       { title: 'Дождаться почтового ящика', description: 'Подтверждает успешный вход появлением кнопки Compose.', type: 'waitForElement', selectors: [['[data-test-id="compose-button"]'], ['aria/Compose'], ['aria/Написать'], ['text/Compose']], visible: true },
       { title: 'Создать письмо', description: 'Открывает редактор нового письма Yahoo.', type: 'click', selectors: [['[data-test-id="compose-button"]'], ['aria/Compose'], ['aria/Написать'], ['text/Compose']], offsetX: 60, offsetY: 20 },
       { title: 'Дождаться редактора письма', description: 'Проверяет появление поля получателя.', type: 'waitForElement', selectors: [['[data-test-id="compose-to"]'], ['#message-to-field'], ['input[role="combobox"][aria-label*="To"]']], visible: true },
@@ -117,7 +132,7 @@ const demoScenarioDefinitions = [
     tone: 'success',
     summary: 'Chromium входит в seeergo@yahoo.com и отправляет реальное письмо на 10sydneyfc@gmail.com.',
     points: [
-      '18 нативных шагов Puppeteer Replay работают с реальным Yahoo Mail',
+      '19 нативных шагов Puppeteer Replay работают с реальным Yahoo Mail',
       'Пароль берётся только из YAHOO_MAIL_PASSWORD и не хранится в сценарии',
       'Yahoo подтверждает отправку, итоговый экран сохраняется в result.artifacts'
     ],

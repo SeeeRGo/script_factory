@@ -21,9 +21,36 @@ test('homepage demo route includes Stage 3 and remains short enough to present',
 
   const browserScenario = demoScenarios.find((scenario) => scenario.id === 'browser-mail-replay');
   assert.ok(browserScenario);
-  assert.equal(browserScenario.payload.script.steps.length, 18);
+  assert.equal(browserScenario.payload.script.steps.length, 19);
   assert.ok(browserScenario.payload.script.steps.every((step) => typeof step.type === 'string'));
   assert.equal(browserScenario.payload.context.mail_to, '10sydneyfc@gmail.com');
+  const consentStep = browserScenario.payload.script.steps.find((step) => step.title.includes('условия Yahoo'));
+  assert.equal(consentStep.type, 'waitForExpression');
+  assert.match(consentStep.expression, /guce\.yahoo\.com/);
+  assert.match(consentStep.expression, /alles accepteren/i);
+
+  let consentClicks = 0;
+  const acceptButton = {
+    name: '',
+    value: '',
+    innerText: 'Alles accepteren',
+    classList: { contains: () => false },
+    click: () => { consentClicks += 1; }
+  };
+  const evaluateConsent = new Function(
+    'location',
+    'document',
+    'globalThis',
+    `return ${consentStep.expression}`
+  );
+  const consentPage = { hostname: 'guce.yahoo.com' };
+  const consentDocument = { querySelectorAll: () => [acceptButton] };
+  const pageState = {};
+  assert.equal(evaluateConsent(consentPage, consentDocument, pageState), false);
+  assert.equal(consentClicks, 1);
+  assert.equal(evaluateConsent(consentPage, consentDocument, pageState), false);
+  assert.equal(consentClicks, 1, 'кнопка consent не должна нажиматься повторно');
+  assert.equal(evaluateConsent({ hostname: 'mail.yahoo.com' }, consentDocument, pageState), true);
 
   const yandexScenario = demoScenarios.find((scenario) => scenario.id === 'yandex-search-replay');
   assert.ok(yandexScenario);

@@ -73,11 +73,12 @@ State is persisted to `data/state.sqlite` locally and `/app/data/state.sqlite` i
 
 ## Execution Studio
 
-Open `/` for a Stage 3 guided demo. The first ready-to-run scenario performs 18 real
+Open `/` for a Stage 3 guided demo. The first ready-to-run scenario performs 19 real
 browser steps: it logs into `seeergo@yahoo.com`, composes a message for
 `10sydneyfc@gmail.com`, sends it, verifies Yahoo's success notification, and returns a
 screenshot. The second browser scenario searches Yandex and opens the first organic
-result. Stage 2 diagnostic scenarios remain available. Yahoo credentials are read only
+result. On the first login, the Yahoo flow also accepts the optional `guce.yahoo.com`
+consent screen. Stage 2 diagnostic scenarios remain available. Yahoo credentials are read only
 from `.env`; `YAHOO_MAIL_PASSWORD` is never placed in the scenario JSON.
 
 The view shows resolved step parameters, status, timing, attempts, normalized errors, recent jobs, and interpreter logs. It uses the same API key and same-origin API as the service, so it also works in the single Railway container.
