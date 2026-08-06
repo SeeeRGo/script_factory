@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "running-low",
   "title": "Высокий приоритет приходит во время выполнения низкого",
-  "description": "P50 начинает выполняться первым. Через 800 мс поступает P10 и остаётся в очереди, потому что планировщик не вытесняет активный job. P50 падает на собственной проверке IP, после чего P10 немедленно запускается и успешно завершается.",
+  "description": "P50 выполняет первую попытку, получает retryable ошибку и запускает вторую. Во время второй попытки поступает P10 и остаётся в очереди, потому что планировщик не вытесняет активный job. P50 окончательно падает с PLUGIN_NOT_RUNNING, после чего P10 запускается и успешно завершается.",
   "config": {
     "max_parallel_jobs": 1
   },
@@ -16,8 +16,7 @@
         "uid": "queue-case-2-low-P50",
         "priority": 50,
         "timeout_ms": 8000,
-        "retry_policy": { "max_attempts": 1, "backoff_ms": 100 },
-        "context": { "current_ip": "10.0.0.99" },
+        "retry_policy": { "max_attempts": 2, "backoff_ms": 700 },
         "script": {
           "title": "P50 · Фоновая обработка реестра",
           "steps": [
@@ -26,8 +25,8 @@
             { "title": "Проверить строки", "description": "Продолжает работу, пока P10 уже ожидает в очереди.", "action": "noop", "duration_ms": 500 },
             { "title": "Сопоставить записи", "description": "Показывает, что поступление P10 не прерывает активный P50.", "action": "noop", "duration_ms": 500 },
             { "title": "Подготовить результат", "description": "Завершает подготовительную часть фонового задания.", "action": "noop", "duration_ms": 500 },
-            { "title": "Проверить адрес машины", "description": "P50 падает по собственной причине, а не из-за прихода P10.", "action": "check_ip", "params": { "expected_ip": "10.0.0.10" }, "duration_ms": 500 },
-            { "title": "Сохранить реестр", "description": "Не выполняется после контролируемой ошибки IP_MISMATCH.", "action": "noop", "duration_ms": 350 }
+            { "title": "Проверить исполнительный плагин", "description": "Первая ошибка запускает retry, вторая завершает P50 с PLUGIN_NOT_RUNNING.", "action": "auth_ecp", "params": { "plugin_running": false }, "duration_ms": 500 },
+            { "title": "Сохранить реестр", "description": "Не выполняется после контролируемой ошибки PLUGIN_NOT_RUNNING.", "action": "noop", "duration_ms": 350 }
           ]
         }
       }
@@ -35,7 +34,7 @@
     {
       "alias": "high",
       "role": "observed",
-      "submit": { "type": "after_status", "job": "low", "status": "running", "delay_ms": 800 },
+      "submit": { "type": "after_attempt", "job": "low", "attempt": 2, "status": "running", "delay_ms": 800 },
       "payload": {
         "uid": "queue-case-2-high-P10",
         "priority": 10,
@@ -58,7 +57,8 @@
   "expectations": [
     { "type": "created_while_running", "created": "high", "running": "low" },
     { "type": "starts_after_finished", "job": "high", "after": "low" },
-    { "type": "terminal", "job": "low", "status": "failed", "error_code": "IP_MISMATCH" },
+    { "type": "attempts", "job": "low", "count": 2 },
+    { "type": "terminal", "job": "low", "status": "failed", "error_code": "PLUGIN_NOT_RUNNING" },
     { "type": "terminal", "job": "high", "status": "success" }
   ]
 }

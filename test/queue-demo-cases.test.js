@@ -23,8 +23,9 @@ test('queue demo cases are declarative, valid and contain several jobs', async (
       assert.deepEqual(validateScript(item.payload.script), [], `${filename}:${item.alias}`);
       assert.ok(item.payload.script.steps.length >= 6, `${filename}:${item.alias} должен выглядеть наглядно`);
       assert.ok(item.payload.script.steps.every((step) => step.title && step.description));
-      assert.equal(item.payload.retry_policy.max_attempts, 1);
+      assert.ok(item.payload.retry_policy.max_attempts >= 1);
     }
+    assert.ok(definition.jobs.some((item) => item.payload.retry_policy.max_attempts >= 2), `${filename} должен показывать retry`);
   }
 });
 
@@ -36,16 +37,18 @@ test('case 1 has two observed priorities and a controlled high-priority failure'
   const observed = definition.jobs.filter((item) => item.role === 'observed');
   assert.deepEqual(observed.map((item) => item.payload.priority).sort((a, b) => a - b), [10, 50]);
   assert.ok(definition.expectations.some((item) => item.type === 'simultaneously_queued'));
-  assert.ok(definition.expectations.some((item) => item.job === 'high' && item.error_code === 'IP_MISMATCH'));
+  assert.ok(definition.expectations.some((item) => item.job === 'high' && item.type === 'attempts' && item.count === 2));
+  assert.ok(definition.expectations.some((item) => item.job === 'high' && item.error_code === 'PLUGIN_NOT_RUNNING'));
 });
 
-test('case 2 submits P10 while P50 is running and checks non-preemption', async () => {
+test('case 2 submits P10 during the second P50 attempt and checks non-preemption', async () => {
   const definition = JSON.parse(await readFile(
     path.resolve(import.meta.dirname, '../demo/queue-case-running-low.json'),
     'utf8'
   ));
   const high = definition.jobs.find((item) => item.alias === 'high');
-  assert.deepEqual(high.submit, { type: 'after_status', job: 'low', status: 'running', delay_ms: 800 });
+  assert.deepEqual(high.submit, { type: 'after_attempt', job: 'low', attempt: 2, status: 'running', delay_ms: 800 });
   assert.ok(definition.expectations.some((item) => item.type === 'starts_after_finished'));
-  assert.ok(definition.expectations.some((item) => item.job === 'low' && item.error_code === 'IP_MISMATCH'));
+  assert.ok(definition.expectations.some((item) => item.job === 'low' && item.type === 'attempts' && item.count === 2));
+  assert.ok(definition.expectations.some((item) => item.job === 'low' && item.error_code === 'PLUGIN_NOT_RUNNING'));
 });

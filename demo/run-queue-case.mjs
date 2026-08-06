@@ -37,7 +37,7 @@ const result = await runQueueCase(definition, {
   request,
   pollIntervalMs: 150,
   onUpdate({ alias, job }) {
-    const line = `${alias.padEnd(5)} · P${String(job.priority).padEnd(3)} · ${job.status.padEnd(17)} · ${job.uid}`;
+    const line = `${alias.padEnd(5)} · P${String(job.priority).padEnd(3)} · ${job.status.padEnd(17)} · попытка ${job.attempts}/${job.max_attempts} · ${job.uid}`;
     if (lastLines.get(alias) === line) return;
     lastLines.set(alias, line);
     console.log(line);

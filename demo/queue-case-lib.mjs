@@ -29,12 +29,15 @@ export function validateQueueCase(definition) {
     if (typeof item.alias !== 'string' || !item.alias) errors.push(`${prefix}.alias обязателен`);
     else if (aliases.has(item.alias)) errors.push(`${prefix}.alias должен быть уникальным`);
     else aliases.add(item.alias);
-    if (!['immediate', 'after_status'].includes(item.submit?.type)) errors.push(`${prefix}.submit.type не поддерживается`);
+    if (!['immediate', 'after_status', 'after_attempt'].includes(item.submit?.type)) errors.push(`${prefix}.submit.type не поддерживается`);
+    if (item.submit?.type === 'after_attempt' && (!Number.isInteger(item.submit.attempt) || item.submit.attempt < 1)) {
+      errors.push(`${prefix}.submit.attempt должен быть положительным целым числом`);
+    }
     if (!item.payload?.script || !Array.isArray(item.payload.script.steps)) errors.push(`${prefix}.payload.script.steps обязателен`);
     if (!Number.isFinite(item.payload?.priority)) errors.push(`${prefix}.payload.priority обязателен`);
   }
   for (const [index, item] of definition.jobs.entries()) {
-    if (item.submit?.type === 'after_status' && !aliases.has(item.submit.job)) {
+    if (['after_status', 'after_attempt'].includes(item.submit?.type) && !aliases.has(item.submit.job)) {
       errors.push(`jobs[${index}].submit.job ссылается на неизвестный alias`);
     }
   }
@@ -59,6 +62,19 @@ async function waitForStatus(request, job, expectedStatus, deadline, pollInterva
     await sleep(pollIntervalMs);
   }
   throw new Error(`Не дождались статуса ${expectedStatus} для ${job.uid}`);
+}
+
+async function waitForAttempt(request, job, expectedAttempt, expectedStatus, deadline, pollIntervalMs, observe) {
+  while (Date.now() < deadline) {
+    const current = await readJob(request, job);
+    await observe();
+    if (current.attempts >= expectedAttempt && (!expectedStatus || current.status === expectedStatus)) return current;
+    if (TERMINAL_STATUSES.has(current.status)) {
+      throw new Error(`${current.uid} завершилось до попытки ${expectedAttempt}`);
+    }
+    await sleep(pollIntervalMs);
+  }
+  throw new Error(`Не дождались попытки ${expectedAttempt} для ${job.uid}`);
 }
 
 function evaluateExpectation(expectation, jobsByAlias, observations) {
@@ -97,6 +113,13 @@ function evaluateExpectation(expectation, jobsByAlias, observations) {
       return {
         passed: statusMatches && errorMatches,
         message: `${expectation.job} завершилось как ${expectation.status}${expectation.error_code ? ` / ${expectation.error_code}` : ''}`
+      };
+    }
+    case 'attempts': {
+      const current = job(expectation.job);
+      return {
+        passed: current?.attempts === expectation.count,
+        message: `${expectation.job} выполнило ${expectation.count} попытки`
       };
     }
     default:
@@ -150,6 +173,20 @@ export async function runQueueCase(definition, options) {
         const dependency = jobsByAlias.get(item.submit.job);
         if (!dependency) throw new Error(`Задание ${item.alias} ожидает ещё не созданное ${item.submit.job}`);
         await waitForStatus(request, dependency, item.submit.status, deadline, pollIntervalMs, observe);
+        if (item.submit.delay_ms > 0) await sleep(item.submit.delay_ms);
+      }
+      if (item.submit.type === 'after_attempt') {
+        const dependency = jobsByAlias.get(item.submit.job);
+        if (!dependency) throw new Error(`Задание ${item.alias} ожидает ещё не созданное ${item.submit.job}`);
+        await waitForAttempt(
+          request,
+          dependency,
+          item.submit.attempt,
+          item.submit.status,
+          deadline,
+          pollIntervalMs,
+          observe
+        );
         if (item.submit.delay_ms > 0) await sleep(item.submit.delay_ms);
       }
       const payload = structuredClone(item.payload);

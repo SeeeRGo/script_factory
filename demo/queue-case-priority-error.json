@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "priority-error",
   "title": "Два задания в очереди: первым выполняется высокий приоритет и падает",
-  "description": "Технический затвор занимает единственный слот, пока в очередь добавляются P50 и P10. После освобождения слота P10 запускается первым, проходит подготовку и завершается ошибкой IP_MISMATCH. Затем P50 успешно выполняется.",
+  "description": "Технический затвор занимает единственный слот, пока в очередь добавляются P50 и P10. После освобождения слота P10 запускается первым, проходит две попытки и завершается ошибкой PLUGIN_NOT_RUNNING. Затем P50 успешно выполняется.",
   "config": {
     "max_parallel_jobs": 1
   },
@@ -60,8 +60,7 @@
         "uid": "queue-case-1-high-P10",
         "priority": 10,
         "timeout_ms": 8000,
-        "retry_policy": { "max_attempts": 1, "backoff_ms": 100 },
-        "context": { "current_ip": "10.0.0.99" },
+        "retry_policy": { "max_attempts": 2, "backoff_ms": 700 },
         "script": {
           "title": "P10 · Срочная обработка платёжного пакета",
           "steps": [
@@ -69,7 +68,7 @@
             { "title": "Проверить структуру пакета", "description": "Имитирует синтаксическую проверку входного JSON.", "action": "noop", "duration_ms": 350 },
             { "title": "Подготовить маршрут", "description": "Определяет тестовую УН для выполнения задания.", "action": "noop", "duration_ms": 350 },
             { "title": "Загрузить настройки", "description": "Подготавливает параметры контролируемой проверки.", "action": "noop", "duration_ms": 350 },
-            { "title": "Проверить адрес машины", "description": "Завершает срочное задание контролируемой ошибкой IP_MISMATCH.", "action": "check_ip", "params": { "expected_ip": "10.0.0.10" }, "duration_ms": 500 },
+            { "title": "Проверить исполнительный плагин", "description": "Создаёт retryable ошибку PLUGIN_NOT_RUNNING и переводит P10 на повторную попытку.", "action": "auth_ecp", "params": { "plugin_running": false }, "duration_ms": 500 },
             { "title": "Отправить пакет", "description": "Не выполняется после ошибки проверки адреса.", "action": "noop", "duration_ms": 350 }
           ]
         }
@@ -79,7 +78,8 @@
   "expectations": [
     { "type": "simultaneously_queued", "jobs": ["low", "high"] },
     { "type": "starts_before", "first": "high", "second": "low" },
-    { "type": "terminal", "job": "high", "status": "failed", "error_code": "IP_MISMATCH" },
+    { "type": "attempts", "job": "high", "count": 2 },
+    { "type": "terminal", "job": "high", "status": "failed", "error_code": "PLUGIN_NOT_RUNNING" },
     { "type": "terminal", "job": "low", "status": "success" }
   ]
 }
