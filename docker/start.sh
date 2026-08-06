@@ -6,7 +6,8 @@ novnc_enabled="${NOVNC_ENABLED:-false}"
 if [ "$novnc_enabled" = "true" ]; then
   export DISPLAY="${DISPLAY:-:99}"
   novnc_geometry="${NOVNC_GEOMETRY:-1440x900x24}"
-  novnc_internal_port="${NOVNC_INTERNAL_PORT:-6080}"
+  novnc_internal_port="${NOVNC_INTERNAL_PORT:-33303}"
+  novnc_public_port="${NOVNC_PUBLIC_PORT:-33303}"
   vnc_port="${VNC_PORT:-5900}"
   display_number="${DISPLAY#:}"
   display_number="${display_number%%.*}"
@@ -41,7 +42,12 @@ if [ "$novnc_enabled" = "true" ]; then
   fi
 
   websockify --web=/usr/share/novnc "0.0.0.0:${novnc_internal_port}" "127.0.0.1:${vnc_port}" &
-  echo "noVNC: http://127.0.0.1:${novnc_internal_port}/vnc.html?autoconnect=1&resize=scale&path=websockify"
+  echo "noVNC inside container: http://127.0.0.1:${novnc_internal_port}/vnc.html?autoconnect=1&resize=scale&path=websockify"
+  if [ -n "${NOVNC_PUBLIC_URL:-}" ]; then
+    echo "Chromium live view: ${NOVNC_PUBLIC_URL}"
+  else
+    echo "Chromium live view on Docker host: http://127.0.0.1:${novnc_public_port}/vnc.html?autoconnect=1&resize=scale&path=websockify"
+  fi
   echo "Chromium display: $DISPLAY ($novnc_geometry)"
 fi
 

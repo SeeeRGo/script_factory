@@ -48,6 +48,23 @@
         <div class="scenario-grid" id="scenario-list"></div>
       </section>
 
+      <section class="browser-live" id="browser-live-section" aria-labelledby="browser-live-title" hidden>
+        <div class="browser-live-heading">
+          <div>
+            <p class="eyebrow">ЖИВОЕ ВЫПОЛНЕНИЕ · ПОРТ 33303</p>
+            <h2 id="browser-live-title">Экран Chromium</h2>
+            <p>Здесь в реальном времени видны действия сценария. До запуска браузера виртуальный рабочий стол может быть пустым.</p>
+          </div>
+          <div class="browser-live-actions">
+            <span class="browser-live-status" id="browser-live-status"><i></i> Подключение</span>
+            <a id="browser-live-open" href="#" target="_blank" rel="noreferrer">Открыть отдельно ↗</a>
+          </div>
+        </div>
+        <div class="browser-live-viewport">
+          <iframe id="browser-live-frame" title="Живой экран Chromium через noVNC" loading="eager" allow="clipboard-read; clipboard-write"></iframe>
+        </div>
+      </section>
+
       <section class="workspace-heading" id="editor">
         <div>
           <p class="eyebrow">САМОСТОЯТЕЛЬНАЯ РАБОТА</p>

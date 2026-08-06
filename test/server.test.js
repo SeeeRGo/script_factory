@@ -185,6 +185,7 @@ test('serves the visual execution studio to an authenticated browser', async () 
   const html = await response.text();
   assert.match(html, /Демо-маршрут этапа 3/);
   assert.match(html, /Экран Chromium/);
+  assert.match(html, /browser-live-frame/);
   assert.match(html, /Редактор сценариев/);
   assert.match(html, /Ход выполнения/);
 });

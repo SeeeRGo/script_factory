@@ -16,7 +16,8 @@ const elements = Object.fromEntries([
   'api-key', 'toggle-key', 'script-editor', 'line-numbers', 'format', 'preview', 'run', 'editor-state',
   'connection', 'job-status', 'progress-value', 'step-count', 'attempt-count', 'duration-value',
   'progress-bar', 'flow', 'flow-empty', 'jobs', 'logs', 'selected-job', 'refresh-jobs', 'toast',
-  'scenario-list', 'scenario-current', 'new-script', 'artifacts', 'artifact-section', 'browser-live-link'
+  'scenario-list', 'scenario-current', 'new-script', 'artifacts', 'artifact-section', 'browser-live-link',
+  'browser-live-section', 'browser-live-frame', 'browser-live-open', 'browser-live-status'
 ].map((id) => [id, document.getElementById(id)]));
 
 let selectedJobId = null;
@@ -376,17 +377,28 @@ async function checkConnection() {
     elements.connection.lastChild.textContent = ` Подключено · ${health.un_id}`;
     const liveView = health.browser_replay?.live_view;
     if (liveView?.enabled) {
-      elements['browser-live-link'].href = liveView.public_url
+      const liveUrl = liveView.public_url
         || `${location.protocol}//${location.hostname}:${liveView.port}${liveView.path}`;
+      elements['browser-live-link'].href = liveUrl;
       elements['browser-live-link'].hidden = false;
       elements['browser-live-link'].title = `Живой экран · пауза между шагами ${health.browser_replay.step_delay_ms || 0} мс`;
+      elements['browser-live-open'].href = liveUrl;
+      elements['browser-live-section'].hidden = false;
+      elements['browser-live-status'].className = 'browser-live-status online';
+      elements['browser-live-status'].lastChild.textContent = ` Доступен · :${liveView.port}`;
+      if (elements['browser-live-frame'].dataset.url !== liveUrl) {
+        elements['browser-live-frame'].src = liveUrl;
+        elements['browser-live-frame'].dataset.url = liveUrl;
+      }
     } else {
       elements['browser-live-link'].hidden = true;
+      elements['browser-live-section'].hidden = true;
     }
   } catch {
     elements.connection.className = 'connection offline';
     elements.connection.lastChild.textContent = ' Нет подключения';
     elements['browser-live-link'].hidden = true;
+    elements['browser-live-section'].hidden = true;
   }
 }
 
