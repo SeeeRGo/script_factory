@@ -128,6 +128,7 @@ test('healthcheck exposes this UN and its local queue state', async () => {
     assert.equal(body.queue.status, 'idle');
     assert.equal(body.browser_replay.available, true);
     assert.equal(body.browser_replay.engine, '@puppeteer/replay');
+    assert.equal(body.browser_replay.live_view.enabled, false);
   }
 
   const resourcesResponse = await request('/api/v2/system/resources');
@@ -183,6 +184,7 @@ test('serves the visual execution studio to an authenticated browser', async () 
   assert.match(response.headers.get('content-type'), /text\/html/);
   const html = await response.text();
   assert.match(html, /Демо-маршрут этапа 3/);
+  assert.match(html, /Экран Chromium/);
   assert.match(html, /Редактор сценариев/);
   assert.match(html, /Ход выполнения/);
 });

@@ -335,6 +335,20 @@ components:
               type: string
             headless:
               type: boolean
+            step_delay_ms:
+              type: number
+            live_view:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                port:
+                  type: integer
+                public_url:
+                  type: string
+                  nullable: true
+                path:
+                  type: string
     SystemResources:
       type: object
       properties:

@@ -2,10 +2,16 @@ import { access, mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { createRunner, parse, PuppeteerRunnerExtension } from '@puppeteer/replay';
 import puppeteer from 'puppeteer';
-import { InterpreterError, resolveTemplates } from './interpreter.js';
+import { abortableDelay, InterpreterError, resolveTemplates } from './interpreter.js';
 
 const DEFAULT_REPLAY_TIMEOUT_MS = 10_000;
 const EXECUTABLE_CANDIDATES = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome-stable'];
+
+function boundedNumber(value, fallback, maximum) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return Math.min(parsed, maximum);
+}
 
 async function existingExecutablePath(configuredPath) {
   const candidates = [configuredPath, ...EXECUTABLE_CANDIDATES].filter(Boolean);
@@ -105,6 +111,7 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
     this.currentStep = null;
     this.currentStepStartedAt = 0;
     this.completedSteps = 0;
+    this.stepDelayMs = options.stepDelayMs;
   }
 
   async beforeAllSteps(flow) {
@@ -133,7 +140,7 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
     });
   }
 
-  async afterEachStep(step) {
+  async afterEachStep(step, flow) {
     const output = await pageSnapshot(this.page);
     this.completedSteps += 1;
     await this.onEvent({
@@ -145,6 +152,9 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
       duration_ms: Date.now() - this.currentStepStartedAt,
       output
     });
+    if (this.stepDelayMs > 0 && this.currentIndex < flow.steps.length - 1) {
+      await abortableDelay(this.stepDelayMs, this.signal);
+    }
   }
 }
 
@@ -160,8 +170,17 @@ export async function executeBrowserReplay(options) {
     headless = true,
     artifactDirectory,
     publicArtifactBasePath,
-    jobId
+    jobId,
+    stepDelayMs = 0,
+    holdOpenMs = 0,
+    windowWidth = 1400,
+    windowHeight = 860
   } = options;
+
+  const normalizedStepDelayMs = boundedNumber(stepDelayMs, 0, 5000);
+  const normalizedHoldOpenMs = boundedNumber(holdOpenMs, 0, 60_000);
+  const normalizedWindowWidth = Math.max(800, Math.round(boundedNumber(windowWidth, 1400, 3840)));
+  const normalizedWindowHeight = Math.max(600, Math.round(boundedNumber(windowHeight, 860, 2160)));
 
   let flow;
   try {
@@ -182,7 +201,14 @@ export async function executeBrowserReplay(options) {
     browser = await puppeteer.launch({
       headless,
       ...(executablePath ? { executablePath } : {}),
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+      ...(!headless ? { defaultViewport: null } : {}),
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        `--window-size=${normalizedWindowWidth},${normalizedWindowHeight}`,
+        ...(!headless ? ['--start-maximized'] : [])
+      ]
     });
     page = await browser.newPage();
   } catch (rawError) {
@@ -200,7 +226,8 @@ export async function executeBrowserReplay(options) {
   const extension = new ObservableReplayExtension(browser, page, {
     timeoutMs: Math.max(1, Math.min(timeoutMs, 30_000)),
     signal,
-    onEvent
+    onEvent,
+    stepDelayMs: normalizedStepDelayMs
   });
   const runner = await createRunner(flow, extension);
   const onAbort = () => {
@@ -220,12 +247,21 @@ export async function executeBrowserReplay(options) {
       jobId,
       'browser-final'
     );
+    const automationDurationMs = Date.now() - extension.startedAt;
+    if (normalizedHoldOpenMs > 0) {
+      onBrowserLog('info', `Финальное состояние Chromium будет показано ещё ${normalizedHoldOpenMs} мс`);
+      await abortableDelay(normalizedHoldOpenMs, signal);
+    }
     const result = {
       steps_executed: flow.steps.length,
-      duration_ms: Date.now() - extension.startedAt,
+      duration_ms: automationDurationMs,
       context: {
         runtime: 'puppeteer-replay',
         recording_title: flow.title,
+        presenter: {
+          step_delay_ms: normalizedStepDelayMs,
+          hold_open_ms: normalizedHoldOpenMs
+        },
         ...finalState,
         artifacts: artifact ? [artifact] : []
       }

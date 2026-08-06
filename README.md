@@ -10,6 +10,7 @@ Stage 2 JSON-steps interpreter remains backward compatible.
 
 - [как записывать и передавать новые браузерные сценарии](docs/script-creation.md);
 - [готовый 15-минутный план демонстрации](docs/demo-stage-3.md);
+- [живой показ Chromium через SSH и noVNC](docs/novnc-demo.md);
 - [эталонный сценарий отправки письма](demo/browser-replay-send-email.json).
 
 ## Start locally
@@ -45,6 +46,17 @@ In `docker compose`, it loads the spec from a mounted local file and preloads `X
 ```bash
 docker compose up --build
 ```
+
+Docker Compose включает presenter mode: Chromium работает в Xvfb и доступен через
+noVNC на `127.0.0.1:6080`. Для удалённого сервера пробросьте порты приложения и noVNC:
+
+```bash
+ssh -N -L 33001:127.0.0.1:33001 -L 6080:127.0.0.1:6080 user@server
+```
+
+Затем откройте `http://127.0.0.1:33001` и ссылку «Экран Chromium». Полная настройка,
+режим внешнего порта и меры безопасности описаны в
+[`docs/novnc-demo.md`](docs/novnc-demo.md).
 
 Перед запуском Docker Compose для демо выполните `npm run demo:reset`. Интерфейс
 очереди будет доступен на `http://localhost:33001/queue`, Swagger — на

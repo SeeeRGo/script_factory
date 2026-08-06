@@ -16,7 +16,7 @@ const elements = Object.fromEntries([
   'api-key', 'toggle-key', 'script-editor', 'line-numbers', 'format', 'preview', 'run', 'editor-state',
   'connection', 'job-status', 'progress-value', 'step-count', 'attempt-count', 'duration-value',
   'progress-bar', 'flow', 'flow-empty', 'jobs', 'logs', 'selected-job', 'refresh-jobs', 'toast',
-  'scenario-list', 'scenario-current', 'new-script', 'artifacts', 'artifact-section'
+  'scenario-list', 'scenario-current', 'new-script', 'artifacts', 'artifact-section', 'browser-live-link'
 ].map((id) => [id, document.getElementById(id)]));
 
 let selectedJobId = null;
@@ -374,9 +374,19 @@ async function checkConnection() {
     const health = await response.json();
     elements.connection.className = 'connection online';
     elements.connection.lastChild.textContent = ` Подключено · ${health.un_id}`;
+    const liveView = health.browser_replay?.live_view;
+    if (liveView?.enabled) {
+      elements['browser-live-link'].href = liveView.public_url
+        || `${location.protocol}//${location.hostname}:${liveView.port}${liveView.path}`;
+      elements['browser-live-link'].hidden = false;
+      elements['browser-live-link'].title = `Живой экран · пауза между шагами ${health.browser_replay.step_delay_ms || 0} мс`;
+    } else {
+      elements['browser-live-link'].hidden = true;
+    }
   } catch {
     elements.connection.className = 'connection offline';
     elements.connection.lastChild.textContent = ' Нет подключения';
+    elements['browser-live-link'].hidden = true;
   }
 }
 

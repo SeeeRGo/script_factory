@@ -807,6 +807,10 @@ async function executeJob(job) {
         timeoutMs: Math.min(job.timeout_ms, 30_000),
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
         headless: process.env.BROWSER_HEADLESS !== 'false',
+        stepDelayMs: process.env.BROWSER_STEP_DELAY_MS,
+        holdOpenMs: process.env.BROWSER_HOLD_OPEN_MS,
+        windowWidth: process.env.BROWSER_WINDOW_WIDTH,
+        windowHeight: process.env.BROWSER_WINDOW_HEIGHT,
         artifactDirectory: path.join(ARTIFACTS_DIR, job.job_id),
         publicArtifactBasePath: `/artifacts/${encodeURIComponent(job.job_id)}`,
         jobId: job.job_id,
@@ -1008,6 +1012,8 @@ function buildQueueHealth() {
 }
 
 function buildHealthResponse(requestId) {
+  const headless = process.env.BROWSER_HEADLESS !== 'false';
+  const noVncConfigured = process.env.NOVNC_ENABLED === 'true';
   return {
     status: 'ok',
     service: 'script-factory',
@@ -1017,12 +1023,20 @@ function buildHealthResponse(requestId) {
     browser_replay: {
       available: true,
       engine: '@puppeteer/replay',
-      headless: process.env.BROWSER_HEADLESS !== 'false'
+      headless,
+      step_delay_ms: Number(process.env.BROWSER_STEP_DELAY_MS || 0),
+      live_view: {
+        enabled: noVncConfigured && !headless,
+        port: Number(process.env.NOVNC_PUBLIC_PORT || 6080),
+        public_url: process.env.NOVNC_PUBLIC_URL || null,
+        path: '/vnc.html?autoconnect=1&resize=scale&path=websockify'
+      }
     }
   };
 }
 
 function buildSystemResources() {
+  const headless = process.env.BROWSER_HEADLESS !== 'false';
   return {
     un_id: UN_ID,
     uptime_seconds: Math.floor((Date.now() - state.startedAt) / 1000),
@@ -1033,7 +1047,9 @@ function buildSystemResources() {
     queue: buildQueueHealth(),
     browser_replay: {
       available: true,
-      headless: process.env.BROWSER_HEADLESS !== 'false',
+      headless,
+      step_delay_ms: Number(process.env.BROWSER_STEP_DELAY_MS || 0),
+      live_view_enabled: process.env.NOVNC_ENABLED === 'true' && !headless,
       demo_mail_messages: demoMail.messageCount
     },
     node_version: process.version

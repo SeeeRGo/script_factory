@@ -20,9 +20,11 @@
 
 ```bash
 cp .env.example .env
-npm install
+npm ci
 npm test
-npm start
+npm run demo:reset
+docker compose up --build -d
+docker compose ps
 ```
 
 Проверьте в `.env`:
@@ -34,17 +36,23 @@ WEB_PASSWORD=change-this-password
 API_KEY=dev-secret
 DEMO_MAIL_LOGIN=demo.user
 DEMO_MAIL_PASSWORD=demo-password
-BROWSER_HEADLESS=true
+BROWSER_HEADLESS=false
+BROWSER_STEP_DELAY_MS=350
+BROWSER_HOLD_OPEN_MS=5000
+NOVNC_ENABLED=true
 ```
 
-Для показа отдельного окна Chromium установите `BROWSER_HEADLESS=false`. Надёжный
-вариант для проектора — оставить `true` и показать финальный скриншот в интерфейсе.
+При Docker-запуске живое окно Chromium доступно через noVNC. Подключение по SSH и
+параметры безопасности описаны в [`novnc-demo.md`](novnc-demo.md). Если живой показ не
+нужен, установите `NOVNC_ENABLED=false`, `BROWSER_HEADLESS=true` и используйте финальный
+скриншот в интерфейсе.
 
-Заранее откройте три вкладки:
+Заранее откройте четыре вкладки:
 
-- `http://localhost:3000/` — сценарии, редактор и прогресс;
-- `http://localhost:3000/queue` — очередь конкретной УН;
-- `http://localhost:3000/demo/mail` — состояние демонстрационной почты.
+- `http://localhost:33001/` — сценарии, редактор и прогресс;
+- `http://localhost:33001/queue` — очередь конкретной УН;
+- `http://localhost:33001/demo/mail` — состояние демонстрационной почты;
+- `http://localhost:6080/vnc.html?autoconnect=1&resize=scale&path=websockify` — живой экран Chromium при запуске через Docker Compose.
 
 ## Основной маршрут на 15 минут
 
@@ -124,4 +132,3 @@ DEMO_API_URL=http://127.0.0.1:33001 npm run demo:browser
 - доступен PNG-артефакт;
 - в результате присутствуют `job_id`, `uid` и `un_id`;
 - второй запуск с изменёнными данными не требует изменения кода системы.
-
