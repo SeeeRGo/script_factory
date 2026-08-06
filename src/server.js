@@ -874,6 +874,7 @@ async function executeJob(job) {
         headless: process.env.BROWSER_HEADLESS !== 'false',
         stepDelayMs: process.env.BROWSER_STEP_DELAY_MS,
         holdOpenMs: process.env.BROWSER_HOLD_OPEN_MS,
+        captchaWaitMs: process.env.BROWSER_CAPTCHA_WAIT_MS,
         windowWidth: process.env.BROWSER_WINDOW_WIDTH,
         windowHeight: process.env.BROWSER_WINDOW_HEIGHT,
         artifactDirectory: path.join(ARTIFACTS_DIR, job.job_id),
@@ -1090,6 +1091,7 @@ function buildHealthResponse(requestId) {
       engine: '@puppeteer/replay',
       headless,
       step_delay_ms: Number(process.env.BROWSER_STEP_DELAY_MS || 0),
+      captcha_wait_ms: Number(process.env.BROWSER_CAPTCHA_WAIT_MS || 0),
       live_view: {
         enabled: noVncConfigured && !headless,
         port: Number(process.env.NOVNC_PUBLIC_PORT || 33303),
@@ -1115,6 +1117,7 @@ function buildSystemResources() {
       available: true,
       headless,
       step_delay_ms: Number(process.env.BROWSER_STEP_DELAY_MS || 0),
+      captcha_wait_ms: Number(process.env.BROWSER_CAPTCHA_WAIT_MS || 0),
       live_view_enabled: process.env.NOVNC_ENABLED === 'true' && !headless,
       demo_mail_messages: demoMail.messageCount
     },

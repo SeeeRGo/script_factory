@@ -11,7 +11,7 @@ const response = await fetch(`${API_URL}/api/v2/jobs`, {
   body: JSON.stringify({
     uid: `stage3-yandex-${suffix}`,
     priority: 6,
-    timeout_ms: 30000,
+    timeout_ms: 180000,
     retry_policy: { max_attempts: 1, backoff_ms: 500 },
     context: { search_query: 'официальная документация Node.js' },
     script: flow

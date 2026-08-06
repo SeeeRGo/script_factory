@@ -7,6 +7,53 @@ import { abortableDelay, InterpreterError, resolveTemplates } from './interprete
 const DEFAULT_REPLAY_TIMEOUT_MS = 10_000;
 const EXECUTABLE_CANDIDATES = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome-stable'];
 
+export function isYandexCaptchaUrl(value) {
+  try {
+    const url = new URL(value);
+    const yandexHost = url.hostname === 'ya.ru'
+      || url.hostname.endsWith('.ya.ru')
+      || url.hostname === 'yandex.ru'
+      || url.hostname.endsWith('.yandex.ru')
+      || url.hostname.startsWith('yandex.');
+    return yandexHost && url.pathname.includes('showcaptcha');
+  } catch {
+    return false;
+  }
+}
+
+export async function waitForYandexCaptcha(options) {
+  const {
+    page,
+    signal,
+    headless,
+    waitMs,
+    onBrowserLog = () => {},
+    pollIntervalMs = 500
+  } = options;
+  if (!isYandexCaptchaUrl(page.url())) return false;
+  if (headless || waitMs === 0) {
+    throw new InterpreterError('CAPTCHA_REQUIRED', 'Яндекс запросил CAPTCHA; для ручного подтверждения запустите headed/noVNC-режим', {
+      statusCode: 409,
+      retryable: false,
+      details: { current_url: page.url(), manual_confirmation_available: false }
+    });
+  }
+  onBrowserLog('warn', `Яндекс запросил CAPTCHA. Подтвердите «Я не робот» в noVNC в течение ${waitMs} мс`);
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline && isYandexCaptchaUrl(page.url())) {
+    await abortableDelay(Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())), signal);
+  }
+  if (isYandexCaptchaUrl(page.url())) {
+    throw new InterpreterError('CAPTCHA_REQUIRED', `CAPTCHA не подтверждена за ${waitMs} мс`, {
+      statusCode: 409,
+      retryable: false,
+      details: { current_url: page.url(), manual_confirmation_available: true, wait_ms: waitMs }
+    });
+  }
+  onBrowserLog('info', 'CAPTCHA подтверждена вручную, браузерный сценарий продолжен');
+  return true;
+}
+
 function boundedNumber(value, fallback, maximum) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
@@ -112,6 +159,9 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
     this.currentStepStartedAt = 0;
     this.completedSteps = 0;
     this.stepDelayMs = options.stepDelayMs;
+    this.captchaWaitMs = options.captchaWaitMs;
+    this.headless = options.headless;
+    this.onBrowserLog = options.onBrowserLog;
   }
 
   async beforeAllSteps(flow) {
@@ -141,6 +191,13 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
   }
 
   async afterEachStep(step, flow) {
+    if (step.type !== 'keyDown') await waitForYandexCaptcha({
+      page: this.page,
+      signal: this.signal,
+      headless: this.headless,
+      waitMs: this.captchaWaitMs,
+      onBrowserLog: this.onBrowserLog
+    });
     const output = await pageSnapshot(this.page);
     this.completedSteps += 1;
     await this.onEvent({
@@ -173,12 +230,14 @@ export async function executeBrowserReplay(options) {
     jobId,
     stepDelayMs = 0,
     holdOpenMs = 0,
+    captchaWaitMs = 0,
     windowWidth = 1400,
     windowHeight = 860
   } = options;
 
   const normalizedStepDelayMs = boundedNumber(stepDelayMs, 0, 5000);
   const normalizedHoldOpenMs = boundedNumber(holdOpenMs, 0, 60_000);
+  const normalizedCaptchaWaitMs = boundedNumber(captchaWaitMs, 0, 300_000);
   const normalizedWindowWidth = Math.max(800, Math.round(boundedNumber(windowWidth, 1400, 3840)));
   const normalizedWindowHeight = Math.max(600, Math.round(boundedNumber(windowHeight, 860, 2160)));
 
@@ -211,6 +270,16 @@ export async function executeBrowserReplay(options) {
       ]
     });
     page = await browser.newPage();
+    await page.evaluateOnNewDocument(() => {
+      try {
+        Object.defineProperty(Navigator.prototype, 'registerProtocolHandler', {
+          configurable: true,
+          value: () => {}
+        });
+      } catch {
+        // Some Chromium builds expose the method as a non-configurable property.
+      }
+    });
   } catch (rawError) {
     await browser?.close().catch(() => {});
     throw new InterpreterError('BROWSER_LAUNCH_ERROR', `Не удалось запустить Chromium: ${rawError?.message || 'неизвестная ошибка'}`, {
@@ -227,7 +296,10 @@ export async function executeBrowserReplay(options) {
     timeoutMs: Math.max(1, Math.min(timeoutMs, 30_000)),
     signal,
     onEvent,
-    stepDelayMs: normalizedStepDelayMs
+    stepDelayMs: normalizedStepDelayMs,
+    captchaWaitMs: normalizedCaptchaWaitMs,
+    headless,
+    onBrowserLog
   });
   const runner = await createRunner(flow, extension);
   const onAbort = () => {
@@ -260,7 +332,8 @@ export async function executeBrowserReplay(options) {
         recording_title: flow.title,
         presenter: {
           step_delay_ms: normalizedStepDelayMs,
-          hold_open_ms: normalizedHoldOpenMs
+          hold_open_ms: normalizedHoldOpenMs,
+          captcha_wait_ms: normalizedCaptchaWaitMs
         },
         ...finalState,
         artifacts: artifact ? [artifact] : []

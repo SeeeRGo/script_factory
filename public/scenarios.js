@@ -89,7 +89,8 @@ const yahooMailOnboardingExpression = `(() => {
     const rect = element.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
   };
-  const compose = document.querySelector('[data-test-id="compose-button"]');
+  const compose = document.querySelector('[data-test-id="compose-button"], [aria-label*="New message" i], [aria-label*="Compose" i], [aria-label*="Написать" i]')
+    || [...document.querySelectorAll('a, button')].find((element) => /^(new message|compose|написать|nieuw bericht)$/i.test((element.innerText || '').trim()));
   const dialogs = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-test-id*="modal"]')]
     .filter(visible);
   if (!dialogs.length) return Boolean(compose && visible(compose));
@@ -124,9 +125,9 @@ function browserMailReplay() {
       { title: 'Ввести пароль Yahoo', description: 'Берёт пароль из YAHOO_MAIL_PASSWORD; значение скрывается в прогрессе и логах.', type: 'change', selectors: [['#login-passwd'], ['input[name="password"]'], ['input[type="password"]']], value: '{{yahoo_password}}' },
       { title: 'Войти в почту', description: 'Отправляет форму пароля и переходит в Yahoo Mail.', type: 'click', selectors: [['button[name="verifyPassword"]'], ['#login-signin'], ['button[type="submit"]'], ['aria/Next']], offsetX: 150, offsetY: 24, assertedEvents: [{ type: 'navigation' }] },
       { title: 'Обработать условия Yahoo при необходимости', description: 'Проходит guce- и mailbox-consent Yahoo; при повторном запуске сразу продолжает работу.', type: 'waitForExpression', expression: yahooConsentExpression },
-      { title: 'Закрыть приветственный экран Mail', description: 'При первом входе закрывает необязательный onboarding и дожидается доступной кнопки Compose.', type: 'waitForExpression', expression: yahooMailOnboardingExpression },
-      { title: 'Дождаться почтового ящика', description: 'Подтверждает успешный вход появлением кнопки Compose.', type: 'waitForElement', selectors: [['[data-test-id="compose-button"]'], ['aria/Compose'], ['aria/Написать'], ['text/Compose']], visible: true },
-      { title: 'Создать письмо', description: 'Открывает редактор нового письма Yahoo.', type: 'click', selectors: [['[data-test-id="compose-button"]'], ['aria/Compose'], ['aria/Написать'], ['text/Compose']], offsetX: 60, offsetY: 20 },
+      { title: 'Подготовить интерфейс Mail', description: 'Закрывает необязательный onboarding и распознаёт кнопку New message / Compose в текущем Yahoo UI.', type: 'waitForExpression', expression: yahooMailOnboardingExpression },
+      { title: 'Дождаться почтового ящика', description: 'Подтверждает успешный вход появлением кнопки New message / Compose.', type: 'waitForElement', selectors: [['[data-test-id="compose-button"]'], ['[aria-label*="New message"]'], ['aria/New message'], ['text/New message'], ['aria/Compose'], ['aria/Написать'], ['text/Compose']], visible: true },
+      { title: 'Создать письмо', description: 'Открывает редактор нового письма в классическом или новом Yahoo UI.', type: 'click', selectors: [['[data-test-id="compose-button"]'], ['[aria-label*="New message"]'], ['aria/New message'], ['text/New message'], ['aria/Compose'], ['aria/Написать'], ['text/Compose']], offsetX: 60, offsetY: 20 },
       { title: 'Дождаться редактора письма', description: 'Проверяет появление поля получателя.', type: 'waitForElement', selectors: [['[data-test-id="compose-to"]'], ['#message-to-field'], ['input[role="combobox"][aria-label*="To"]']], visible: true },
       { title: 'Указать получателя Gmail', description: 'Вводит адрес 10sydneyfc@gmail.com из context задания.', type: 'change', selectors: [['[data-test-id="compose-to"]'], ['#message-to-field'], ['input[role="combobox"][aria-label*="To"]']], value: '{{mail_to}}' },
       { title: 'Указать тему письма', description: 'Заполняет уникальную тему, чтобы письмо было легко найти после демонстрации.', type: 'change', selectors: [['[data-test-id="compose-subject"]'], ['input[data-test-id="compose-subject"]'], ['input[placeholder="Subject"]']], value: '{{mail_subject}}' },
@@ -228,18 +229,18 @@ const demoScenarioDefinitions = [
     number: 'S3B',
     title: 'Поиск в Яндексе',
     talkTime: '2 мин',
-    runtime: '≈ 5–10 сек',
+    runtime: '≈ 5–10 сек · CAPTCHA до 2 мин',
     result: 'REAL BROWSER',
     tone: 'success',
     summary: 'Chromium открывает Яндекс, вводит запрос и переходит по первому органическому результату.',
     points: [
       'Поисковый текст передаётся через context.search_query',
       'Ожидания отделены от кликов и делают сценарий понятным',
-      'Последний шаг подтверждает переход с домена Яндекса'
+      'При SmartCaptcha сценарий ждёт ручное подтверждение в noVNC и продолжает работу'
     ],
     payload: {
       priority: 6,
-      timeout_ms: 30000,
+      timeout_ms: 180000,
       retry_policy: { max_attempts: 1, backoff_ms: 500 },
       context: { search_query: yandexQuery },
       script: yandexSearchReplay()

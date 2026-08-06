@@ -110,6 +110,9 @@ result also includes `job_id`, `uid`, and `un_id`.
 The normalized workflow errors are `IP_MISMATCH`, `FILE_NOT_FOUND`, `AUTH_ERROR`,
 `UPLOAD_ERROR`, `DOWNLOAD_ERROR`, `VALIDATION_ERROR`, `TIMEOUT_ERROR`,
 `PLUGIN_NOT_RUNNING`, `BROWSER_LAUNCH_ERROR`, and `BROWSER_REPLAY_ERROR`.
+SmartCaptcha Яндекса возвращает отдельный `CAPTCHA_REQUIRED`. В headed/noVNC-режиме
+исполнитель сначала ждёт ручное подтверждение в течение `BROWSER_CAPTCHA_WAIT_MS`; в
+headless-режиме ошибка возвращается немедленно, без ожидания обычного тайм-аута шага.
 
 Example:
 

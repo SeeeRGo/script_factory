@@ -90,7 +90,7 @@ test('homepage demo route includes Stage 3 and remains short enough to present',
   assert.equal(evaluateConsent({ hostname: 'consent.yahoo.com' }, mailboxDocument, mailboxState, mailboxWindow), false);
   assert.equal(submitClicks, 1);
 
-  const onboardingStep = browserScenario.payload.script.steps.find((step) => step.title.includes('приветственный экран'));
+  const onboardingStep = browserScenario.payload.script.steps.find((step) => step.title === 'Подготовить интерфейс Mail');
   assert.equal(onboardingStep.type, 'waitForExpression');
   const evaluateOnboarding = new Function('location', 'document', 'globalThis', `return ${onboardingStep.expression}`);
   const composeButton = { getBoundingClientRect: () => ({ width: 120, height: 32 }) };
@@ -99,6 +99,15 @@ test('homepage demo route includes Stage 3 and remains short enough to present',
     querySelectorAll: () => []
   };
   assert.equal(evaluateOnboarding({ hostname: 'mail.yahoo.com' }, readyMailDocument, {}), true);
+  const newMessageButton = {
+    innerText: 'New message',
+    getBoundingClientRect: () => ({ width: 180, height: 48 })
+  };
+  const redesignedMailDocument = {
+    querySelector: () => null,
+    querySelectorAll: (selector) => selector === 'a, button' ? [newMessageButton] : []
+  };
+  assert.equal(evaluateOnboarding({ hostname: 'mail.yahoo.com' }, redesignedMailDocument, {}), true);
 
   const yandexScenario = demoScenarios.find((scenario) => scenario.id === 'yandex-search-replay');
   assert.ok(yandexScenario);
