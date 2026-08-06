@@ -21,7 +21,7 @@ test('homepage demo route includes Stage 3 and remains short enough to present',
 
   const browserScenario = demoScenarios.find((scenario) => scenario.id === 'browser-mail-replay');
   assert.ok(browserScenario);
-  assert.equal(browserScenario.payload.script.steps.length, 19);
+  assert.equal(browserScenario.payload.script.steps.length, 20);
   assert.ok(browserScenario.payload.script.steps.every((step) => typeof step.type === 'string'));
   assert.equal(browserScenario.payload.context.mail_to, '10sydneyfc@gmail.com');
   const consentStep = browserScenario.payload.script.steps.find((step) => step.title.includes('условия Yahoo'));
@@ -41,21 +41,71 @@ test('homepage demo route includes Stage 3 and remains short enough to present',
     'location',
     'document',
     'globalThis',
+    'window',
     `return ${consentStep.expression}`
   );
   const consentPage = { hostname: 'guce.yahoo.com' };
   const consentDocument = { querySelectorAll: () => [acceptButton] };
   const pageState = {};
-  assert.equal(evaluateConsent(consentPage, consentDocument, pageState), false);
+  assert.equal(evaluateConsent(consentPage, consentDocument, pageState, {}), false);
   assert.equal(consentClicks, 1);
-  assert.equal(evaluateConsent(consentPage, consentDocument, pageState), false);
+  assert.equal(evaluateConsent(consentPage, consentDocument, pageState, {}), false);
   assert.equal(consentClicks, 1, 'кнопка consent не должна нажиматься повторно');
-  assert.equal(evaluateConsent({ hostname: 'mail.yahoo.com' }, consentDocument, pageState), true);
+  assert.equal(evaluateConsent({ hostname: 'mail.yahoo.com' }, consentDocument, pageState, {}), true);
+
+  const makeRadio = (name, value) => ({
+    name,
+    value,
+    id: `${name}-${value}`,
+    checked: false,
+    labels: [],
+    getAttribute: () => null,
+    click() { this.checked = true; }
+  });
+  const mailboxRadios = [makeRadio('smart', 'reject'), makeRadio('smart', 'allow'), makeRadio('ads', 'reject'), makeRadio('ads', 'allow')];
+  let submitClicks = 0;
+  const submitButton = {
+    innerText: 'Doorgaan',
+    value: '',
+    type: 'submit',
+    disabled: false,
+    classList: { contains: () => false },
+    getAttribute: () => null,
+    getBoundingClientRect: () => ({ width: 100, height: 30 }),
+    click: () => { submitClicks += 1; }
+  };
+  const mailboxDocument = {
+    documentElement: { scrollHeight: 1200 },
+    querySelectorAll: (selector) => {
+      if (selector === 'input[type="radio"]') return mailboxRadios;
+      if (selector.startsWith('[role="radio"]')) return [];
+      if (selector === 'label') return [];
+      return [submitButton];
+    }
+  };
+  const mailboxWindow = { scrollTo: () => {} };
+  const mailboxState = {};
+  assert.equal(evaluateConsent({ hostname: 'consent.yahoo.com' }, mailboxDocument, mailboxState, mailboxWindow), false);
+  assert.equal(mailboxRadios.filter((radio) => radio.checked).length, 2);
+  assert.equal(evaluateConsent({ hostname: 'consent.yahoo.com' }, mailboxDocument, mailboxState, mailboxWindow), false);
+  assert.equal(submitClicks, 1);
+
+  const onboardingStep = browserScenario.payload.script.steps.find((step) => step.title.includes('приветственный экран'));
+  assert.equal(onboardingStep.type, 'waitForExpression');
+  const evaluateOnboarding = new Function('location', 'document', 'globalThis', `return ${onboardingStep.expression}`);
+  const composeButton = { getBoundingClientRect: () => ({ width: 120, height: 32 }) };
+  const readyMailDocument = {
+    querySelector: () => composeButton,
+    querySelectorAll: () => []
+  };
+  assert.equal(evaluateOnboarding({ hostname: 'mail.yahoo.com' }, readyMailDocument, {}), true);
 
   const yandexScenario = demoScenarios.find((scenario) => scenario.id === 'yandex-search-replay');
   assert.ok(yandexScenario);
-  assert.equal(yandexScenario.payload.script.steps.length, 10);
+  assert.equal(yandexScenario.payload.script.steps.length, 11);
   assert.equal(yandexScenario.payload.context.search_query, 'официальная документация Node.js');
+  const searchSubmitStep = yandexScenario.payload.script.steps.find((step) => step.title === 'Запустить поиск');
+  assert.deepEqual({ type: searchSubmitStep.type, key: searchSubmitStep.key }, { type: 'keyDown', key: 'Enter' });
 });
 
 test('blank editor template is a valid starting point', () => {

@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { runQueueCase } from '../demo/queue-case-lib.mjs';
+
 const API_KEY = 'integration-secret';
 const WEB_LOGIN = 'integration-user';
 const WEB_PASSWORD = 'integration-password';
@@ -499,4 +501,24 @@ test('executes a local Puppeteer Replay mail fixture without external delivery',
   assert.ok(sentMessage);
   assert.equal(sentMessage.to, 'integration-recipient@example.test');
   assert.match(sentMessage.body, /Chrome Recorder JSON/);
+});
+
+test('executes both multi-job queue demo cases with the expected scheduling semantics', async () => {
+  const filenames = ['queue-case-priority-error.json', 'queue-case-running-low.json'];
+  const caseRequest = async (pathname, options = {}) => {
+    const response = await request(pathname, options);
+    const body = await response.json();
+    assert.ok(response.ok, JSON.stringify(body));
+    return body;
+  };
+
+  for (const filename of filenames) {
+    const definition = JSON.parse(await readFile(path.resolve(import.meta.dirname, `../demo/${filename}`), 'utf8'));
+    const result = await runQueueCase(definition, {
+      request: caseRequest,
+      pollIntervalMs: 20,
+      runId: `integration-${Date.now()}`
+    });
+    assert.equal(result.passed, true, result.checks.map((check) => `${check.passed}: ${check.message}`).join('\n'));
+  }
 });

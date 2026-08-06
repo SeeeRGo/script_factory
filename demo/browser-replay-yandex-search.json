@@ -43,12 +43,15 @@
     },
     {
       "title": "Запустить поиск",
-      "description": "Нажимает кнопку поиска и открывает страницу результатов.",
-      "type": "click",
-      "selectors": [[".search3__button"], ["button[aria-label=\"Найти\"]"], ["aria/Найти"]],
-      "offsetX": 35,
-      "offsetY": 22,
-      "assertedEvents": [{ "type": "navigation" }]
+      "description": "Нажимает Enter в поисковой строке и не зависит от варианта кнопки «Найти» или «Алиса AI».",
+      "type": "keyDown",
+      "key": "Enter"
+    },
+    {
+      "title": "Отпустить клавишу Enter",
+      "description": "Завершает клавиатурное действие после отправки поисковой формы.",
+      "type": "keyUp",
+      "key": "Enter"
     },
     {
       "title": "Дождаться результатов",

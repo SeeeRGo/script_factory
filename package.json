@@ -13,6 +13,8 @@
     "test": "node --test",
     "demo:reset": "node demo/reset.mjs",
     "demo:queue": "node demo/queue.mjs",
+    "demo:queue:priority-error": "node demo/run-queue-case.mjs priority-error",
+    "demo:queue:running-low": "node demo/run-queue-case.mjs running-low",
     "demo:success": "node demo/run.mjs success",
     "demo:error": "node demo/run.mjs file-not-found",
     "demo:retry": "node demo/run.mjs retry",

@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "id": "running-low",
+  "title": "Высокий приоритет приходит во время выполнения низкого",
+  "description": "P50 начинает выполняться первым. Через 800 мс поступает P10 и остаётся в очереди, потому что планировщик не вытесняет активный job. P50 падает на собственной проверке IP, после чего P10 немедленно запускается и успешно завершается.",
+  "config": {
+    "max_parallel_jobs": 1
+  },
+  "timeout_ms": 15000,
+  "jobs": [
+    {
+      "alias": "low",
+      "role": "observed",
+      "submit": { "type": "immediate" },
+      "payload": {
+        "uid": "queue-case-2-low-P50",
+        "priority": 50,
+        "timeout_ms": 8000,
+        "retry_policy": { "max_attempts": 1, "backoff_ms": 100 },
+        "context": { "current_ip": "10.0.0.99" },
+        "script": {
+          "title": "P50 · Фоновая обработка реестра",
+          "steps": [
+            { "title": "Начать фоновую обработку", "description": "P50 занимает единственный исполнительный слот.", "action": "noop", "duration_ms": 500 },
+            { "title": "Прочитать реестр", "description": "Имитирует чтение входных данных без внешних интеграций.", "action": "noop", "duration_ms": 500 },
+            { "title": "Проверить строки", "description": "Продолжает работу, пока P10 уже ожидает в очереди.", "action": "noop", "duration_ms": 500 },
+            { "title": "Сопоставить записи", "description": "Показывает, что поступление P10 не прерывает активный P50.", "action": "noop", "duration_ms": 500 },
+            { "title": "Подготовить результат", "description": "Завершает подготовительную часть фонового задания.", "action": "noop", "duration_ms": 500 },
+            { "title": "Проверить адрес машины", "description": "P50 падает по собственной причине, а не из-за прихода P10.", "action": "check_ip", "params": { "expected_ip": "10.0.0.10" }, "duration_ms": 500 },
+            { "title": "Сохранить реестр", "description": "Не выполняется после контролируемой ошибки IP_MISMATCH.", "action": "noop", "duration_ms": 350 }
+          ]
+        }
+      }
+    },
+    {
+      "alias": "high",
+      "role": "observed",
+      "submit": { "type": "after_status", "job": "low", "status": "running", "delay_ms": 800 },
+      "payload": {
+        "uid": "queue-case-2-high-P10",
+        "priority": 10,
+        "timeout_ms": 8000,
+        "retry_policy": { "max_attempts": 1, "backoff_ms": 100 },
+        "script": {
+          "title": "P10 · Срочное обновление статуса",
+          "steps": [
+            { "title": "Принять срочное задание", "description": "P10 запускается сразу после ошибки активного P50.", "action": "noop", "duration_ms": 350 },
+            { "title": "Прочитать параметры", "description": "Проверяет тестовый JSON срочного задания.", "action": "noop", "duration_ms": 350 },
+            { "title": "Подготовить обновление", "description": "Формирует результат без внешних взаимодействий.", "action": "noop", "duration_ms": 350 },
+            { "title": "Применить обновление", "description": "Имитирует полезную работу высокоприоритетного задания.", "action": "noop", "duration_ms": 350 },
+            { "title": "Проверить результат", "description": "Подтверждает успешное выполнение срочного задания.", "action": "noop", "duration_ms": 350 },
+            { "title": "Завершить P10", "description": "Освобождает слот с успешным статусом.", "action": "noop", "duration_ms": 350 }
+          ]
+        }
+      }
+    }
+  ],
+  "expectations": [
+    { "type": "created_while_running", "created": "high", "running": "low" },
+    { "type": "starts_after_finished", "job": "high", "after": "low" },
+    { "type": "terminal", "job": "low", "status": "failed", "error_code": "IP_MISMATCH" },
+    { "type": "terminal", "job": "high", "status": "success" }
+  ]
+}

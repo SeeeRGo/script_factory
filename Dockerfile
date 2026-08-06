@@ -20,9 +20,7 @@ RUN npm ci --omit=dev
 
 COPY src ./src
 COPY public ./public
-COPY demo/browser-replay-send-email.json ./demo/browser-replay-send-email.json
-COPY demo/browser-replay-yandex-search.json ./demo/browser-replay-yandex-search.json
-COPY demo/fixtures ./demo/fixtures
+COPY demo ./demo
 COPY openapi.yaml ./
 COPY swagger-ru.js ./
 COPY docker/start.sh /usr/local/bin/start-script-factory

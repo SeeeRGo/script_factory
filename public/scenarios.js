@@ -21,24 +21,97 @@ function receiptDownloadStep(durationMs) {
 const stage3Subject = `Автоматизация Stage 3 · ${new Date().toLocaleString('ru-RU')}`;
 const yandexQuery = 'официальная документация Node.js';
 const yahooConsentExpression = `(() => {
-  if (location.hostname !== 'guce.yahoo.com') return true;
-  if (globalThis.__scriptFactoryYahooConsentClicked) return false;
-  const buttons = [...document.querySelectorAll('button, input[type="submit"]')];
-  const accept = buttons.find((button) => button.name === 'agree'
-    || button.value === 'agree'
-    || button.classList.contains('accept-all')
-    || /^(accept all|alles accepteren|принять все|alle akzeptieren|tout accepter|aceptar todo|accetta tutto)$/i
-      .test((button.innerText || button.value || '').trim()));
-  if (!accept) return false;
-  globalThis.__scriptFactoryYahooConsentClicked = true;
-  accept.click();
+  const host = location.hostname;
+  if (host !== 'guce.yahoo.com' && host !== 'consent.yahoo.com') return true;
+  const text = (element) => (element.innerText || element.value || element.getAttribute('aria-label') || '').trim();
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  if (host === 'guce.yahoo.com') {
+    const buttons = [...document.querySelectorAll('button, input[type="submit"]')];
+    const accept = buttons.find((button) => button.name === 'agree'
+      || button.value === 'agree'
+      || button.classList.contains('accept-all')
+      || /^(accept all|alles accepteren|принять все|alle akzeptieren|tout accepter|aceptar todo|accetta tutto)$/i.test(text(button)));
+    if (!accept) return false;
+    if (!globalThis.__scriptFactoryYahooGuceClicked) {
+      globalThis.__scriptFactoryYahooGuceClicked = true;
+      accept.click();
+    }
+    return false;
+  }
+  const radios = [...document.querySelectorAll('input[type="radio"]')];
+  const groups = [...new Set(radios.map((radio) => radio.name).filter(Boolean))];
+  let changed = false;
+  for (const name of groups) {
+    const choices = radios.filter((radio) => radio.name === name);
+    if (choices.some((radio) => radio.checked)) continue;
+    const reject = choices.find((radio) => /reject|deny|weigeren|refuse|false|no/i.test(
+      [radio.value, radio.id, radio.getAttribute('aria-label'), radio.labels?.[0]?.innerText].filter(Boolean).join(' ')
+    )) || choices[0];
+    reject.click();
+    changed = true;
+  }
+  const rejectLabels = [...document.querySelectorAll('label')].filter((label) => {
+    const control = label.control || label.querySelector('input[type="radio"], [role="radio"]');
+    return control && !control.checked && control.getAttribute?.('aria-checked') !== 'true'
+      && /reject|deny|weigeren|refuse|отклон/i.test(text(label));
+  });
+  for (const label of rejectLabels) {
+    label.click();
+    changed = true;
+  }
+  const ariaRejects = [...document.querySelectorAll('[role="radio"][aria-checked="false"]')]
+    .filter((radio) => /reject|deny|weigeren|refuse|отклон/i.test(text(radio)));
+  for (const radio of ariaRejects) {
+    radio.click();
+    changed = true;
+  }
+  if (changed) return false;
+  window.scrollTo(0, document.documentElement.scrollHeight);
+  const buttons = [...document.querySelectorAll('button, input[type="submit"]')]
+    .filter((button) => !button.disabled && visible(button));
+  const submit = buttons.find((button) => /doorgaan|opslaan|continue|save|confirm|bevestigen|done|gereed|submit/i.test(text(button)))
+    || buttons.find((button) => button.type === 'submit')
+    || buttons.at(-1);
+  if (!submit) return false;
+  const now = Date.now();
+  if (!globalThis.__scriptFactoryYahooConsentSubmitAt || now - globalThis.__scriptFactoryYahooConsentSubmitAt > 1000) {
+    globalThis.__scriptFactoryYahooConsentSubmitAt = now;
+    submit.click();
+  }
+  return false;
+})()`;
+const yahooMailOnboardingExpression = `(() => {
+  if (location.hostname !== 'mail.yahoo.com') return false;
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  const compose = document.querySelector('[data-test-id="compose-button"]');
+  const dialogs = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-test-id*="modal"]')]
+    .filter(visible);
+  if (!dialogs.length) return Boolean(compose && visible(compose));
+  const dialog = dialogs.at(-1);
+  const controls = [...dialog.querySelectorAll('button, a[role="button"]')]
+    .filter((control) => !control.disabled && visible(control));
+  const label = (control) => (control.innerText || control.getAttribute('aria-label') || '').trim();
+  const action = controls.find((control) => /skip|maybe later|not now|continue|next|done|got it|finish|close|overslaan|later|doorgaan|volgende|gereed|sluiten|пропустить|позже|далее|готово|закрыть/i.test(label(control)))
+    || controls.find((control) => /close|dismiss/i.test(control.getAttribute('aria-label') || ''));
+  if (!action) return false;
+  const now = Date.now();
+  if (!globalThis.__scriptFactoryYahooOnboardingClickAt || now - globalThis.__scriptFactoryYahooOnboardingClickAt > 1000) {
+    globalThis.__scriptFactoryYahooOnboardingClickAt = now;
+    action.click();
+  }
   return false;
 })()`;
 
 function browserMailReplay() {
   return {
     title: 'Этап 3 · Реальная отправка Yahoo → Gmail',
-    timeout: 15000,
+    timeout: 30000,
     steps: [
       { title: 'Настроить окно Chromium', description: 'Устанавливает презентационный размер окна перед открытием Yahoo.', type: 'setViewport', width: 1400, height: 860, deviceScaleFactor: 1, isMobile: false, hasTouch: false, isLandscape: false },
       { title: 'Открыть Yahoo', description: 'Переходит на актуальную страницу входа Yahoo Mail.', type: 'navigate', url: '{{yahoo_mail_url}}' },
@@ -50,7 +123,8 @@ function browserMailReplay() {
       { title: 'Выбрать поле пароля', description: 'Устанавливает фокус в поле пароля Yahoo.', type: 'click', selectors: [['#login-passwd'], ['input[name="password"]'], ['input[type="password"]']], offsetX: 150, offsetY: 24 },
       { title: 'Ввести пароль Yahoo', description: 'Берёт пароль из YAHOO_MAIL_PASSWORD; значение скрывается в прогрессе и логах.', type: 'change', selectors: [['#login-passwd'], ['input[name="password"]'], ['input[type="password"]']], value: '{{yahoo_password}}' },
       { title: 'Войти в почту', description: 'Отправляет форму пароля и переходит в Yahoo Mail.', type: 'click', selectors: [['button[name="verifyPassword"]'], ['#login-signin'], ['button[type="submit"]'], ['aria/Next']], offsetX: 150, offsetY: 24, assertedEvents: [{ type: 'navigation' }] },
-      { title: 'Принять условия Yahoo при необходимости', description: 'При первом входе принимает consent-экран Yahoo; при повторном запуске сразу продолжает работу.', type: 'waitForExpression', expression: yahooConsentExpression },
+      { title: 'Обработать условия Yahoo при необходимости', description: 'Проходит guce- и mailbox-consent Yahoo; при повторном запуске сразу продолжает работу.', type: 'waitForExpression', expression: yahooConsentExpression },
+      { title: 'Закрыть приветственный экран Mail', description: 'При первом входе закрывает необязательный onboarding и дожидается доступной кнопки Compose.', type: 'waitForExpression', expression: yahooMailOnboardingExpression },
       { title: 'Дождаться почтового ящика', description: 'Подтверждает успешный вход появлением кнопки Compose.', type: 'waitForElement', selectors: [['[data-test-id="compose-button"]'], ['aria/Compose'], ['aria/Написать'], ['text/Compose']], visible: true },
       { title: 'Создать письмо', description: 'Открывает редактор нового письма Yahoo.', type: 'click', selectors: [['[data-test-id="compose-button"]'], ['aria/Compose'], ['aria/Написать'], ['text/Compose']], offsetX: 60, offsetY: 20 },
       { title: 'Дождаться редактора письма', description: 'Проверяет появление поля получателя.', type: 'waitForElement', selectors: [['[data-test-id="compose-to"]'], ['#message-to-field'], ['input[role="combobox"][aria-label*="To"]']], visible: true },
@@ -73,7 +147,8 @@ function yandexSearchReplay() {
       { title: 'Дождаться поисковой строки', description: 'Проверяет готовность формы поиска.', type: 'waitForElement', selectors: [['#text'], ['input[name="text"]'], ['aria/Запрос']], visible: true },
       { title: 'Выбрать поисковую строку', description: 'Устанавливает фокус в поле запроса.', type: 'click', selectors: [['#text'], ['input[name="text"]'], ['aria/Запрос']], offsetX: 240, offsetY: 22 },
       { title: 'Ввести поисковый запрос', description: 'Вводит демонстрационный текст из context.', type: 'change', selectors: [['#text'], ['input[name="text"]'], ['aria/Запрос']], value: '{{search_query}}' },
-      { title: 'Запустить поиск', description: 'Нажимает кнопку поиска и открывает страницу результатов.', type: 'click', selectors: [['.search3__button'], ['button[aria-label="Найти"]'], ['aria/Найти']], offsetX: 35, offsetY: 22, assertedEvents: [{ type: 'navigation' }] },
+      { title: 'Запустить поиск', description: 'Нажимает Enter в поисковой строке и не зависит от варианта кнопки «Найти» или «Алиса AI».', type: 'keyDown', key: 'Enter' },
+      { title: 'Отпустить клавишу Enter', description: 'Завершает клавиатурное действие после отправки поисковой формы.', type: 'keyUp', key: 'Enter' },
       { title: 'Дождаться результатов', description: 'Ожидает появления первого органического результата.', type: 'waitForElement', selectors: [['#search-result'], ['.serp-list'], ['.Organic']], visible: true },
       { title: 'Найти первую ссылку', description: 'Проверяет наличие кликабельного заголовка первого органического результата.', type: 'waitForElement', selectors: [['.Organic .OrganicTitle-Link'], ['#search-result > li a.Link'], ['li.serp-item a[href]']], visible: true },
       { title: 'Открыть первый результат', description: 'Переходит по первой органической ссылке из результатов поиска.', type: 'click', selectors: [['.Organic .OrganicTitle-Link'], ['#search-result > li a.Link'], ['li.serp-item a[href]']], offsetX: 120, offsetY: 18 },
@@ -132,7 +207,7 @@ const demoScenarioDefinitions = [
     tone: 'success',
     summary: 'Chromium входит в seeergo@yahoo.com и отправляет реальное письмо на 10sydneyfc@gmail.com.',
     points: [
-      '19 нативных шагов Puppeteer Replay работают с реальным Yahoo Mail',
+      '20 нативных шагов Puppeteer Replay работают с реальным Yahoo Mail',
       'Пароль берётся только из YAHOO_MAIL_PASSWORD и не хранится в сценарии',
       'Yahoo подтверждает отправку, итоговый экран сохраняется в result.artifacts'
     ],
