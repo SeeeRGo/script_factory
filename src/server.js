@@ -1027,7 +1027,7 @@ function buildHealthResponse(requestId) {
       step_delay_ms: Number(process.env.BROWSER_STEP_DELAY_MS || 0),
       live_view: {
         enabled: noVncConfigured && !headless,
-        port: Number(process.env.NOVNC_PUBLIC_PORT || 6080),
+        port: Number(process.env.NOVNC_PUBLIC_PORT || 33303),
         public_url: process.env.NOVNC_PUBLIC_URL || null,
         path: '/vnc.html?autoconnect=1&resize=scale&path=websockify'
       }

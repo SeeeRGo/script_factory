@@ -52,7 +52,7 @@ NOVNC_ENABLED=true
 - `http://localhost:33001/` — сценарии, редактор и прогресс;
 - `http://localhost:33001/queue` — очередь конкретной УН;
 - `http://localhost:33001/demo/mail` — состояние демонстрационной почты;
-- `http://localhost:6080/vnc.html?autoconnect=1&resize=scale&path=websockify` — живой экран Chromium при запуске через Docker Compose.
+- `http://localhost:33303/vnc.html?autoconnect=1&resize=scale&path=websockify` — живой экран Chromium при запуске через Docker Compose.
 
 ## Основной маршрут на 15 минут
 

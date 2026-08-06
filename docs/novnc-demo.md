@@ -6,11 +6,12 @@
 
 ```text
 Puppeteer → Chromium → Xvfb :99 → x11vnc :5900 → noVNC/websockify :6080
+                                                        ↓ Docker :33303
                  └────────── Фабрика сценариев :33001
 ```
 
-Порт VNC `5900` остаётся внутри контейнера. Web-клиент noVNC доступен на порту `6080`,
-который Docker Compose по умолчанию публикует только на `127.0.0.1` хоста.
+Порты VNC `5900` и websockify `6080` остаются внутри контейнера. Web-клиент noVNC
+публикуется на порту `33303`, по умолчанию только на `127.0.0.1` хоста.
 
 ## Запуск на сервере
 
@@ -29,7 +30,7 @@ BROWSER_HEADLESS=false
 BROWSER_STEP_DELAY_MS=350
 BROWSER_HOLD_OPEN_MS=5000
 NOVNC_BIND_HOST=127.0.0.1
-NOVNC_PORT=6080
+NOVNC_PORT=33303
 ```
 
 `BROWSER_STEP_DELAY_MS` добавляет предсказуемую паузу между Recorder-шагами, а `BROWSER_HOLD_OPEN_MS` оставляет
@@ -42,14 +43,14 @@ NOVNC_PORT=6080
 ```bash
 ssh -N \
   -L 33001:127.0.0.1:33001 \
-  -L 6080:127.0.0.1:6080 \
+  -L 33303:127.0.0.1:33303 \
   user@server
 ```
 
 Откройте:
 
 - `http://127.0.0.1:33001` — Фабрика сценариев;
-- `http://127.0.0.1:6080/vnc.html?autoconnect=1&resize=scale&path=websockify` — экран Chromium.
+- `http://127.0.0.1:33303/vnc.html?autoconnect=1&resize=scale&path=websockify` — экран Chromium.
 
 После авторизации на главной странице появляется ссылка **«Экран Chromium ↗»**, которая
 открывает тот же noVNC-клиент. Разместите студию и noVNC рядом или выведите noVNC на
@@ -103,7 +104,7 @@ BROWSER_HOLD_OPEN_MS=0
 ```bash
 docker compose ps
 docker compose logs --tail=100 script-factory
-curl -I http://127.0.0.1:6080/vnc.html
+curl -I http://127.0.0.1:33303/vnc.html
 curl http://127.0.0.1:33001/health
 ```
 
@@ -116,7 +117,7 @@ curl http://127.0.0.1:33001/health
     "step_delay_ms": 350,
     "live_view": {
       "enabled": true,
-      "port": 6080
+      "port": 33303
     }
   }
 }

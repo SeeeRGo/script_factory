@@ -3,7 +3,7 @@ services:
     build: .
     ports:
       - "33001:33001"
-      - "${NOVNC_BIND_HOST:-127.0.0.1}:${NOVNC_PORT:-6080}:6080"
+      - "${NOVNC_BIND_HOST:-127.0.0.1}:${NOVNC_PORT:-33303}:6080"
     volumes:
       - ./data:/app/data
       - ./demo-data:/app/demo-data
@@ -24,7 +24,7 @@ services:
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
       NOVNC_ENABLED: ${NOVNC_ENABLED:-true}
       NOVNC_INTERNAL_PORT: 6080
-      NOVNC_PUBLIC_PORT: ${NOVNC_PORT:-6080}
+      NOVNC_PUBLIC_PORT: ${NOVNC_PORT:-33303}
       NOVNC_PUBLIC_URL: ${NOVNC_PUBLIC_URL:-}
       NOVNC_PASSWORD: ${NOVNC_PASSWORD:-}
       NOVNC_GEOMETRY: ${NOVNC_GEOMETRY:-1440x900x24}
