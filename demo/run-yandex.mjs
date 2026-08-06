@@ -2,22 +2,18 @@ import { readFile } from 'node:fs/promises';
 
 const API_URL = process.env.DEMO_API_URL || 'http://127.0.0.1:3000';
 const API_KEY = process.env.API_KEY || 'dev-secret';
-const flow = JSON.parse(await readFile(new URL('./browser-replay-send-email.json', import.meta.url), 'utf8'));
+const flow = JSON.parse(await readFile(new URL('./browser-replay-yandex-search.json', import.meta.url), 'utf8'));
 const suffix = Date.now();
 
 const response = await fetch(`${API_URL}/api/v2/jobs`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
   body: JSON.stringify({
-    uid: `stage3-mail-${suffix}`,
-    priority: 10,
-    timeout_ms: 120000,
+    uid: `stage3-yandex-${suffix}`,
+    priority: 6,
+    timeout_ms: 30000,
     retry_policy: { max_attempts: 1, backoff_ms: 500 },
-    context: {
-      mail_to: '10sydneyfc@gmail.com',
-      mail_subject: `Реальная проверка Yahoo → Gmail ${suffix}`,
-      mail_body: 'Это реальное демонстрационное письмо отправлено из seeergo@yahoo.com сценарием Puppeteer Replay через Фабрику сценариев.'
-    },
+    context: { search_query: 'официальная документация Node.js' },
     script: flow
   })
 });

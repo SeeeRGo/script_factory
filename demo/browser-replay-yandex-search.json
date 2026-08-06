@@ -1,0 +1,82 @@
+{
+  "title": "Этап 3 · Поиск в Яндексе и переход по первой ссылке",
+  "timeout": 12000,
+  "steps": [
+    {
+      "title": "Настроить окно Chromium",
+      "description": "Устанавливает размер окна для наглядного показа поиска.",
+      "type": "setViewport",
+      "width": 1400,
+      "height": 860,
+      "deviceScaleFactor": 1,
+      "isMobile": false,
+      "hasTouch": false,
+      "isLandscape": false
+    },
+    {
+      "title": "Открыть Яндекс",
+      "description": "Переходит на главную страницу поисковой системы.",
+      "type": "navigate",
+      "url": "https://ya.ru/"
+    },
+    {
+      "title": "Дождаться поисковой строки",
+      "description": "Проверяет готовность формы поиска.",
+      "type": "waitForElement",
+      "selectors": [["#text"], ["input[name=\"text\"]"], ["aria/Запрос"]],
+      "visible": true
+    },
+    {
+      "title": "Выбрать поисковую строку",
+      "description": "Устанавливает фокус в поле запроса.",
+      "type": "click",
+      "selectors": [["#text"], ["input[name=\"text\"]"], ["aria/Запрос"]],
+      "offsetX": 240,
+      "offsetY": 22
+    },
+    {
+      "title": "Ввести поисковый запрос",
+      "description": "Вводит демонстрационный текст из context.search_query.",
+      "type": "change",
+      "selectors": [["#text"], ["input[name=\"text\"]"], ["aria/Запрос"]],
+      "value": "{{search_query}}"
+    },
+    {
+      "title": "Запустить поиск",
+      "description": "Нажимает кнопку поиска и открывает страницу результатов.",
+      "type": "click",
+      "selectors": [[".search3__button"], ["button[aria-label=\"Найти\"]"], ["aria/Найти"]],
+      "offsetX": 35,
+      "offsetY": 22,
+      "assertedEvents": [{ "type": "navigation" }]
+    },
+    {
+      "title": "Дождаться результатов",
+      "description": "Ожидает появления первого органического результата.",
+      "type": "waitForElement",
+      "selectors": [["#search-result"], [".serp-list"], [".Organic"]],
+      "visible": true
+    },
+    {
+      "title": "Найти первую ссылку",
+      "description": "Проверяет наличие кликабельного заголовка первого органического результата.",
+      "type": "waitForElement",
+      "selectors": [[".Organic .OrganicTitle-Link"], ["#search-result > li a.Link"], ["li.serp-item a[href]"]],
+      "visible": true
+    },
+    {
+      "title": "Открыть первый результат",
+      "description": "Переходит по первой органической ссылке из результатов поиска.",
+      "type": "click",
+      "selectors": [[".Organic .OrganicTitle-Link"], ["#search-result > li a.Link"], ["li.serp-item a[href]"]],
+      "offsetX": 120,
+      "offsetY": 18
+    },
+    {
+      "title": "Дождаться целевой страницы",
+      "description": "Ожидает завершения навигации после клика по результату.",
+      "type": "waitForExpression",
+      "expression": "location.hostname !== 'ya.ru' && !location.hostname.endsWith('.yandex.ru')"
+    }
+  ]
+}

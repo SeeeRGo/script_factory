@@ -42,6 +42,12 @@ components:
         id:
           type: string
           example: locate-reports
+        title:
+          type: string
+          description: Короткое человекочитаемое название шага.
+        description:
+          type: string
+          description: Объяснение действия и ожидаемого результата шага.
         action:
           type: string
           enum: [noop, check_ip, launch_browser, navigate, auth_ecp, find_files, upload_files, download_files, validate_report, submit_if_valid, move_files]
@@ -152,6 +158,14 @@ components:
         action:
           type: string
           description: action для JSON Steps или type для Puppeteer Replay.
+        title:
+          type: string
+          nullable: true
+          description: Короткое человекочитаемое название шага.
+        description:
+          type: string
+          nullable: true
+          description: Объяснение действия и ожидаемого результата шага.
         status:
           type: string
           enum: [pending, running, success, failed]
@@ -513,38 +527,47 @@ paths:
               $ref: '#/components/schemas/JobCreateRequest'
             examples:
               browserReplay:
-                summary: Нативный Chrome Recorder JSON — отправка письма
+                summary: Нативный Chrome Recorder JSON — реальная отправка Yahoo → Gmail
                 value:
                   uid: mail-stage3-00042
                   priority: 5
-                  timeout_ms: 45000
+                  timeout_ms: 120000
                   context:
-                    mail_to: demo.recipient@example.test
+                    mail_to: 10sydneyfc@gmail.com
                     mail_subject: Проверка автоматизации
-                    mail_body: Письмо отправлено реальным Chromium.
+                    mail_body: Реальное письмо отправлено из seeergo@yahoo.com через Chromium.
                   script:
-                    title: Вход в почту и отправка письма
-                    timeout: 10000
+                    title: Реальная отправка Yahoo → Gmail
+                    timeout: 15000
                     steps:
-                      - type: setViewport
-                        width: 1280
-                        height: 900
+                      - title: Настроить окно Chromium
+                        description: Устанавливает размер окна для демонстрации.
+                        type: setViewport
+                        width: 1400
+                        height: 860
                         deviceScaleFactor: 1
                         isMobile: false
                         hasTouch: false
                         isLandscape: false
-                      - type: navigate
-                        url: "{{demo_mail_url}}"
-                      - type: change
-                        selectors: [["#mail-login"], ["aria/Логин"]]
-                        value: "{{mail_login}}"
-                      - type: change
-                        selectors: [["#mail-password"], ["aria/Пароль"]]
-                        value: "{{mail_password}}"
-                      - type: click
-                        selectors: [["#mail-login-submit"], ["aria/Войти"]]
-                        offsetX: 150
-                        offsetY: 20
+                      - title: Открыть Yahoo
+                        description: Переходит на страницу входа Yahoo Mail.
+                        type: navigate
+                        url: "{{yahoo_mail_url}}"
+                      - title: Ввести адрес Yahoo
+                        description: Вводит адрес отправителя из конфигурации сервера.
+                        type: change
+                        selectors: [["#username"], ["input[name='username']"]]
+                        value: "{{yahoo_login}}"
+                      - title: Ввести пароль Yahoo
+                        description: Использует YAHOO_MAIL_PASSWORD и маскирует значение в логах.
+                        type: change
+                        selectors: [["#login-passwd"], ["input[type='password']"]]
+                        value: "{{yahoo_password}}"
+                      - title: Указать получателя
+                        description: Заполняет адрес Gmail из context.
+                        type: change
+                        selectors: [["[data-test-id='compose-to']"], ["#message-to-field"]]
+                        value: "{{mail_to}}"
                       - type: waitForElement
                         selectors: [["#mail-compose"]]
                         visible: true

@@ -1,108 +1,143 @@
 {
-  "title": "Этап 3 · Вход в почту и отправка письма",
-  "timeout": 10000,
+  "title": "Этап 3 · Реальная отправка Yahoo → Gmail",
+  "timeout": 15000,
   "steps": [
     {
+      "title": "Настроить окно Chromium",
+      "description": "Устанавливает презентационный размер окна перед открытием Yahoo.",
       "type": "setViewport",
-      "width": 1280,
-      "height": 900,
+      "width": 1400,
+      "height": 860,
       "deviceScaleFactor": 1,
       "isMobile": false,
       "hasTouch": false,
       "isLandscape": false
     },
     {
+      "title": "Открыть Yahoo",
+      "description": "Переходит на актуальную страницу входа Yahoo Mail.",
       "type": "navigate",
-      "url": "{{demo_mail_url}}"
+      "url": "{{yahoo_mail_url}}"
     },
     {
+      "title": "Дождаться формы входа",
+      "description": "Проверяет, что Yahoo показал поле имени пользователя.",
       "type": "waitForElement",
-      "selectors": [["#mail-login-form"], ["aria/Вход в почту"]],
+      "selectors": [["#username"], ["input[name=\"username\"]"], ["aria/Username, email, or mobile"]],
       "visible": true
     },
     {
+      "title": "Выбрать поле логина",
+      "description": "Устанавливает фокус в поле учётной записи Yahoo.",
       "type": "click",
-      "selectors": [["#mail-login"], ["aria/Логин"]],
-      "offsetX": 110,
-      "offsetY": 18
-    },
-    {
-      "type": "change",
-      "selectors": [["#mail-login"], ["aria/Логин"]],
-      "value": "{{mail_login}}"
-    },
-    {
-      "type": "click",
-      "selectors": [["#mail-password"], ["aria/Пароль"]],
-      "offsetX": 110,
-      "offsetY": 18
-    },
-    {
-      "type": "change",
-      "selectors": [["#mail-password"], ["aria/Пароль"]],
-      "value": "{{mail_password}}"
-    },
-    {
-      "type": "click",
-      "selectors": [["#mail-login-submit"], ["aria/Войти"]],
+      "selectors": [["#username"], ["input[name=\"username\"]"]],
       "offsetX": 150,
-      "offsetY": 20
+      "offsetY": 24
     },
     {
-      "type": "waitForElement",
-      "selectors": [["#mail-compose"], ["aria/Написать"]],
-      "visible": true
-    },
-    {
-      "type": "click",
-      "selectors": [["#mail-compose"], ["aria/Написать"]],
-      "offsetX": 75,
-      "offsetY": 20
-    },
-    {
-      "type": "waitForElement",
-      "selectors": [["#mail-compose-panel:not([hidden])"]],
-      "visible": true
-    },
-    {
+      "title": "Ввести адрес Yahoo",
+      "description": "Вводит адрес отправителя из защищённой конфигурации сервера.",
       "type": "change",
-      "selectors": [["#mail-to"], ["aria/Кому"]],
+      "selectors": [["#username"], ["input[name=\"username\"]"]],
+      "value": "{{yahoo_login}}"
+    },
+    {
+      "title": "Перейти к паролю",
+      "description": "Нажимает Next и открывает второй этап авторизации Yahoo.",
+      "type": "click",
+      "selectors": [["button[name=\"signin\"]"], ["button[type=\"submit\"]"], ["aria/Next"]],
+      "offsetX": 150,
+      "offsetY": 24,
+      "assertedEvents": [{ "type": "navigation" }]
+    },
+    {
+      "title": "Дождаться поля пароля",
+      "description": "Ожидает пароль или завершает шаг ошибкой при CAPTCHA/дополнительной проверке.",
+      "type": "waitForElement",
+      "selectors": [["#login-passwd"], ["input[name=\"password\"]"], ["input[type=\"password\"]"]],
+      "visible": true
+    },
+    {
+      "title": "Выбрать поле пароля",
+      "description": "Устанавливает фокус в поле пароля Yahoo.",
+      "type": "click",
+      "selectors": [["#login-passwd"], ["input[name=\"password\"]"], ["input[type=\"password\"]"]],
+      "offsetX": 150,
+      "offsetY": 24
+    },
+    {
+      "title": "Ввести пароль Yahoo",
+      "description": "Берёт пароль из YAHOO_MAIL_PASSWORD; значение маскируется в прогрессе и логах.",
+      "type": "change",
+      "selectors": [["#login-passwd"], ["input[name=\"password\"]"], ["input[type=\"password\"]"]],
+      "value": "{{yahoo_password}}"
+    },
+    {
+      "title": "Войти в почту",
+      "description": "Отправляет форму пароля и переходит в Yahoo Mail.",
+      "type": "click",
+      "selectors": [["button[name=\"verifyPassword\"]"], ["#login-signin"], ["button[type=\"submit\"]"], ["aria/Next"]],
+      "offsetX": 150,
+      "offsetY": 24,
+      "assertedEvents": [{ "type": "navigation" }]
+    },
+    {
+      "title": "Дождаться почтового ящика",
+      "description": "Подтверждает успешный вход появлением кнопки Compose.",
+      "type": "waitForElement",
+      "selectors": [["[data-test-id=\"compose-button\"]"], ["aria/Compose"], ["aria/Написать"], ["text/Compose"]],
+      "visible": true
+    },
+    {
+      "title": "Создать письмо",
+      "description": "Открывает редактор нового письма Yahoo.",
+      "type": "click",
+      "selectors": [["[data-test-id=\"compose-button\"]"], ["aria/Compose"], ["aria/Написать"], ["text/Compose"]],
+      "offsetX": 60,
+      "offsetY": 20
+    },
+    {
+      "title": "Дождаться редактора письма",
+      "description": "Проверяет появление поля получателя.",
+      "type": "waitForElement",
+      "selectors": [["[data-test-id=\"compose-to\"]"], ["#message-to-field"], ["input[role=\"combobox\"][aria-label*=\"To\"]"]],
+      "visible": true
+    },
+    {
+      "title": "Указать получателя Gmail",
+      "description": "Вводит адрес 10sydneyfc@gmail.com из context задания.",
+      "type": "change",
+      "selectors": [["[data-test-id=\"compose-to\"]"], ["#message-to-field"], ["input[role=\"combobox\"][aria-label*=\"To\"]"]],
       "value": "{{mail_to}}"
     },
     {
+      "title": "Указать тему письма",
+      "description": "Заполняет уникальную тему, чтобы письмо было легко найти после демонстрации.",
       "type": "change",
-      "selectors": [["#mail-subject"], ["aria/Тема"]],
+      "selectors": [["[data-test-id=\"compose-subject\"]"], ["input[data-test-id=\"compose-subject\"]"], ["input[placeholder=\"Subject\"]"]],
       "value": "{{mail_subject}}"
     },
     {
+      "title": "Написать текст письма",
+      "description": "Заполняет тело реального сообщения демонстрационным текстом.",
       "type": "change",
-      "selectors": [["#mail-body"], ["aria/Сообщение"]],
+      "selectors": [["[data-test-id=\"rte\"]"], ["div[contenteditable=\"true\"][role=\"textbox\"]"], ["aria/Message body"]],
       "value": "{{mail_body}}"
     },
     {
+      "title": "Отправить реальное письмо",
+      "description": "Нажимает Send; этот шаг создаёт внешнее действие и доставку в Gmail.",
       "type": "click",
-      "selectors": [["#mail-send"], ["aria/Отправить"]],
-      "offsetX": 55,
+      "selectors": [["[data-test-id=\"compose-send-button\"]"], ["button[data-test-id=\"compose-send-button\"]"], ["aria/Send"]],
+      "offsetX": 45,
       "offsetY": 20
     },
     {
+      "title": "Подтвердить отправку",
+      "description": "Дожидается уведомления Yahoo об успешной отправке сообщения.",
       "type": "waitForElement",
-      "selectors": [["#mail-send-success:not([hidden])"], ["text/Письмо отправлено"]],
+      "selectors": [["[data-test-id=\"toast\"]"], ["[role=\"status\"]"], ["text/Message sent"], ["text/Письмо отправлено"]],
       "visible": true
-    },
-    {
-      "type": "click",
-      "selectors": [["#mail-folder-sent"], ["text/Отправленные"]],
-      "offsetX": 80,
-      "offsetY": 18
-    },
-    {
-      "type": "waitForElement",
-      "selectors": [[".sent-message[data-subject=\"{{mail_subject}}\"]"]],
-      "visible": true,
-      "attributes": {
-        "data-subject": "{{mail_subject}}"
-      }
     }
   ]
 }

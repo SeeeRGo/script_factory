@@ -1,0 +1,24 @@
+{
+  "title": "Тест · Локальная отправка письма",
+  "timeout": 10000,
+  "steps": [
+    { "title": "Настроить окно", "description": "Устанавливает размер окна тестового Chromium.", "type": "setViewport", "width": 1280, "height": 900, "deviceScaleFactor": 1, "isMobile": false, "hasTouch": false, "isLandscape": false },
+    { "title": "Открыть тестовую почту", "description": "Переходит на локальный почтовый стенд.", "type": "navigate", "url": "{{demo_mail_url}}" },
+    { "title": "Дождаться формы входа", "description": "Проверяет готовность формы авторизации.", "type": "waitForElement", "selectors": [["#mail-login-form"], ["aria/Вход в почту"]], "visible": true },
+    { "title": "Выбрать поле логина", "description": "Устанавливает фокус в поле логина.", "type": "click", "selectors": [["#mail-login"], ["aria/Логин"]], "offsetX": 110, "offsetY": 18 },
+    { "title": "Ввести логин", "description": "Вводит логин локального стенда.", "type": "change", "selectors": [["#mail-login"], ["aria/Логин"]], "value": "{{mail_login}}" },
+    { "title": "Выбрать поле пароля", "description": "Устанавливает фокус в поле пароля.", "type": "click", "selectors": [["#mail-password"], ["aria/Пароль"]], "offsetX": 110, "offsetY": 18 },
+    { "title": "Ввести пароль", "description": "Вводит пароль локального стенда; значение скрывается в журнале.", "type": "change", "selectors": [["#mail-password"], ["aria/Пароль"]], "value": "{{mail_password}}" },
+    { "title": "Войти", "description": "Отправляет форму авторизации.", "type": "click", "selectors": [["#mail-login-submit"], ["aria/Войти"]], "offsetX": 150, "offsetY": 20 },
+    { "title": "Дождаться почтового ящика", "description": "Подтверждает успешный вход по кнопке создания письма.", "type": "waitForElement", "selectors": [["#mail-compose"], ["aria/Написать"]], "visible": true },
+    { "title": "Создать письмо", "description": "Открывает редактор нового письма.", "type": "click", "selectors": [["#mail-compose"], ["aria/Написать"]], "offsetX": 75, "offsetY": 20 },
+    { "title": "Дождаться редактора", "description": "Проверяет отображение формы нового письма.", "type": "waitForElement", "selectors": [["#mail-compose-panel:not([hidden])"]], "visible": true },
+    { "title": "Указать получателя", "description": "Заполняет адрес получателя из context.", "type": "change", "selectors": [["#mail-to"], ["aria/Кому"]], "value": "{{mail_to}}" },
+    { "title": "Указать тему", "description": "Заполняет тему письма из context.", "type": "change", "selectors": [["#mail-subject"], ["aria/Тема"]], "value": "{{mail_subject}}" },
+    { "title": "Написать сообщение", "description": "Заполняет текст письма из context.", "type": "change", "selectors": [["#mail-body"], ["aria/Сообщение"]], "value": "{{mail_body}}" },
+    { "title": "Отправить письмо", "description": "Нажимает кнопку отправки.", "type": "click", "selectors": [["#mail-send"], ["aria/Отправить"]], "offsetX": 55, "offsetY": 20 },
+    { "title": "Подтвердить отправку", "description": "Дожидается сообщения об успешной отправке.", "type": "waitForElement", "selectors": [["#mail-send-success:not([hidden])"], ["text/Письмо отправлено"]], "visible": true },
+    { "title": "Открыть отправленные", "description": "Переходит в папку отправленных писем.", "type": "click", "selectors": [["#mail-folder-sent"], ["text/Отправленные"]], "offsetX": 80, "offsetY": 18 },
+    { "title": "Проверить письмо", "description": "Находит отправленное письмо по теме.", "type": "waitForElement", "selectors": [[".sent-message[data-subject=\"{{mail_subject}}\"]"]], "visible": true, "attributes": { "data-subject": "{{mail_subject}}" } }
+  ]
+}

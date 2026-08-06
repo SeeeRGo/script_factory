@@ -66,6 +66,7 @@ test.before(async () => {
       WEB_PASSWORD,
       DEMO_MAIL_LOGIN,
       DEMO_MAIL_PASSWORD,
+      YAHOO_MAIL_PASSWORD: '',
       PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
       BROWSER_HEADLESS: 'true',
       DATA_DIR: dataDir
@@ -275,6 +276,38 @@ test('reports unresolved Replay templates as a normalized browser error', async 
   assert.match(job.error.message, /Не удалось подготовить Puppeteer Replay/);
 });
 
+test('rejects the real Yahoo demo before browser launch when its env password is missing', async () => {
+  const response = await request('/api/v2/jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      retry_policy: { max_attempts: 1, backoff_ms: 1 },
+      script: {
+        title: 'Yahoo secret check',
+        steps: [{
+          title: 'Ввести пароль Yahoo',
+          description: 'Использует пароль только из окружения сервиса.',
+          type: 'change',
+          selectors: [['#login-passwd']],
+          value: '{{yahoo_password}}'
+        }]
+      }
+    })
+  });
+  assert.equal(response.status, 201);
+  const jobId = (await response.json()).job.job_id;
+
+  let job;
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
+    job = (await (await request(`/api/v2/jobs/${jobId}`)).json()).job;
+    if (job.status === 'failed') break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(job.status, 'failed');
+  assert.equal(job.error.code, 'MISSING_SECRET');
+  assert.match(job.error.message, /YAHOO_MAIL_PASSWORD/);
+});
+
 test('executes a script through the API and exposes visual step state and logs', async () => {
   const externalUid = `integration-${Date.now()}`;
   const createResponse = await request('/api/v2/jobs', {
@@ -397,9 +430,9 @@ test('cancels an active interpreter step through its abort signal', async () => 
   assert.equal(job.execution.status, 'cancelled');
 });
 
-test('executes an exported Puppeteer Replay flow and sends a real demo email', async () => {
+test('executes a local Puppeteer Replay mail fixture without external delivery', async () => {
   const flow = JSON.parse(await readFile(
-    path.resolve(import.meta.dirname, '../demo/browser-replay-send-email.json'),
+    path.resolve(import.meta.dirname, './fixtures/browser-replay-local-mail.json'),
     'utf8'
   ));
   const subject = `Browser E2E ${Date.now()}`;
@@ -433,6 +466,7 @@ test('executes an exported Puppeteer Replay flow and sends a real demo email', a
   assert.equal(job.result.steps_executed, 18);
   assert.equal(job.execution.completed_steps, 18);
   assert.ok(job.execution.steps.every((step) => step.status === 'success'));
+  assert.ok(job.execution.steps.every((step) => step.title && step.description));
   assert.deepEqual(job.execution.steps.slice(0, 3).map((step) => step.action), [
     'setViewport', 'navigate', 'waitForElement'
   ]);

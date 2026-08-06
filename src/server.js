@@ -22,6 +22,10 @@ const WEB_PASSWORD = process.env.WEB_PASSWORD;
 const UN_ID = process.env.UN_ID;
 const DEMO_MAIL_LOGIN = process.env.DEMO_MAIL_LOGIN || 'demo.user';
 const DEMO_MAIL_PASSWORD = process.env.DEMO_MAIL_PASSWORD || 'demo-password';
+const YAHOO_MAIL_URL = process.env.YAHOO_MAIL_URL || 'https://login.yahoo.com/?src=ym&activity=header-signin';
+const YAHOO_MAIL_LOGIN = process.env.YAHOO_MAIL_LOGIN || 'seeergo@yahoo.com';
+const YAHOO_MAIL_PASSWORD = process.env.YAHOO_MAIL_PASSWORD || '';
+const YAHOO_MAIL_RECIPIENT = process.env.YAHOO_MAIL_RECIPIENT || '10sydneyfc@gmail.com';
 const configuredSessionHours = Number(process.env.WEB_SESSION_TTL_HOURS || 12);
 const WEB_SESSION_TTL_SECONDS = Number.isFinite(configuredSessionHours)
   ? Math.floor(Math.max(60, configuredSessionHours * 60 * 60))
@@ -393,6 +397,8 @@ function createExecution(script = {}) {
       index,
       id: step.id ?? `step_${index + 1}`,
       action: step.action ?? step.type ?? 'unknown',
+      title: step.title ?? null,
+      description: step.description ?? null,
       status: 'pending',
       attempt: null,
       started_at: null,
@@ -840,8 +846,23 @@ async function executeJob(job) {
       demo_mail_url: `${process.env.SERVICE_BASE_URL || `http://127.0.0.1:${PORT}`}/demo/mail`,
       mail_login: DEMO_MAIL_LOGIN,
       mail_password: DEMO_MAIL_PASSWORD,
+      yahoo_mail_url: YAHOO_MAIL_URL,
+      yahoo_login: YAHOO_MAIL_LOGIN,
+      yahoo_password: YAHOO_MAIL_PASSWORD,
+      mail_to: YAHOO_MAIL_RECIPIENT,
       ...(job.request.context ?? {})
     };
+
+    if (browserReplay
+      && JSON.stringify(script).includes('{{yahoo_password}}')
+      && !runtimeContext.yahoo_password) {
+      throw createApiError(
+        'MISSING_SECRET',
+        'Для реальной отправки через Yahoo задайте YAHOO_MAIL_PASSWORD в .env',
+        400,
+        false
+      );
+    }
 
     const interpreterResult = browserReplay
       ? await executeBrowserReplay({

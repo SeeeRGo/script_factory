@@ -18,6 +18,7 @@
     "demo:retry": "node demo/run.mjs retry",
     "demo:timeout": "node demo/run.mjs timeout",
     "demo:browser": "node demo/run-browser.mjs",
+    "demo:yandex": "node demo/run-yandex.mjs",
     "demo:all": "node demo/run.mjs success && node demo/run.mjs file-not-found && node demo/run.mjs retry && node demo/run.mjs timeout"
   },
   "dependencies": {

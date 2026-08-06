@@ -11,13 +11,14 @@ Stage 2 JSON-steps interpreter remains backward compatible.
 - [как записывать и передавать новые браузерные сценарии](docs/script-creation.md);
 - [готовый 15-минутный план демонстрации](docs/demo-stage-3.md);
 - [живой показ Chromium через SSH и noVNC](docs/novnc-demo.md);
-- [эталонный сценарий отправки письма](demo/browser-replay-send-email.json).
+- [реальная отправка Yahoo → Gmail](demo/browser-replay-send-email.json);
+- [поиск в Яндексе и переход по первой ссылке](demo/browser-replay-yandex-search.json).
 
 ## Start locally
 
 ```bash
 cp .env.example .env
-# Set UN_ID, WEB_LOGIN and WEB_PASSWORD in .env
+# Set UN_ID, WEB_LOGIN, WEB_PASSWORD and YAHOO_MAIL_PASSWORD in .env
 npm install
 npm start
 ```
@@ -73,10 +74,11 @@ State is persisted to `data/state.sqlite` locally and `/app/data/state.sqlite` i
 ## Execution Studio
 
 Open `/` for a Stage 3 guided demo. The first ready-to-run scenario performs 18 real
-browser steps: it logs into the local demo mail, composes and sends a message, verifies
-the sent item, and returns a screenshot. The Stage 2 success, file-not-found, retry, and
-timeout scenarios remain available for diagnostics. The editor starts from a native
-Recorder template and accepts arbitrary exported flows.
+browser steps: it logs into `seeergo@yahoo.com`, composes a message for
+`10sydneyfc@gmail.com`, sends it, verifies Yahoo's success notification, and returns a
+screenshot. The second browser scenario searches Yandex and opens the first organic
+result. Stage 2 diagnostic scenarios remain available. Yahoo credentials are read only
+from `.env`; `YAHOO_MAIL_PASSWORD` is never placed in the scenario JSON.
 
 The view shows resolved step parameters, status, timing, attempts, normalized errors, recent jobs, and interpreter logs. It uses the same API key and same-origin API as the service, so it also works in the single Railway container.
 
@@ -87,6 +89,8 @@ The default `dev-secret` is prefilled for local development. For other environme
 The interpreter validates scripts before they enter the queue. Each step supports:
 
 - `id`: optional stable name used in logs and visualization;
+- `title`: short human-readable step name shown in the execution flow;
+- `description`: explanation of the action and its expected effect;
 - `action`: a registered action name;
 - `params`: action parameters, including context expressions such as `{{root_dir}}` and `{{found_files}}`;
 - `timeout_ms`: optional per-step timeout;

@@ -160,13 +160,13 @@ function createStepRow(step, index) {
   const copy = document.createElement('div');
   copy.className = 'step-copy';
   const title = document.createElement('strong');
-  title.textContent = step.action || 'неизвестно';
+  title.textContent = step.title || step.action || 'неизвестно';
   const detail = document.createElement('p');
   detail.textContent = step.error
     ? `${step.error.code}: ${step.error.message}`
     : step.status === 'success'
-      ? describeOutput(step.output)
-      : describeParams(step.params);
+      ? [step.description, describeOutput(step.output)].filter(Boolean).join(' · ')
+      : step.description || describeParams(step.params);
   copy.append(title, detail);
   const duration = document.createElement('span');
   duration.className = 'step-time';
@@ -178,7 +178,7 @@ function createStepRow(step, index) {
 function previewStepParams(step) {
   if (step.params) return step.params;
   if (!step.type) return {};
-  const { type, id, ...params } = step;
+  const { type, id, title, description, ...params } = step;
   return params;
 }
 
@@ -187,6 +187,8 @@ function renderExecution(job = null, previewSteps = null) {
   const steps = execution?.steps || (previewSteps || []).map((step, index) => ({
     index,
     action: step.action || step.type,
+    title: step.title || null,
+    description: step.description || null,
     status: 'pending',
     params: previewStepParams(step),
     duration_ms: null
