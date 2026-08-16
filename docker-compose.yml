@@ -7,9 +7,12 @@ services:
     volumes:
       - ./data:/app/data
       - ./demo-data:/app/demo-data
+      - ./work:/app/work
     environment:
       API_KEY: ${API_KEY:-dev-secret}
       UN_ID: ${UN_ID:?UN_ID must be set in .env}
+      MAX_PARALLEL_JOBS: ${MAX_PARALLEL_JOBS:-2}
+      DEFAULT_JOB_TIMEOUT_MS: ${DEFAULT_JOB_TIMEOUT_MS:-120000}
       WEB_LOGIN: ${WEB_LOGIN:?WEB_LOGIN must be set in .env}
       WEB_PASSWORD: ${WEB_PASSWORD:?WEB_PASSWORD must be set in .env}
       WEB_SESSION_TTL_HOURS: ${WEB_SESSION_TTL_HOURS:-12}
@@ -38,6 +41,9 @@ services:
       PORT: 33001
       HOST: 0.0.0.0
       DATA_DIR: /app/data
+      FILESYSTEM_ALLOWED_ROOTS: /app/demo-data:/app/data:/app/work
+      CALLBACK_AUTH_TOKEN: ${CALLBACK_AUTH_TOKEN:-}
+      CALLBACK_ALLOWED_ORIGINS: ${CALLBACK_ALLOWED_ORIGINS:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:33001/health"]
       interval: 10s

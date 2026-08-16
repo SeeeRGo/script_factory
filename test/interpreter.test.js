@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,6 +14,7 @@ import {
 test('the default registry contains every Stage 2 action', () => {
   assert.deepEqual(createDefaultStepRegistry().actions(), [
     'noop',
+    'wait',
     'check_ip',
     'launch_browser',
     'navigate',
@@ -23,7 +24,11 @@ test('the default registry contains every Stage 2 action', () => {
     'download_files',
     'validate_report',
     'submit_if_valid',
-    'move_files'
+    'move_files',
+    'copy_files',
+    'read_text_file',
+    'write_text_file',
+    'delete_files'
   ]);
 });
 
@@ -170,6 +175,50 @@ test('file steps find reports by prefix and move them on the real filesystem', a
 
   assert.equal(result.context.found_files.length, 1);
   assert.deepEqual(await readdir(path.join(workingDirectory, 'loaded')), ['FNS_report.xml']);
+});
+
+test('wait uses a duration supplied through the script context', async () => {
+  const startedAt = Date.now();
+  const result = await executeScript({
+    script: {
+      context: { delay_ms: 25 },
+      steps: [{ action: 'wait', params: { duration_ms: '{{delay_ms}}' }, timeout_ms: 200 }]
+    }
+  });
+  assert.equal(result.context.waited_ms, 25);
+  assert.ok(Date.now() - startedAt >= 20);
+});
+
+test('controlled file steps copy, read, write and delete only inside allowed roots', async (t) => {
+  const workingDirectory = await mkdtemp(path.join(os.tmpdir(), 'script-factory-controlled-files-'));
+  t.after(() => rm(workingDirectory, { recursive: true, force: true }));
+  await mkdir(path.join(workingDirectory, 'incoming'));
+  await writeFile(path.join(workingDirectory, 'incoming', 'TEST_source.txt'), 'source');
+  const registry = createDefaultStepRegistry({ workingDirectory, allowedRoots: [workingDirectory] });
+
+  const result = await executeScript({
+    registry,
+    script: {
+      steps: [
+        { action: 'copy_files', params: { files: ['./incoming/TEST_source.txt'], destination: './archive' } },
+        { action: 'write_text_file', params: { path: './out/result.txt', content: 'готово' } },
+        { action: 'read_text_file', params: { path: './out/result.txt' } },
+        { action: 'delete_files', params: { files: ['./archive/TEST_source.txt'], confirm: true } }
+      ]
+    }
+  });
+
+  assert.equal(result.context.file_content, 'готово');
+  assert.equal(await readFile(path.join(workingDirectory, 'out', 'result.txt'), 'utf8'), 'готово');
+  assert.deepEqual(await readdir(path.join(workingDirectory, 'archive')), []);
+
+  await assert.rejects(
+    executeScript({
+      registry,
+      script: { steps: [{ action: 'read_text_file', params: { path: path.resolve(workingDirectory, '..', 'outside.txt') } }] }
+    }),
+    (error) => error.code === 'FILESYSTEM_ACCESS_DENIED'
+  );
 });
 
 for (const scenario of [

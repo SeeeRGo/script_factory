@@ -1,7 +1,9 @@
 import http from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { statfsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
+import os from 'node:os';
 import path from 'node:path';
 import { URL } from 'node:url';
 import {
@@ -44,6 +46,16 @@ const SWAGGER_LOCALIZATION_FILE = path.join(process.cwd(), 'swagger-ru.js');
 const NOVNC_PROXY_PREFIX = '/browser-live';
 const NOVNC_INTERNAL_PORT = Number(process.env.NOVNC_INTERNAL_PORT || 33303);
 const PERSIST_DEBOUNCE_MS = Number(process.env.PERSIST_DEBOUNCE_MS || 50);
+const CALLBACK_AUTH_TOKEN = process.env.CALLBACK_AUTH_TOKEN || '';
+const DEMO_1C_CALLBACK_ENABLED = process.env.DEMO_1C_CALLBACK_ENABLED === 'true';
+const CALLBACK_ALLOWED_ORIGINS = String(process.env.CALLBACK_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const FILESYSTEM_ALLOWED_ROOTS = String(process.env.FILESYSTEM_ALLOWED_ROOTS || '')
+  .split(path.delimiter)
+  .map((root) => root.trim())
+  .filter(Boolean);
 const CORS_ALLOWED_HEADERS = 'X-API-Key, Idempotency-Key, Content-Type, Accept, Origin, Authorization';
 const CORS_ALLOWED_METHODS = 'GET, POST, PUT, OPTIONS';
 const webSessions = new Map();
@@ -63,10 +75,20 @@ const state = {
   queue: [],
   running: new Set(),
   controllers: new Map(),
+  callbackTimers: new Map(),
+  demoCallbackEvents: [],
+  demoCallbackFailures: new Set(),
   activeCount: 0
 };
 
-const stepRegistry = createDefaultStepRegistry();
+const stepRegistry = createDefaultStepRegistry({
+  allowedRoots: FILESYSTEM_ALLOWED_ROOTS.length > 0
+    ? FILESYSTEM_ALLOWED_ROOTS
+    : [process.cwd(), DATA_DIR]
+});
+
+let previousCpuSample = { usage: process.cpuUsage(), time: process.hrtime.bigint() };
+let previousSystemCpuSample = os.cpus().map((cpu) => ({ ...cpu.times }));
 
 let persistTimer = null;
 let persistRequested = false;
@@ -249,6 +271,7 @@ function buildJobSnapshot(job) {
     finished_at: job.finished_at,
     result: job.result,
     error: job.error,
+    callback_delivery: job.callback_delivery,
     cancellation_requested: job.cancellation_requested,
     execution: job.execution,
     logs: job.logs
@@ -271,6 +294,7 @@ function restoreJob(snapshot) {
     finished_at: snapshot.finished_at || null,
     result: snapshot.result ?? null,
     error: snapshot.error ?? null,
+    callback_delivery: snapshot.callback_delivery ?? null,
     cancellation_requested: Boolean(snapshot.cancellation_requested),
     execution: restoreExecution(snapshot.execution, snapshot.request?.script),
     logs: Array.isArray(snapshot.logs) ? snapshot.logs : []
@@ -638,6 +662,7 @@ function logJob(job, level, message, details = undefined) {
 }
 
 function createJobRecord(payload) {
+  const callback = payload.callback;
   const job = {
     job_id: `job_${randomUUID()}`,
     uid: payload.uid,
@@ -657,6 +682,16 @@ function createJobRecord(payload) {
     finished_at: null,
     result: null,
     error: null,
+    callback_delivery: callback ? {
+      status: 'pending',
+      url: callback.url,
+      attempts: 0,
+      max_attempts: callback.max_attempts ?? 5,
+      last_http_status: null,
+      next_retry_at: null,
+      delivered_at: null,
+      error: null
+    } : null,
     cancellation_requested: false,
     execution: createExecution(payload.script),
     logs: []
@@ -682,6 +717,7 @@ function summarizeJob(job) {
     started_at: job.started_at,
     finished_at: job.finished_at,
     error: job.error,
+    callback_delivery: job.callback_delivery,
     result: job.result,
     execution: job.execution
   };
@@ -731,6 +767,109 @@ function serializeJobError(error) {
     ...(typeof error?.action === 'string' ? { action: error.action } : {}),
     ...(error?.details === undefined ? {} : { details: error.details })
   };
+}
+
+const TERMINAL_JOB_STATUSES = new Set(['success', 'failed', 'validation_failed', 'cancelled', 'timeout']);
+
+function validateCallbackOrigin(value) {
+  const url = new URL(value);
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw createApiError('INVALID_CALLBACK', 'callback.url должен использовать http или https', 400, false);
+  }
+  if (CALLBACK_ALLOWED_ORIGINS.length > 0 && !CALLBACK_ALLOWED_ORIGINS.includes(url.origin)) {
+    throw createApiError('CALLBACK_ORIGIN_DENIED', `Адрес callback не входит в CALLBACK_ALLOWED_ORIGINS: ${url.origin}`, 400, false);
+  }
+  return url;
+}
+
+function callbackEvent(job) {
+  return {
+    event_id: `${job.job_id}:${job.status}:${job.finished_at}`,
+    event: 'job.completed',
+    occurred_at: job.finished_at,
+    job: summarizeJob(job)
+  };
+}
+
+async function deliverResultCallback(job) {
+  const delivery = job.callback_delivery;
+  if (!delivery || delivery.status === 'delivered' || !TERMINAL_JOB_STATUSES.has(job.status)) return;
+  if (delivery.attempts >= delivery.max_attempts) return;
+
+  delivery.status = 'delivering';
+  delivery.attempts += 1;
+  delivery.next_retry_at = null;
+  delivery.error = null;
+  logJob(job, 'info', 'Отправка результата в 1С', {
+    callback_url: delivery.url,
+    callback_attempt: delivery.attempts,
+    callback_max_attempts: delivery.max_attempts
+  });
+
+  const callback = job.request.callback;
+  const controller = new AbortController();
+  const timeoutMs = callback.timeout_ms ?? 5000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(validateCallbackOrigin(delivery.url), {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Script-Factory-Event': 'job.completed',
+        'Idempotency-Key': `${job.job_id}:${job.status}:${job.finished_at}`,
+        ...(CALLBACK_AUTH_TOKEN ? { Authorization: `Bearer ${CALLBACK_AUTH_TOKEN}` } : {})
+      },
+      body: JSON.stringify(callbackEvent(job))
+    });
+    delivery.last_http_status = response.status;
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    delivery.status = 'delivered';
+    delivery.delivered_at = nowIso();
+    logJob(job, 'info', 'Результат доставлен в 1С', {
+      callback_attempt: delivery.attempts,
+      http_status: response.status
+    });
+  } catch (error) {
+    delivery.error = {
+      code: error?.name === 'AbortError' ? 'CALLBACK_TIMEOUT' : 'CALLBACK_DELIVERY_ERROR',
+      message: error?.name === 'AbortError'
+        ? `Callback не ответил за ${timeoutMs} мс`
+        : error?.message || 'Ошибка доставки результата'
+    };
+    if (delivery.attempts >= delivery.max_attempts) {
+      delivery.status = 'failed';
+      logJob(job, 'error', 'Не удалось доставить результат в 1С', delivery.error);
+    } else {
+      delivery.status = 'retrying';
+      const backoffMs = Math.min(
+        (callback.backoff_ms ?? 1000) * (2 ** (delivery.attempts - 1)),
+        60_000
+      );
+      delivery.next_retry_at = new Date(Date.now() + backoffMs).toISOString();
+      logJob(job, 'warn', 'Callback результата будет повторён', {
+        ...delivery.error,
+        backoff_ms: backoffMs
+      });
+      scheduleResultCallback(job, backoffMs);
+    }
+  } finally {
+    clearTimeout(timeout);
+    schedulePersist();
+  }
+}
+
+function scheduleResultCallback(job, delayMs = 0) {
+  if (!job.callback_delivery || !TERMINAL_JOB_STATUSES.has(job.status)) return;
+  if (job.callback_delivery.status === 'delivered' || job.callback_delivery.attempts >= job.callback_delivery.max_attempts) return;
+  if (state.callbackTimers.has(job.job_id)) clearTimeout(state.callbackTimers.get(job.job_id));
+  const timer = setTimeout(() => {
+    state.callbackTimers.delete(job.job_id);
+    void deliverResultCallback(job);
+  }, Math.max(0, delayMs));
+  timer.unref?.();
+  state.callbackTimers.set(job.job_id, timer);
 }
 
 function applyInterpreterEvent(job, event) {
@@ -1018,6 +1157,7 @@ function drainQueue() {
       .finally(() => {
         state.activeCount -= 1;
         state.running.delete(jobId);
+        scheduleResultCallback(job);
         drainQueue();
       });
   }
@@ -1089,6 +1229,8 @@ function buildHealthResponse(requestId) {
     browser_replay: {
       available: true,
       engine: '@puppeteer/replay',
+      browser_product: process.env.BROWSER_PRODUCT || 'chromium-compatible',
+      executable_path: process.env.PUPPETEER_EXECUTABLE_PATH || null,
       headless,
       step_delay_ms: Number(process.env.BROWSER_STEP_DELAY_MS || 0),
       captcha_wait_ms: Number(process.env.BROWSER_CAPTCHA_WAIT_MS || 0),
@@ -1105,16 +1247,67 @@ function buildHealthResponse(requestId) {
 
 function buildSystemResources() {
   const headless = process.env.BROWSER_HEADLESS !== 'false';
+  const memoryUsage = process.memoryUsage();
+  const totalMemory = os.totalmem();
+  const freeMemory = os.freemem();
+  const cpuUsage = process.cpuUsage();
+  const cpuTime = process.hrtime.bigint();
+  const elapsedMicros = Math.max(1, Number(cpuTime - previousCpuSample.time) / 1000);
+  const processCpuPercent = ((cpuUsage.user - previousCpuSample.usage.user)
+    + (cpuUsage.system - previousCpuSample.usage.system)) / elapsedMicros * 100;
+  previousCpuSample = { usage: cpuUsage, time: cpuTime };
+  const cpuList = os.cpus();
+  let deltaIdle = 0;
+  let deltaTotal = 0;
+  cpuList.forEach((cpu, index) => {
+    const previous = previousSystemCpuSample[index] ?? cpu.times;
+    const currentTotal = Object.values(cpu.times).reduce((sum, value) => sum + value, 0);
+    const previousTotal = Object.values(previous).reduce((sum, value) => sum + value, 0);
+    deltaIdle += cpu.times.idle - previous.idle;
+    deltaTotal += currentTotal - previousTotal;
+  });
+  previousSystemCpuSample = cpuList.map((cpu) => ({ ...cpu.times }));
+  const systemCpuPercent = deltaTotal > 0 ? (1 - deltaIdle / deltaTotal) * 100 : 0;
+  let disk = null;
+  try {
+    const diskStat = statfsSync(DATA_DIR);
+    const totalBytes = diskStat.blocks * diskStat.bsize;
+    const freeBytes = diskStat.bavail * diskStat.bsize;
+    disk = {
+      path: DATA_DIR,
+      total_bytes: totalBytes,
+      free_bytes: freeBytes,
+      used_percent: totalBytes > 0 ? Math.round((1 - freeBytes / totalBytes) * 1000) / 10 : 0
+    };
+  } catch {
+    // Resource reporting must not make the health endpoint unavailable.
+  }
   return {
     un_id: UN_ID,
     uptime_seconds: Math.floor((Date.now() - state.startedAt) / 1000),
-    memory_usage: process.memoryUsage(),
+    cpu: {
+      logical_cores: cpuList.length,
+      system_percent: Math.round(systemCpuPercent * 10) / 10,
+      process_percent: Math.round(processCpuPercent * 10) / 10,
+      load_average: os.loadavg()
+    },
+    memory: {
+      total_bytes: totalMemory,
+      free_bytes: freeMemory,
+      used_percent: totalMemory > 0 ? Math.round((1 - freeMemory / totalMemory) * 1000) / 10 : 0,
+      process_rss_bytes: memoryUsage.rss,
+      process_heap_used_bytes: memoryUsage.heapUsed
+    },
+    disk,
+    memory_usage: memoryUsage,
     jobs_total: state.jobs.size,
     jobs_running: state.running.size,
     jobs_queued: state.queue.length,
     queue: buildQueueHealth(),
     browser_replay: {
       available: true,
+      browser_product: process.env.BROWSER_PRODUCT || 'chromium-compatible',
+      executable_path: process.env.PUPPETEER_EXECUTABLE_PATH || null,
       headless,
       step_delay_ms: Number(process.env.BROWSER_STEP_DELAY_MS || 0),
       captcha_wait_ms: Number(process.env.BROWSER_CAPTCHA_WAIT_MS || 0),
@@ -1189,6 +1382,34 @@ function validateJobPayload(payload) {
       }
     }
   }
+  if (payload.callback !== undefined) {
+    const callback = payload.callback;
+    if (!callback || typeof callback !== 'object' || Array.isArray(callback)) {
+      errors.push({ path: 'callback', message: 'callback должен быть объектом' });
+    } else {
+      if (typeof callback.url !== 'string' || !callback.url.trim()) {
+        errors.push({ path: 'callback.url', message: 'callback.url должен быть непустой строкой' });
+      } else {
+        try {
+          validateCallbackOrigin(callback.url);
+        } catch (error) {
+          errors.push({ path: 'callback.url', message: error.message });
+        }
+      }
+      if (callback.max_attempts !== undefined
+        && (!Number.isInteger(callback.max_attempts) || callback.max_attempts < 1 || callback.max_attempts > 20)) {
+        errors.push({ path: 'callback.max_attempts', message: 'max_attempts должен быть целым числом от 1 до 20' });
+      }
+      if (callback.backoff_ms !== undefined
+        && (!Number.isInteger(callback.backoff_ms) || callback.backoff_ms < 0 || callback.backoff_ms > 60_000)) {
+        errors.push({ path: 'callback.backoff_ms', message: 'backoff_ms должен быть целым числом от 0 до 60000' });
+      }
+      if (callback.timeout_ms !== undefined
+        && (!Number.isInteger(callback.timeout_ms) || callback.timeout_ms < 1 || callback.timeout_ms > 60_000)) {
+        errors.push({ path: 'callback.timeout_ms', message: 'timeout_ms должен быть целым числом от 1 до 60000' });
+      }
+    }
+  }
   return errors;
 }
 
@@ -1203,6 +1424,26 @@ const server = http.createServer(async (req, res) => {
 
     if (pathname === '/health') {
       sendJson(res, 200, buildHealthResponse(requestId));
+      return;
+    }
+
+    if (method === 'POST' && pathname === '/demo/1c/callback' && DEMO_1C_CALLBACK_ENABLED) {
+      if (CALLBACK_AUTH_TOKEN && req.headers.authorization !== `Bearer ${CALLBACK_AUTH_TOKEN}`) {
+        sendJson(res, 401, { error: { code: 'INVALID_CALLBACK_TOKEN', message: 'Неверный callback-токен' } });
+        return;
+      }
+      const event = await readJsonBody(req);
+      const failOnceKey = requestUrl.searchParams.get('fail_once');
+      if (failOnceKey && !state.demoCallbackFailures.has(failOnceKey)) {
+        state.demoCallbackFailures.add(failOnceKey);
+        sendJson(res, 503, { error: { code: 'DEMO_CALLBACK_FAILURE', message: 'Первая попытка отклонена для демонстрации retry' } });
+        return;
+      }
+      if (!state.demoCallbackEvents.some((item) => item.event_id === event.event_id)) {
+        state.demoCallbackEvents.push(event);
+      }
+      res.writeHead(204);
+      res.end();
       return;
     }
 
@@ -1330,6 +1571,11 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (method === 'GET' && resourcePath === '/demo/callback-events' && DEMO_1C_CALLBACK_ENABLED) {
+      sendJson(res, 200, { items: state.demoCallbackEvents });
+      return;
+    }
+
     if (method === 'GET' && resourcePath === '/jobs') {
       const status = requestUrl.searchParams.get('status');
       const limit = Math.max(1, Number(requestUrl.searchParams.get('limit') || 100));
@@ -1431,6 +1677,7 @@ const server = http.createServer(async (req, res) => {
         job.execution.finished_at = job.finished_at;
         logJob(job, 'warn', 'Задание отменено до начала выполнения', job.error);
         schedulePersist();
+        scheduleResultCallback(job);
         sendJson(res, 200, { job: summarizeJob(job), cancelled: true });
         return;
       }
@@ -1527,6 +1774,8 @@ async function main() {
   await loadPersistedState();
   schedulePersist();
   await flushPersistence();
+  for (const job of state.jobs.values()) scheduleResultCallback(job);
+  drainQueue();
 
   server.listen(PORT, HOST, () => {
     console.log(`script-factory listening on http://${HOST}:${PORT}`);
@@ -1539,6 +1788,8 @@ async function shutdown(code = 0) {
     clearTimeout(persistTimer);
     persistTimer = null;
   }
+  for (const timer of state.callbackTimers.values()) clearTimeout(timer);
+  state.callbackTimers.clear();
   if (db) {
     db.close();
     db = null;

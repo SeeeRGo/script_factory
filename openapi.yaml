@@ -1,9 +1,11 @@
 openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
-  description: Управление очередью и выполнением JSON-сценариев, включая нативные записи Chrome Recorder через Puppeteer Replay.
-  version: 0.2.0
+  description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
+  version: 0.3.0
 servers:
+  - url: http://TEST_UN_HOST:33001/api/v2
+    description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
   - url: http://localhost:33001/api/v2
     description: API в Docker Compose
   - url: /api/v2
@@ -50,7 +52,7 @@ components:
           description: Объяснение действия и ожидаемого результата шага.
         action:
           type: string
-          enum: [noop, check_ip, launch_browser, navigate, auth_ecp, find_files, upload_files, download_files, validate_report, submit_if_valid, move_files]
+          enum: [noop, wait, check_ip, launch_browser, navigate, auth_ecp, find_files, upload_files, download_files, validate_report, submit_if_valid, move_files, copy_files, read_text_file, write_text_file, delete_files]
           example: find_files
         params:
           type: object
@@ -64,7 +66,7 @@ components:
         duration_ms:
           type: number
           minimum: 0
-          description: Длительность тестового действия для демо этапа 2.
+          description: Длительность действия; для явного ожидания используйте action=wait и params.duration_ms.
           example: 250
         delay_ms:
           type: number
@@ -126,6 +128,30 @@ components:
       oneOf:
         - $ref: '#/components/schemas/PuppeteerReplayScript'
         - $ref: '#/components/schemas/JsonScript'
+    CallbackConfig:
+      type: object
+      required: [url]
+      description: Доставка финального результата в HTTP-сервис 1С. Авторизация задаётся на УН через CALLBACK_AUTH_TOKEN.
+      properties:
+        url:
+          type: string
+          format: uri
+          example: http://1c-test.local/script-factory/result
+        max_attempts:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 5
+        backoff_ms:
+          type: integer
+          minimum: 0
+          maximum: 60000
+          default: 1000
+        timeout_ms:
+          type: integer
+          minimum: 1
+          maximum: 60000
+          default: 5000
     JobCreateRequest:
       type: object
       properties:
@@ -142,6 +168,8 @@ components:
           example: 30000
         retry_policy:
           $ref: '#/components/schemas/RetryPolicy'
+        callback:
+          $ref: '#/components/schemas/CallbackConfig'
         context:
           type: object
           additionalProperties: true
@@ -347,6 +375,11 @@ components:
               type: boolean
             engine:
               type: string
+            browser_product:
+              type: string
+            executable_path:
+              type: string
+              nullable: true
             headless:
               type: boolean
             step_delay_ms:
@@ -372,6 +405,31 @@ components:
           type: string
         uptime_seconds:
           type: integer
+        cpu:
+          type: object
+          properties:
+            logical_cores: { type: integer }
+            system_percent: { type: number }
+            process_percent: { type: number }
+            load_average:
+              type: array
+              items: { type: number }
+        memory:
+          type: object
+          properties:
+            total_bytes: { type: integer }
+            free_bytes: { type: integer }
+            used_percent: { type: number }
+            process_rss_bytes: { type: integer }
+            process_heap_used_bytes: { type: integer }
+        disk:
+          type: object
+          nullable: true
+          properties:
+            path: { type: string }
+            total_bytes: { type: integer }
+            free_bytes: { type: integer }
+            used_percent: { type: number }
         memory_usage:
           type: object
           additionalProperties: true
@@ -425,6 +483,20 @@ components:
           $ref: '#/components/schemas/JobResult'
         error:
           $ref: '#/components/schemas/ErrorBody'
+        callback_delivery:
+          type: object
+          nullable: true
+          description: Состояние асинхронной доставки финального результата в 1С.
+          properties:
+            status:
+              type: string
+              enum: [pending, delivering, retrying, delivered, failed]
+            url: { type: string }
+            attempts: { type: integer }
+            max_attempts: { type: integer }
+            last_http_status: { type: integer, nullable: true }
+            next_retry_at: { type: string, format: date-time, nullable: true }
+            delivered_at: { type: string, format: date-time, nullable: true }
         execution:
           $ref: '#/components/schemas/Execution'
     JobResponse:
@@ -526,6 +598,34 @@ paths:
             schema:
               $ref: '#/components/schemas/JobCreateRequest'
             examples:
+              stage4OneC:
+                summary: Этап 4 — управляемая задержка и возврат результата в 1С
+                value:
+                  uid: 1c-stage4-delay-001
+                  priority: 30
+                  timeout_ms: 120000
+                  retry_policy: { max_attempts: 2, backoff_ms: 1000 }
+                  context:
+                    delay_ms: 15000
+                  callback:
+                    url: http://1c-test.local:8080/script-factory/result
+                    max_attempts: 5
+                    backoff_ms: 1000
+                    timeout_ms: 5000
+                  script:
+                    default_step_timeout_ms: 60000
+                    steps:
+                      - id: accept
+                        title: Принять параметры из 1С
+                        description: Фиксирует начало обработки задания.
+                        action: noop
+                        duration_ms: 100
+                      - id: controlled-delay
+                        title: Управляемая задержка
+                        description: Ожидает указанное 1С время без внешних действий.
+                        action: wait
+                        params: { duration_ms: "{{delay_ms}}" }
+                        timeout_ms: 60000
               browserReplay:
                 summary: Нативный Chrome Recorder JSON — реальная отправка Yahoo → Gmail
                 value:
@@ -666,6 +766,12 @@ paths:
                         timeout_ms: 250
                         delay_ms: 1200
       responses:
+        "200":
+          description: "Ранее созданное задание с тем же uid/Idempotency-Key (idempotent=true)"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
         "201":
           description: Задание создано
           content:

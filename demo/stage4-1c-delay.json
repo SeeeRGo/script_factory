@@ -1,0 +1,63 @@
+{
+  "uid": "1c-stage4-delay-001",
+  "priority": 30,
+  "timeout_ms": 120000,
+  "retry_policy": {
+    "max_attempts": 2,
+    "backoff_ms": 1000
+  },
+  "context": {
+    "delay_ms": 15000,
+    "input_dir": "./work/incoming",
+    "archive_dir": "./work/archive"
+  },
+  "callback": {
+    "url": "http://1c-test.local:8080/script-factory/result",
+    "max_attempts": 5,
+    "backoff_ms": 1000,
+    "timeout_ms": 5000
+  },
+  "script": {
+    "default_step_timeout_ms": 60000,
+    "steps": [
+      {
+        "id": "accept",
+        "title": "Принять параметры из 1С",
+        "description": "Фиксирует начало задания и переданные 1С параметры.",
+        "action": "noop",
+        "params": {},
+        "duration_ms": 100
+      },
+      {
+        "id": "controlled-delay",
+        "title": "Управляемая задержка",
+        "description": "Ожидает указанное в context.delay_ms время без внешних действий.",
+        "action": "wait",
+        "params": {
+          "duration_ms": "{{delay_ms}}"
+        },
+        "timeout_ms": 60000
+      },
+      {
+        "id": "find-input",
+        "title": "Проверить входной каталог",
+        "description": "Ищет тестовые XML-файлы внутри разрешённого каталога УН.",
+        "action": "find_files",
+        "params": {
+          "directory": "{{input_dir}}",
+          "prefixes": ["TEST_"]
+        }
+      },
+      {
+        "id": "archive",
+        "title": "Скопировать файлы в архив",
+        "description": "Копирует найденные файлы, сохраняя исходники для повторного запуска.",
+        "action": "copy_files",
+        "params": {
+          "files": "{{found_files}}",
+          "destination": "{{archive_dir}}"
+        }
+      }
+    ]
+  }
+}

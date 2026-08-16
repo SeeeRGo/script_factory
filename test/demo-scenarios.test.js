@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import test from 'node:test';
 
 import { blankScenario, demoScenarios } from '../public/scenarios.js';
 import { validateScript } from '../src/interpreter.js';
 
-test('homepage demo route includes Stage 3 and remains short enough to present', () => {
+test('homepage demo route keeps the Stage 3 browser workloads short enough for the Stage 4 presentation', () => {
   assert.ok(demoScenarios.length >= 5);
   assert.equal(new Set(demoScenarios.map((scenario) => scenario.id)).size, demoScenarios.length);
   assert.ok(demoScenarios.reduce((total, scenario) => total + Number.parseInt(scenario.talkTime, 10), 0) <= 20);
@@ -122,4 +124,20 @@ test('blank editor template is a valid starting point', () => {
   assert.equal(blankScenario.script.title, 'Новый сценарий Chrome Recorder');
   assert.equal(blankScenario.script.steps.length, 2);
   assert.ok(blankScenario.script.steps.every((step) => step.title && step.description));
+});
+
+test('Stage 4 request fixture contains a configurable wait, file work and result callback', async () => {
+  const payload = JSON.parse(await readFile(
+    path.resolve(import.meta.dirname, '../demo/stage4-1c-delay.json'),
+    'utf8'
+  ));
+  assert.deepEqual(validateScript(payload.script), []);
+  assert.equal(payload.uid, '1c-stage4-delay-001');
+  assert.equal(payload.context.delay_ms, 15000);
+  assert.match(payload.callback.url, /^http:/);
+  assert.ok(payload.script.steps.every((step) => step.title && step.description));
+  const wait = payload.script.steps.find((step) => step.action === 'wait');
+  assert.equal(wait.params.duration_ms, '{{delay_ms}}');
+  assert.ok(payload.script.steps.some((step) => step.action === 'find_files'));
+  assert.ok(payload.script.steps.some((step) => step.action === 'copy_files'));
 });

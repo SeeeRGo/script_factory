@@ -1,13 +1,15 @@
-# Script Factory · Stage 3
+# Script Factory · Stage 4
 
-Stage 3 of the distributed script execution service described in `plan-realizacii.md`.
+Stage 4 of the distributed script execution service described in `plan-realizacii.md`.
 The service accepts native Chrome DevTools Recorder JSON, validates it with
 `@puppeteer/replay`, executes it in real Chromium through the persistent priority queue,
-and exposes step-by-step progress, logs, identifiers, and screenshot artifacts. The
-Stage 2 JSON-steps interpreter remains backward compatible.
+and exposes step-by-step progress, logs, identifiers, screenshot artifacts, host resource
+metrics, parallel execution, controlled filesystem actions, and reliable HTTP result
+callbacks for 1C. The Stage 2 JSON-steps interpreter remains backward compatible.
 
-Документация этапа 3:
+Документация этапа 4 и предыдущих демонстраций:
 
+- [контракт интеграции с 1С, Windows-УН, задержка, callback и нагрузочное демо](docs/stage-4-1c-integration.md);
 - [как записывать и передавать новые браузерные сценарии](docs/script-creation.md);
 - [готовый 15-минутный план демонстрации](docs/demo-stage-3.md);
 - [живой показ Chromium через SSH и noVNC](docs/novnc-demo.md);
@@ -99,7 +101,7 @@ The interpreter validates scripts before they enter the queue. Each step support
 - `timeout_ms`: optional per-step timeout;
 - `duration_ms`: mock adapter duration for Stage 2 demonstrations and tests.
 
-Registered actions are `noop`, `check_ip`, `launch_browser`, `navigate`, `auth_ecp`, `find_files`, `upload_files`, `download_files`, `validate_report`, `submit_if_valid`, and `move_files`. `GET /api/v2/interpreter/actions` returns the runtime registry.
+Registered actions are `noop`, `wait`, `check_ip`, `launch_browser`, `navigate`, `auth_ecp`, `find_files`, `upload_files`, `download_files`, `validate_report`, `submit_if_valid`, `move_files`, `copy_files`, `read_text_file`, `write_text_file`, and `delete_files`. `GET /api/v2/interpreter/actions` returns the runtime registry.
 
 Exact context expressions preserve their JSON type, so `"{{found_files}}"` resolves to an array rather than a string. Step outputs are merged into the context for subsequent steps. The execution result returns the final context.
 
@@ -110,6 +112,8 @@ result also includes `job_id`, `uid`, and `un_id`.
 The normalized workflow errors are `IP_MISMATCH`, `FILE_NOT_FOUND`, `AUTH_ERROR`,
 `UPLOAD_ERROR`, `DOWNLOAD_ERROR`, `VALIDATION_ERROR`, `TIMEOUT_ERROR`,
 `PLUGIN_NOT_RUNNING`, `BROWSER_LAUNCH_ERROR`, and `BROWSER_REPLAY_ERROR`.
+Controlled filesystem operations additionally return `FILESYSTEM_ACCESS_DENIED`,
+`FILE_TOO_LARGE`, and `DELETE_CONFIRMATION_REQUIRED`.
 SmartCaptcha Яндекса возвращает отдельный `CAPTCHA_REQUIRED`. В headed/noVNC-режиме
 исполнитель сначала ждёт ручное подтверждение в течение `BROWSER_CAPTCHA_WAIT_MS`; в
 headless-режиме ошибка возвращается немедленно, без ожидания обычного тайм-аута шага.

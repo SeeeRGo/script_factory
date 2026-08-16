@@ -25,7 +25,7 @@ COPY openapi.yaml ./
 COPY swagger-ru.js ./
 COPY docker/start.sh /usr/local/bin/start-script-factory
 
-RUN mkdir -p /app/data /app/demo-data/incoming /app/demo-data/loaded /app/demo-data/empty \
+RUN mkdir -p /app/data /app/demo-data/incoming /app/demo-data/loaded /app/demo-data/empty /app/work/incoming /app/work/archive \
     && cp -R /app/demo/fixtures/. /app/demo-data/incoming/ \
     && chmod +x /usr/local/bin/start-script-factory
 

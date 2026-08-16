@@ -125,6 +125,25 @@
         margin-top: 18px;
       }
 
+      .resources {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+        margin-top: 14px;
+      }
+
+      .resource-card {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(8, 17, 31, 0.7);
+        padding: 14px 16px;
+      }
+
+      .resource-head { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 12px; }
+      .resource-value { color: var(--text); font-weight: 750; }
+      .resource-track { overflow: hidden; height: 7px; margin-top: 10px; border-radius: 99px; background: rgba(148, 163, 184, 0.13); }
+      .resource-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), var(--cyan)); transition: width 300ms ease; }
+
       .kpi {
         position: relative;
         overflow: hidden;
@@ -220,6 +239,7 @@
       @media (max-width: 920px) {
         .topbar, .connection-bar { align-items: stretch; flex-direction: column; }
         .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .resources { grid-template-columns: 1fr; }
         .board { grid-template-columns: 1fr; }
         .column { min-height: 180px; }
       }
@@ -272,6 +292,12 @@
         <article class="kpi" style="--accent: var(--amber)"><div class="kpi-label"><span class="kpi-icon">●</span>Ожидают</div><div class="kpi-value" id="kpi-queued">—</div><div class="kpi-note">с учётом приоритета</div></article>
         <article class="kpi" style="--accent: var(--cyan)"><div class="kpi-label"><span class="kpi-icon">▶</span>В работе</div><div class="kpi-value" id="kpi-active">—</div><div class="kpi-note">включая повторы</div></article>
         <article class="kpi" style="--accent: var(--green)"><div class="kpi-label"><span class="kpi-icon">✓</span>Успешно</div><div class="kpi-value" id="kpi-success">—</div><div class="kpi-note" id="success-rate">за всё время</div></article>
+      </section>
+
+      <section class="resources" aria-label="Ресурсы тестовой УН">
+        <article class="resource-card"><div class="resource-head"><span>CPU тестовой УН</span><span class="resource-value" id="resource-cpu">—</span></div><div class="resource-track"><div class="resource-fill" id="resource-cpu-fill" style="width:0%"></div></div></article>
+        <article class="resource-card"><div class="resource-head"><span>Оперативная память</span><span class="resource-value" id="resource-memory">—</span></div><div class="resource-track"><div class="resource-fill" id="resource-memory-fill" style="width:0%"></div></div></article>
+        <article class="resource-card"><div class="resource-head"><span>Параллельные слоты</span><span class="resource-value" id="resource-slots">—</span></div><div class="resource-track"><div class="resource-fill" id="resource-slots-fill" style="width:0%"></div></div></article>
       </section>
 
       <section class="board">
@@ -384,16 +410,32 @@
         renderList(elements['finished-list'], finished, 'Нет завершённых заданий');
       }
 
+      function renderResources(resources) {
+        const cpu = Math.max(0, Math.min(100, Number(resources.cpu?.system_percent || 0)));
+        const memory = Math.max(0, Math.min(100, Number(resources.memory?.used_percent || 0)));
+        const running = Number(resources.queue?.running || 0);
+        const capacity = Math.max(1, Number(resources.queue?.max_parallel_jobs || 1));
+        const slots = Math.max(0, Math.min(100, running / capacity * 100));
+        elements['resource-cpu'].textContent = `${cpu.toFixed(1)}%`;
+        elements['resource-memory'].textContent = `${memory.toFixed(1)}%`;
+        elements['resource-slots'].textContent = `${running} / ${capacity}`;
+        elements['resource-cpu-fill'].style.width = `${cpu}%`;
+        elements['resource-memory-fill'].style.width = `${memory}%`;
+        elements['resource-slots-fill'].style.width = `${slots}%`;
+      }
+
       async function refresh() {
         try {
-          const [data, health] = await Promise.all([
+          const [data, health, resources] = await Promise.all([
             api('/api/v2/jobs?limit=100'),
             fetch('/health').then((response) => {
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
               return response.json();
-            })
+            }),
+            api('/api/v2/system/resources')
           ]);
           render(data.items, data.total);
+          renderResources(resources);
           elements['status-dot'].className = 'status-dot online';
           elements['connection-text'].textContent = `УН ${health.un_id} · в работе ${health.queue.running} · в очереди ${health.queue.queued}`;
           elements['updated-at'].textContent = `· обновлено ${formatDate(new Date())}`;

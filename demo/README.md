@@ -1,5 +1,10 @@
 # Демо этапа 2: JSON-steps Interpreter
 
+Актуальный маршрут этапа 4 (1С, callback, Windows/Яндекс Браузер, ресурсы,
+параллельность и файловая система) находится в
+[`docs/stage-4-1c-integration.md`](../docs/stage-4-1c-integration.md). Для его
+нагрузочной части используйте `npm run demo:stage4:parallel`.
+
 ## Цель
 
 За 12 минут доказать четыре свойства системы:

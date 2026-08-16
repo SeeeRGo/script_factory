@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, rename, unlink } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parsePuppeteerReplay } from '@puppeteer/replay';
 
@@ -15,7 +15,10 @@ export const ERROR_CODES = Object.freeze({
   PLUGIN_NOT_RUNNING: 'PLUGIN_NOT_RUNNING',
   BROWSER_LAUNCH_ERROR: 'BROWSER_LAUNCH_ERROR',
   BROWSER_REPLAY_ERROR: 'BROWSER_REPLAY_ERROR',
-  CAPTCHA_REQUIRED: 'CAPTCHA_REQUIRED'
+  CAPTCHA_REQUIRED: 'CAPTCHA_REQUIRED',
+  FILESYSTEM_ACCESS_DENIED: 'FILESYSTEM_ACCESS_DENIED',
+  FILE_TOO_LARGE: 'FILE_TOO_LARGE',
+  DELETE_CONFIRMATION_REQUIRED: 'DELETE_CONFIRMATION_REQUIRED'
 });
 
 export class InterpreterError extends Error {
@@ -145,14 +148,44 @@ function downloadedFileArtifact(file, index, input) {
   };
 }
 
+function pathInsideRoot(candidate, root) {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function filesystemAccessError(candidate, allowedRoots) {
+  return new InterpreterError(ERROR_CODES.FILESYSTEM_ACCESS_DENIED, `Путь недоступен для сценария: ${candidate}`, {
+    statusCode: 403,
+    details: { path: candidate, allowed_roots: allowedRoots }
+  });
+}
+
 export function createDefaultStepRegistry(options = {}) {
   const workingDirectory = options.workingDirectory || process.cwd();
-  const resolvePath = (value) => path.isAbsolute(value) ? value : path.resolve(workingDirectory, value);
+  const allowedRoots = (options.allowedRoots?.length ? options.allowedRoots : [workingDirectory])
+    .map((root) => path.resolve(root));
+  const resolvePath = (value) => {
+    const resolved = path.resolve(workingDirectory, value);
+    if (!allowedRoots.some((root) => pathInsideRoot(resolved, root))) {
+      throw filesystemAccessError(resolved, allowedRoots);
+    }
+    return resolved;
+  };
+  const resolveFiles = (files) => (Array.isArray(files) ? files : []).map(resolvePath);
 
   return new StepRegistry()
     .register('noop', async (input) => {
       await simulate(input);
       return { ok: true };
+    })
+    .register('wait', async (input) => {
+      const durationMs = asDelay(
+        input.params.duration_ms ?? input.params.delay_ms
+          ?? input.step.duration_ms ?? input.step.delay_ms,
+        0
+      );
+      await abortableDelay(durationMs, input.signal);
+      return { waited_ms: durationMs };
     })
     .register('check_ip', async (input) => {
       await simulate(input);
@@ -288,9 +321,10 @@ export function createDefaultStepRegistry(options = {}) {
       let movedFiles = files;
       if (loadedDir && input.params.simulate !== true && files.length > 0 && files.every((file) => path.isAbsolute(file))) {
         const destination = resolvePath(loadedDir);
+        const sourceFiles = resolveFiles(files);
         await mkdir(destination, { recursive: true });
         movedFiles = [];
-        for (const file of files) {
+        for (const file of sourceFiles) {
           const target = path.join(destination, path.basename(file));
           try {
             await rename(file, target);
@@ -315,6 +349,76 @@ export function createDefaultStepRegistry(options = {}) {
         }
       }
       return { moved_files: movedFiles, loaded_dir: loadedDir };
+    })
+    .register('copy_files', async (input) => {
+      const files = resolveFiles(input.params.files ?? input.context.found_files);
+      if (files.length === 0) {
+        throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, 'Нет файлов для копирования', { statusCode: 404 });
+      }
+      const destination = resolvePath(input.params.destination ?? input.context.copy_dir ?? '');
+      await mkdir(destination, { recursive: true });
+      const copiedFiles = [];
+      for (const file of files) {
+        const target = path.join(destination, path.basename(file));
+        try {
+          await copyFile(file, target);
+        } catch (error) {
+          throw new InterpreterError(
+            error?.code === 'ENOENT' ? ERROR_CODES.FILE_NOT_FOUND : ERROR_CODES.UPLOAD_ERROR,
+            `Не удалось скопировать файл: ${file}`,
+            { statusCode: error?.code === 'ENOENT' ? 404 : 500, details: { file, target, cause: error?.code } }
+          );
+        }
+        copiedFiles.push(target);
+      }
+      return { copied_files: copiedFiles, copy_dir: destination };
+    })
+    .register('read_text_file', async (input) => {
+      const file = resolvePath(input.params.path);
+      const maxBytes = Math.min(Number(input.params.max_bytes ?? 1_048_576), 10_485_760);
+      const fileStat = await stat(file).catch((error) => {
+        throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, `Файл не найден: ${file}`, {
+          statusCode: 404,
+          details: { file, cause: error?.code }
+        });
+      });
+      if (fileStat.size > maxBytes) {
+        throw new InterpreterError(ERROR_CODES.FILE_TOO_LARGE, `Размер файла превышает лимит ${maxBytes} байт`, {
+          statusCode: 413,
+          details: { file, size_bytes: fileStat.size, max_bytes: maxBytes }
+        });
+      }
+      const encoding = input.params.encoding ?? 'utf8';
+      return { file_path: file, file_content: await readFile(file, encoding), size_bytes: fileStat.size, encoding };
+    })
+    .register('write_text_file', async (input) => {
+      const file = resolvePath(input.params.path);
+      const content = String(input.params.content ?? '');
+      const encoding = input.params.encoding ?? 'utf8';
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, content, { encoding, flag: input.params.overwrite === false ? 'wx' : 'w' });
+      const fileStat = await stat(file);
+      return { written_file: file, size_bytes: fileStat.size, encoding };
+    })
+    .register('delete_files', async (input) => {
+      if (input.params.confirm !== true) {
+        throw new InterpreterError(ERROR_CODES.DELETE_CONFIRMATION_REQUIRED, 'Для удаления файлов требуется params.confirm=true', {
+          statusCode: 400
+        });
+      }
+      const files = resolveFiles(input.params.files ?? input.context.found_files);
+      if (files.length === 0) {
+        throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, 'Нет файлов для удаления', { statusCode: 404 });
+      }
+      for (const file of files) {
+        await unlink(file).catch((error) => {
+          throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, `Не удалось удалить файл: ${file}`, {
+            statusCode: error?.code === 'ENOENT' ? 404 : 500,
+            details: { file, cause: error?.code }
+          });
+        });
+      }
+      return { deleted_files: files, files_deleted: files.length };
     });
 }
 

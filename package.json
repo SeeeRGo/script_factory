@@ -1,6 +1,6 @@
 {
   "name": "script-factory",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Queued JSON automation service with native Chrome Recorder and Puppeteer Replay execution.",
@@ -15,6 +15,7 @@
     "demo:queue": "node demo/queue.mjs",
     "demo:queue:priority-error": "node demo/run-queue-case.mjs priority-error",
     "demo:queue:running-low": "node demo/run-queue-case.mjs running-low",
+    "demo:stage4:parallel": "node demo/stage4-parallel.mjs",
     "demo:success": "node demo/run.mjs success",
     "demo:error": "node demo/run.mjs file-not-found",
     "demo:retry": "node demo/run.mjs retry",

@@ -69,6 +69,8 @@ test.before(async () => {
       DEMO_MAIL_LOGIN,
       DEMO_MAIL_PASSWORD,
       YAHOO_MAIL_PASSWORD: '',
+      CALLBACK_AUTH_TOKEN: 'callback-integration-token',
+      DEMO_1C_CALLBACK_ENABLED: 'true',
       PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
       BROWSER_HEADLESS: 'true',
       DATA_DIR: dataDir
@@ -139,6 +141,11 @@ test('healthcheck exposes this UN and its local queue state', async () => {
   assert.equal(resourcesResponse.status, 200);
   const resources = await resourcesResponse.json();
   assert.equal(resources.un_id, UN_ID);
+  assert.ok(resources.cpu.logical_cores >= 1);
+  assert.ok(resources.cpu.system_percent >= 0);
+  assert.ok(resources.memory.total_bytes > 0);
+  assert.ok(resources.memory.used_percent >= 0);
+  assert.ok(resources.disk === null || resources.disk.total_bytes > 0);
   assert.deepEqual(resources.queue, {
     status: 'idle',
     queued: 0,
@@ -182,13 +189,61 @@ test('healthcheck reflects active and queued jobs on this UN', async () => {
   }
 });
 
+test('runs several jobs in parallel and exposes occupied capacity', async () => {
+  const configResponse = await request('/api/v2/system/config', {
+    method: 'PUT',
+    body: JSON.stringify({ max_parallel_jobs: 3 })
+  });
+  assert.equal(configResponse.status, 200);
+
+  try {
+    const jobIds = [];
+    for (let index = 0; index < 3; index += 1) {
+      const response = await request('/api/v2/jobs', {
+        method: 'POST',
+        body: JSON.stringify({
+          uid: `parallel-${Date.now()}-${index}`,
+          timeout_ms: 2000,
+          script: { steps: [{ action: 'wait', params: { duration_ms: 300 }, timeout_ms: 1000 }] }
+        })
+      });
+      jobIds.push((await response.json()).job.job_id);
+    }
+
+    let resources;
+    const runningDeadline = Date.now() + 1000;
+    while (Date.now() < runningDeadline) {
+      resources = await request('/api/v2/system/resources').then((response) => response.json());
+      if (resources.queue.running === 3) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(resources.queue.running, 3);
+    assert.equal(resources.queue.max_parallel_jobs, 3);
+    assert.equal(resources.queue.available_slots, 0);
+
+    for (const jobId of jobIds) {
+      const deadline = Date.now() + 2000;
+      while (Date.now() < deadline) {
+        const job = await request(`/api/v2/jobs/${jobId}`).then((response) => response.json()).then((body) => body.job);
+        if (job.status === 'success') break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+  } finally {
+    await request('/api/v2/system/config', {
+      method: 'PUT',
+      body: JSON.stringify({ max_parallel_jobs: 1 })
+    });
+  }
+});
+
 test('serves the visual execution studio to an authenticated browser', async () => {
   const response = await webRequest('/');
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /text\/html/);
   const html = await response.text();
-  assert.match(html, /Демо-маршрут этапа 3/);
-  assert.match(html, /Экран Chromium/);
+  assert.match(html, /Демо-маршрут этапа 4/);
+  assert.match(html, /Экран браузера/);
   assert.match(html, /browser-live-frame/);
   assert.match(html, /Редактор сценариев/);
   assert.match(html, /Ход выполнения/);
@@ -207,7 +262,10 @@ test('serves the visual priority queue', async () => {
   const response = await webRequest('/queue');
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /text\/html/);
-  assert.match(await response.text(), /Монитор выполнения JSON-сценариев/);
+  const html = await response.text();
+  assert.match(html, /Монитор выполнения JSON-сценариев/);
+  assert.match(html, /CPU тестовой УН/);
+  assert.match(html, /Параллельные слоты/);
 });
 
 test('logout invalidates the browser session', async () => {
@@ -237,6 +295,8 @@ test('exposes the interpreter action registry', async () => {
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.ok(body.actions.includes('find_files'));
+  assert.ok(body.actions.includes('wait'));
+  assert.ok(body.actions.includes('copy_files'));
   assert.ok(body.actions.includes('download_files'));
   assert.ok(body.actions.includes('submit_if_valid'));
 });
@@ -406,6 +466,46 @@ test('retries retryable normalized errors using the job policy', async () => {
   assert.equal(job.status, 'failed');
   assert.equal(job.attempts, 2);
   assert.equal(job.error.code, 'PLUGIN_NOT_RUNNING');
+});
+
+test('returns a terminal result to 1C callback with retries and delivery state', async () => {
+  const response = await request('/api/v2/jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      uid: `callback-${Date.now()}`,
+      timeout_ms: 2000,
+      callback: {
+        url: `${origin}/demo/1c/callback?fail_once=callback-test`,
+        max_attempts: 3,
+        backoff_ms: 10,
+        timeout_ms: 500
+      },
+      script: {
+        context: { delay_ms: 20 },
+        steps: [{ action: 'wait', params: { duration_ms: '{{delay_ms}}' }, timeout_ms: 200 }]
+      }
+    })
+  });
+  assert.equal(response.status, 201);
+  const jobId = (await response.json()).job.job_id;
+
+  let job;
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    job = (await (await request(`/api/v2/jobs/${jobId}`)).json()).job;
+    if (job.callback_delivery?.status === 'delivered') break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  assert.equal(job.status, 'success');
+  assert.equal(job.result.context.waited_ms, 20);
+  assert.equal(job.callback_delivery.status, 'delivered');
+  assert.equal(job.callback_delivery.attempts, 2);
+  const callbackEvents = await request('/api/v2/demo/callback-events').then((eventResponse) => eventResponse.json());
+  const delivered = callbackEvents.items.at(-1);
+  assert.equal(delivered.event, 'job.completed');
+  assert.equal(delivered.job.job_id, jobId);
+  assert.equal(delivered.job.result.uid, job.uid);
 });
 
 test('cancels an active interpreter step through its abort signal', async () => {
