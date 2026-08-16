@@ -16,6 +16,7 @@
     "demo:queue:priority-error": "node demo/run-queue-case.mjs priority-error",
     "demo:queue:running-low": "node demo/run-queue-case.mjs running-low",
     "demo:stage4:parallel": "node demo/stage4-parallel.mjs",
+    "demo:file": "node demo/run.mjs download-save-open",
     "demo:success": "node demo/run.mjs success",
     "demo:error": "node demo/run.mjs file-not-found",
     "demo:retry": "node demo/run.mjs retry",

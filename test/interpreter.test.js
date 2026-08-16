@@ -28,6 +28,7 @@ test('the default registry contains every Stage 2 action', () => {
     'copy_files',
     'read_text_file',
     'write_text_file',
+    'open_file',
     'delete_files'
   ]);
 });
@@ -219,6 +220,69 @@ test('controlled file steps copy, read, write and delete only inside allowed roo
     }),
     (error) => error.code === 'FILESYSTEM_ACCESS_DENIED'
   );
+});
+
+test('downloads a real response, saves it and opens the local copy', async (t) => {
+  const workingDirectory = await mkdtemp(path.join(os.tmpdir(), 'script-factory-download-'));
+  t.after(() => rm(workingDirectory, { recursive: true, force: true }));
+  const artifactDirectory = path.join(workingDirectory, 'artifacts');
+  const document = '<!doctype html><title>Скачанный документ</title><h1>Готово</h1>';
+  let openedFile;
+  const registry = createDefaultStepRegistry({
+    workingDirectory,
+    allowedRoots: [workingDirectory],
+    artifactDirectory,
+    publicArtifactBasePath: '/artifacts/job-test',
+    downloadBaseUrl: 'http://127.0.0.1:3000',
+    fetchImpl: async (url) => {
+      assert.equal(url.href, 'http://127.0.0.1:3000/demo/file.html');
+      return new Response(document, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    },
+    openFile: async ({ file }) => {
+      openedFile = file;
+      return {
+        opened_url: `file://${file}`,
+        page_title: 'Скачанный документ',
+        artifact: {
+          artifact_id: 'job-test_opened-file',
+          kind: 'browser_screenshot',
+          filename: 'opened-file.png',
+          local_path: path.join(artifactDirectory, 'opened-file.png'),
+          public_url: '/artifacts/job-test/opened-file.png',
+          mime_type: 'image/png',
+          size_bytes: 1024,
+          created_at: new Date().toISOString()
+        }
+      };
+    }
+  });
+
+  const result = await executeScript({
+    registry,
+    script: {
+      steps: [
+        {
+          id: 'download',
+          action: 'download_files',
+          params: {
+            save: true,
+            files: [{ filename: 'document.html', source_url: '/demo/file.html' }]
+          }
+        },
+        { action: 'read_text_file', params: { path: '{{downloaded_files.0}}' } },
+        { action: 'open_file', params: { path: '{{downloaded_files.0}}' } }
+      ]
+    }
+  });
+
+  const savedFile = path.join(artifactDirectory, 'document.html');
+  assert.equal(openedFile, savedFile);
+  assert.equal(await readFile(savedFile, 'utf8'), document);
+  assert.equal(result.context.opened_file, savedFile);
+  assert.equal(result.context.page_title, 'Скачанный документ');
+  assert.equal(result.context.artifacts.length, 2);
+  assert.equal(result.context.artifacts[0].public_url, '/artifacts/job-test/document.html');
+  assert.match(result.context.artifacts[0].checksum_sha256, /^[a-f0-9]{64}$/);
 });
 
 for (const scenario of [

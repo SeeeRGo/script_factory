@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parsePuppeteerReplay } from '@puppeteer/replay';
@@ -148,6 +149,35 @@ function downloadedFileArtifact(file, index, input) {
   };
 }
 
+async function readDownloadBody(response, maxBytes) {
+  const contentLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new InterpreterError(ERROR_CODES.FILE_TOO_LARGE, `Размер скачиваемого файла превышает лимит ${maxBytes} байт`, {
+      statusCode: 413,
+      details: { size_bytes: contentLength, max_bytes: maxBytes }
+    });
+  }
+
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel();
+      throw new InterpreterError(ERROR_CODES.FILE_TOO_LARGE, `Размер скачиваемого файла превышает лимит ${maxBytes} байт`, {
+        statusCode: 413,
+        details: { size_bytes: size, max_bytes: maxBytes }
+      });
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, size);
+}
+
 function pathInsideRoot(candidate, root) {
   const relative = path.relative(root, candidate);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
@@ -172,6 +202,10 @@ export function createDefaultStepRegistry(options = {}) {
     return resolved;
   };
   const resolveFiles = (files) => (Array.isArray(files) ? files : []).map(resolvePath);
+  const artifactDirectory = options.artifactDirectory ? resolvePath(options.artifactDirectory) : null;
+  const publicArtifactBasePath = options.publicArtifactBasePath || null;
+  const downloadBaseUrl = options.downloadBaseUrl || null;
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
 
   return new StepRegistry()
     .register('noop', async (input) => {
@@ -283,9 +317,86 @@ export function createDefaultStepRegistry(options = {}) {
         throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, 'Не указаны файлы для скачивания', { statusCode: 404 });
       }
       await simulate(input);
-      const artifacts = files.map((file, index) => downloadedFileArtifact(file, index, input));
+      const shouldSave = input.params.save === true || files.some((file) => file?.save === true);
+      let artifacts;
+      if (!shouldSave) {
+        artifacts = files.map((file, index) => downloadedFileArtifact(file, index, input));
+      } else {
+        if (typeof fetchImpl !== 'function') {
+          throw new InterpreterError(ERROR_CODES.DOWNLOAD_ERROR, 'HTTP-загрузка недоступна в текущем окружении', {
+            statusCode: 503,
+            retryable: true
+          });
+        }
+        artifacts = [];
+        for (let index = 0; index < files.length; index += 1) {
+          const descriptor = typeof files[index] === 'string' ? { source_url: files[index] } : { ...(files[index] || {}) };
+          const rawUrl = descriptor.source_url ?? descriptor.url ?? descriptor.source;
+          let sourceUrl;
+          try {
+            sourceUrl = new URL(rawUrl, downloadBaseUrl || undefined);
+          } catch {
+            throw new InterpreterError(ERROR_CODES.DOWNLOAD_ERROR, `Некорректный адрес файла: ${rawUrl}`, { statusCode: 400 });
+          }
+          if (!['http:', 'https:'].includes(sourceUrl.protocol)) {
+            throw new InterpreterError(ERROR_CODES.DOWNLOAD_ERROR, 'Для скачивания разрешены только HTTP и HTTPS', {
+              statusCode: 400,
+              details: { source_url: sourceUrl.href }
+            });
+          }
+
+          let response;
+          try {
+            response = await fetchImpl(sourceUrl, { redirect: 'follow', signal: input.signal });
+          } catch (error) {
+            throw new InterpreterError(ERROR_CODES.DOWNLOAD_ERROR, `Не удалось скачать файл: ${sourceUrl.href}`, {
+              cause: error,
+              statusCode: 502,
+              retryable: true,
+              details: { source_url: sourceUrl.href }
+            });
+          }
+          if (!response.ok) {
+            throw new InterpreterError(ERROR_CODES.DOWNLOAD_ERROR, `Источник файла вернул HTTP ${response.status}`, {
+              statusCode: 502,
+              retryable: response.status >= 500,
+              details: { source_url: sourceUrl.href, http_status: response.status }
+            });
+          }
+
+          const requestedMaxBytes = Number(descriptor.max_bytes ?? input.params.max_bytes ?? 10_485_760);
+          const maxBytes = Number.isFinite(requestedMaxBytes) && requestedMaxBytes > 0
+            ? Math.min(requestedMaxBytes, 52_428_800)
+            : 10_485_760;
+          const body = await readDownloadBody(response, maxBytes);
+          const requestedFilename = path.basename(descriptor.filename || path.basename(sourceUrl.pathname) || '');
+          const filename = !requestedFilename || requestedFilename === '.' || requestedFilename === '..'
+            ? `download_${index + 1}`
+            : requestedFilename;
+          const destination = resolvePath(descriptor.destination ?? input.params.destination ?? artifactDirectory ?? 'downloads');
+          const localPath = path.join(destination, filename);
+          await mkdir(destination, { recursive: true });
+          await writeFile(localPath, body);
+          const insideArtifacts = artifactDirectory && pathInsideRoot(localPath, artifactDirectory);
+          artifacts.push({
+            artifact_id: descriptor.artifact_id ?? `${input.step.id ?? `step_${input.step_index + 1}`}_${index + 1}`,
+            kind: 'downloaded_file',
+            filename,
+            local_path: localPath,
+            ...(insideArtifacts && publicArtifactBasePath
+              ? { public_url: `${publicArtifactBasePath}/${encodeURIComponent(filename)}` }
+              : {}),
+            source_url: sourceUrl.href,
+            mime_type: descriptor.mime_type ?? response.headers.get('content-type')?.split(';')[0] ?? null,
+            size_bytes: body.length,
+            checksum_sha256: createHash('sha256').update(body).digest('hex'),
+            created_at: new Date().toISOString()
+          });
+        }
+      }
       return {
         downloaded_files: artifacts.map((artifact) => artifact.local_path),
+        download_dir: artifacts.length > 0 ? path.dirname(artifacts[0].local_path) : null,
         files_downloaded: artifacts.length,
         artifacts
       };
@@ -399,6 +510,33 @@ export function createDefaultStepRegistry(options = {}) {
       await writeFile(file, content, { encoding, flag: input.params.overwrite === false ? 'wx' : 'w' });
       const fileStat = await stat(file);
       return { written_file: file, size_bytes: fileStat.size, encoding };
+    })
+    .register('open_file', async (input) => {
+      const requestedPath = input.params.path
+        ?? (Array.isArray(input.context.downloaded_files) ? input.context.downloaded_files.at(-1) : null);
+      if (!requestedPath) {
+        throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, 'Не указан файл для открытия', { statusCode: 404 });
+      }
+      const file = resolvePath(requestedPath);
+      const fileStat = await stat(file).catch((error) => {
+        throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, `Файл не найден: ${file}`, {
+          statusCode: 404,
+          details: { file, cause: error?.code }
+        });
+      });
+      if (!fileStat.isFile()) {
+        throw new InterpreterError(ERROR_CODES.FILE_NOT_FOUND, `Путь не является файлом: ${file}`, { statusCode: 404 });
+      }
+      const opened = typeof options.openFile === 'function'
+        ? await options.openFile({ file, signal: input.signal, step: input.step })
+        : {};
+      const { artifact: openedArtifact, ...openedOutput } = opened || {};
+      return {
+        opened_file: file,
+        opened_file_size_bytes: fileStat.size,
+        ...openedOutput,
+        ...(openedArtifact ? { artifacts: [openedArtifact] } : {})
+      };
     })
     .register('delete_files', async (input) => {
       if (input.params.confirm !== true) {

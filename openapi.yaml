@@ -52,7 +52,7 @@ components:
           description: Объяснение действия и ожидаемого результата шага.
         action:
           type: string
-          enum: [noop, wait, check_ip, launch_browser, navigate, auth_ecp, find_files, upload_files, download_files, validate_report, submit_if_valid, move_files, copy_files, read_text_file, write_text_file, delete_files]
+          enum: [noop, wait, check_ip, launch_browser, navigate, auth_ecp, find_files, upload_files, download_files, validate_report, submit_if_valid, move_files, copy_files, read_text_file, write_text_file, open_file, delete_files]
           example: find_files
         params:
           type: object

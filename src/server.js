@@ -13,7 +13,7 @@ import {
   isPuppeteerReplayScript,
   validateScript
 } from './interpreter.js';
-import { executeBrowserReplay } from './browser-replay.js';
+import { executeBrowserReplay, openFileInBrowser } from './browser-replay.js';
 import { createDemoMail } from './demo-mail.js';
 
 const PORT = Number(process.env.PORT || 3000);
@@ -42,6 +42,7 @@ const STATE_FILE = path.join(DATA_DIR, 'state.sqlite');
 const LEGACY_STATE_FILE = path.join(DATA_DIR, 'state.json');
 const OPENAPI_FILE = path.join(process.cwd(), 'openapi.yaml');
 const PUBLIC_DIR = path.join(process.cwd(), 'public');
+const DEMO_DOWNLOAD_FILE = path.join(process.cwd(), 'demo', 'fixtures', 'stage4-download-demo.html');
 const SWAGGER_LOCALIZATION_FILE = path.join(process.cwd(), 'swagger-ru.js');
 const NOVNC_PROXY_PREFIX = '/browser-live';
 const NOVNC_INTERNAL_PORT = Number(process.env.NOVNC_INTERNAL_PORT || 33303);
@@ -81,11 +82,11 @@ const state = {
   activeCount: 0
 };
 
-const stepRegistry = createDefaultStepRegistry({
-  allowedRoots: FILESYSTEM_ALLOWED_ROOTS.length > 0
-    ? FILESYSTEM_ALLOWED_ROOTS
-    : [process.cwd(), DATA_DIR]
-});
+const STEP_ALLOWED_ROOTS = [
+  ...(FILESYSTEM_ALLOWED_ROOTS.length > 0 ? FILESYSTEM_ALLOWED_ROOTS : [process.cwd(), DATA_DIR]),
+  ARTIFACTS_DIR
+];
+const stepRegistry = createDefaultStepRegistry({ allowedRoots: STEP_ALLOWED_ROOTS });
 
 let previousCpuSample = { usage: process.cpuUsage(), time: process.hrtime.bigint() };
 let previousSystemCpuSample = os.cpus().map((cpu) => ({ ...cpu.times }));
@@ -609,6 +610,17 @@ async function sendPublicFile(res, filename) {
   res.end(body);
 }
 
+async function sendDemoDownloadFile(res) {
+  const body = await readFile(DEMO_DOWNLOAD_FILE);
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': body.length,
+    'Content-Disposition': 'attachment; filename="stage4-demo-document.html"',
+    'Cache-Control': 'no-store'
+  });
+  res.end(body);
+}
+
 async function sendArtifactFile(res, pathname) {
   const parts = pathname.split('/').filter(Boolean);
   if (parts.length !== 3 || parts[0] !== 'artifacts') {
@@ -981,8 +993,11 @@ async function executeJob(job) {
     const simulatedOutcome = script.simulate?.outcome || 'success';
     const simulatedDelay = Number.isFinite(script.simulate?.delay_ms) ? script.simulate.delay_ms : 250;
     const browserReplay = isPuppeteerReplayScript(script);
+    const serviceBaseUrl = process.env.SERVICE_BASE_URL || `http://127.0.0.1:${PORT}`;
+    const artifactDirectory = path.join(ARTIFACTS_DIR, job.job_id);
+    const publicArtifactBasePath = `/artifacts/${encodeURIComponent(job.job_id)}`;
     const runtimeContext = {
-      demo_mail_url: `${process.env.SERVICE_BASE_URL || `http://127.0.0.1:${PORT}`}/demo/mail`,
+      demo_mail_url: `${serviceBaseUrl}/demo/mail`,
       mail_login: DEMO_MAIL_LOGIN,
       mail_password: DEMO_MAIL_PASSWORD,
       yahoo_mail_url: YAHOO_MAIL_URL,
@@ -1016,8 +1031,8 @@ async function executeJob(job) {
         captchaWaitMs: process.env.BROWSER_CAPTCHA_WAIT_MS,
         windowWidth: process.env.BROWSER_WINDOW_WIDTH,
         windowHeight: process.env.BROWSER_WINDOW_HEIGHT,
-        artifactDirectory: path.join(ARTIFACTS_DIR, job.job_id),
-        publicArtifactBasePath: `/artifacts/${encodeURIComponent(job.job_id)}`,
+        artifactDirectory,
+        publicArtifactBasePath,
         jobId: job.job_id,
         onEvent: (event) => applyInterpreterEvent(job, event),
         onBrowserLog: (level, message) => logJob(job, level, message)
@@ -1025,9 +1040,31 @@ async function executeJob(job) {
       : await executeScript({
         script: { ...script, steps },
         signal: controller.signal,
-        registry: stepRegistry,
+        registry: createDefaultStepRegistry({
+          allowedRoots: STEP_ALLOWED_ROOTS,
+          artifactDirectory,
+          publicArtifactBasePath,
+          downloadBaseUrl: serviceBaseUrl,
+          openFile: ({ file, signal }) => openFileInBrowser({
+            filePath: file,
+            signal,
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
+            headless: process.env.BROWSER_HEADLESS !== 'false',
+            holdOpenMs: process.env.BROWSER_HOLD_OPEN_MS,
+            windowWidth: process.env.BROWSER_WINDOW_WIDTH,
+            windowHeight: process.env.BROWSER_WINDOW_HEIGHT,
+            artifactDirectory,
+            publicArtifactBasePath,
+            jobId: job.job_id,
+            onBrowserLog: (level, message) => logJob(job, level, message)
+          })
+        }),
         defaultStepTimeoutMs: Math.min(job.timeout_ms, 10_000),
-        initialContext: job.request.context ?? {},
+        initialContext: {
+          service_base_url: serviceBaseUrl,
+          demo_file_url: `${serviceBaseUrl}/demo/files/stage4-download-demo.html`,
+          ...(job.request.context ?? {})
+        },
         attempt: job.attempts,
         onEvent: (event) => applyInterpreterEvent(job, event)
       });
@@ -1521,6 +1558,11 @@ const server = http.createServer(async (req, res) => {
 
     if (method === 'GET' && pathname === '/queue') {
       await sendPublicFile(res, 'queue.html');
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/demo/files/stage4-download-demo.html') {
+      await sendDemoDownloadFile(res);
       return;
     }
 

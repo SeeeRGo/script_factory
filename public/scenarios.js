@@ -168,6 +168,7 @@ const stepLabels = {
   validate_report: ['Проверить отчёт', 'Выполняет бизнес-проверку отчёта перед отправкой.'],
   submit_if_valid: ['Отправить отчёт', 'Отправляет отчёт только после успешной проверки.'],
   download_files: ['Скачать квитанцию', 'Сохраняет квитанцию и добавляет файл в result.artifacts.'],
+  open_file: ['Открыть сохранённый файл', 'Открывает локальный файл в Chromium и сохраняет скриншот результата.'],
   move_files: ['Переместить обработанные файлы', 'Переносит исходные файлы в каталог обработанных документов.'],
   setViewport: ['Настроить окно Chromium', 'Устанавливает размер окна браузера для воспроизводимого запуска.']
 };
@@ -244,6 +245,52 @@ const demoScenarioDefinitions = [
       retry_policy: { max_attempts: 1, backoff_ms: 500 },
       context: { search_query: yandexQuery },
       script: yandexSearchReplay()
+    }
+  },
+  {
+    id: 'download-save-open',
+    number: 'S4F',
+    title: 'Скачать и открыть файл',
+    talkTime: '1 мин',
+    runtime: '≈ 5–10 сек',
+    result: 'REAL FILE',
+    tone: 'success',
+    summary: 'Исполнитель скачивает документ по HTTP, сохраняет его на УН, проверяет содержимое и открывает локальный файл в Chromium.',
+    points: [
+      'Файл физически записывается в каталог артефактов конкретного задания',
+      'Размер и SHA-256 рассчитываются по фактически полученным данным',
+      'Сохранённый документ открывается в Chromium и остаётся доступен в result.artifacts'
+    ],
+    payload: {
+      priority: 8,
+      timeout_ms: 30000,
+      retry_policy: { max_attempts: 2, backoff_ms: 500 },
+      context: { expected_ip: '127.0.0.1' },
+      script: {
+        default_step_timeout_ms: 12000,
+        steps: [
+          { id: 'prepare', title: 'Подготовить задание', description: 'Фиксирует начало файлового сценария в прогрессе и журнале.', action: 'noop', duration_ms: 150 },
+          { id: 'network', title: 'Проверить доступность УН', description: 'Подтверждает, что сценарий выполняется на ожидаемой тестовой машине.', action: 'check_ip', params: { current_ip: '{{expected_ip}}', expected_ip: '{{expected_ip}}' }, duration_ms: 180 },
+          { id: 'browser', title: 'Подготовить Chromium', description: 'Проверяет этап запуска браузера перед показом сохранённого документа.', action: 'launch_browser', params: { browser: 'chromium' }, duration_ms: 220 },
+          { id: 'source', title: 'Открыть источник файла', description: 'Фиксирует HTTP-адрес встроенного демо-документа перед загрузкой.', action: 'navigate', params: { url: '{{demo_file_url}}' }, duration_ms: 220 },
+          { id: 'source-ready', title: 'Дождаться готовности источника', description: 'Добавляет наглядное ожидание перед реальным сетевым запросом.', action: 'wait', params: { duration_ms: 250 }, timeout_ms: 1000 },
+          {
+            id: 'download',
+            title: 'Скачать и сохранить документ',
+            description: 'Получает файл по HTTP и записывает байты в каталог артефактов текущего задания.',
+            action: 'download_files',
+            params: {
+              save: true,
+              max_bytes: 1048576,
+              files: [{ filename: 'stage4-demo-document.html', source_url: '{{demo_file_url}}', mime_type: 'text/html' }]
+            }
+          },
+          { id: 'verify-path', title: 'Проверить сохранение на диске', description: 'Повторно находит скачанный файл в фактическом каталоге задания.', action: 'find_files', params: { directory: '{{download_dir}}', prefixes: ['stage4-demo-document'] } },
+          { id: 'verify-content', title: 'Прочитать сохранённый файл', description: 'Проверяет доступность и содержимое документа непосредственно с диска УН.', action: 'read_text_file', params: { path: '{{downloaded_files.0}}', max_bytes: 1048576 } },
+          { id: 'open', title: 'Открыть файл в Chromium', description: 'Открывает локальную сохранённую копию; результат виден через noVNC и на итоговом скриншоте.', action: 'open_file', params: { path: '{{downloaded_files.0}}' }, timeout_ms: 15000 },
+          { id: 'complete', title: 'Зафиксировать успешный результат', description: 'Завершает цепочку после скачивания, проверки и визуального открытия файла.', action: 'noop', duration_ms: 150 }
+        ]
+      }
     }
   },
   {

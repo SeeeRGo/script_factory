@@ -256,6 +256,15 @@ test('serves ready-to-run demo scenarios to the studio', async () => {
   const source = await response.text();
   assert.match(source, /Отчёт отправлен/);
   assert.match(source, /Повтор после сбоя/);
+  assert.match(source, /Скачать и открыть файл/);
+});
+
+test('serves the deterministic Stage 4 demo document as a download', async () => {
+  const response = await fetch(`${origin}/demo/files/stage4-download-demo.html`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /text\/html/);
+  assert.match(response.headers.get('content-disposition'), /attachment/);
+  assert.match(await response.text(), /Файл сохранён и открыт/);
 });
 
 test('serves the visual priority queue', async () => {
@@ -298,6 +307,7 @@ test('exposes the interpreter action registry', async () => {
   assert.ok(body.actions.includes('wait'));
   assert.ok(body.actions.includes('copy_files'));
   assert.ok(body.actions.includes('download_files'));
+  assert.ok(body.actions.includes('open_file'));
   assert.ok(body.actions.includes('submit_if_valid'));
 });
 
@@ -530,6 +540,72 @@ test('cancels an active interpreter step through its abort signal', async () => 
   assert.equal(job.status, 'cancelled');
   assert.equal(job.error.code, 'CANCELLED');
   assert.equal(job.execution.status, 'cancelled');
+});
+
+test('downloads, saves, verifies and opens the Stage 4 demo file', async () => {
+  const response = await request('/api/v2/jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      uid: `download-open-${Date.now()}`,
+      timeout_ms: 30000,
+      retry_policy: { max_attempts: 1, backoff_ms: 5 },
+      script: {
+        default_step_timeout_ms: 15000,
+        steps: [
+          {
+            id: 'download',
+            title: 'Скачать и сохранить документ',
+            description: 'Загружает встроенный документ по HTTP.',
+            action: 'download_files',
+            params: {
+              save: true,
+              files: [{ filename: 'stage4-demo-document.html', source_url: '{{demo_file_url}}' }]
+            }
+          },
+          {
+            title: 'Проверить файл',
+            description: 'Читает сохранённую копию с диска.',
+            action: 'read_text_file',
+            params: { path: '{{downloaded_files.0}}' }
+          },
+          {
+            title: 'Открыть файл',
+            description: 'Открывает сохранённую копию в Chromium.',
+            action: 'open_file',
+            params: { path: '{{downloaded_files.0}}' }
+          }
+        ]
+      }
+    })
+  });
+  assert.equal(response.status, 201);
+  const jobId = (await response.json()).job.job_id;
+
+  let job;
+  const deadline = Date.now() + 25000;
+  while (Date.now() < deadline) {
+    job = (await (await request(`/api/v2/jobs/${jobId}`)).json()).job;
+    if (['success', 'failed', 'validation_failed', 'timeout'].includes(job.status)) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  assert.equal(job.status, 'success', JSON.stringify(job.error));
+  assert.match(job.result.context.file_content, /Файл сохранён и открыт/);
+  assert.match(job.result.context.opened_url, /^file:/);
+  const downloaded = job.result.artifacts.find((artifact) => artifact.kind === 'downloaded_file');
+  const screenshot = job.result.artifacts.find((artifact) => artifact.kind === 'browser_screenshot');
+  assert.ok(downloaded);
+  assert.ok(screenshot);
+  assert.ok(downloaded.size_bytes > 1000);
+  assert.match(downloaded.checksum_sha256, /^[a-f0-9]{64}$/);
+  assert.match(downloaded.public_url, new RegExp(`^/artifacts/${jobId}/`));
+
+  const downloadedResponse = await webRequest(downloaded.public_url);
+  assert.equal(downloadedResponse.status, 200);
+  assert.match(await downloadedResponse.text(), /DOWNLOAD → SAVE → VERIFY → OPEN/);
+  const screenshotResponse = await webRequest(screenshot.public_url);
+  assert.equal(screenshotResponse.status, 200);
+  assert.ok((await screenshotResponse.arrayBuffer()).byteLength > 1000);
 });
 
 test('executes a local Puppeteer Replay mail fixture without external delivery', async () => {

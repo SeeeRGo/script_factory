@@ -101,13 +101,16 @@ The interpreter validates scripts before they enter the queue. Each step support
 - `timeout_ms`: optional per-step timeout;
 - `duration_ms`: mock adapter duration for Stage 2 demonstrations and tests.
 
-Registered actions are `noop`, `wait`, `check_ip`, `launch_browser`, `navigate`, `auth_ecp`, `find_files`, `upload_files`, `download_files`, `validate_report`, `submit_if_valid`, `move_files`, `copy_files`, `read_text_file`, `write_text_file`, and `delete_files`. `GET /api/v2/interpreter/actions` returns the runtime registry.
+Registered actions are `noop`, `wait`, `check_ip`, `launch_browser`, `navigate`, `auth_ecp`, `find_files`, `upload_files`, `download_files`, `validate_report`, `submit_if_valid`, `move_files`, `copy_files`, `read_text_file`, `write_text_file`, `open_file`, and `delete_files`. `GET /api/v2/interpreter/actions` returns the runtime registry.
 
 Exact context expressions preserve their JSON type, so `"{{found_files}}"` resolves to an array rather than a string. Step outputs are merged into the context for subsequent steps. The execution result returns the final context.
 
-Downloaded files are returned in `result.artifacts` with `artifact_id`, `filename`,
-`local_path`, source URL, content type, size, and checksum metadata. Every successful
-result also includes `job_id`, `uid`, and `un_id`.
+With `download_files.params.save=true`, files are fetched over HTTP(S), written to the
+job artifact directory, and returned in `result.artifacts` with `artifact_id`,
+`filename`, `local_path`, protected `public_url`, source URL, actual content type,
+size, and SHA-256 checksum. A following `open_file` step opens the saved local copy
+in Chromium and adds a screenshot to the result. Every successful result also
+includes `job_id`, `uid`, and `un_id`.
 
 The normalized workflow errors are `IP_MISMATCH`, `FILE_NOT_FOUND`, `AUTH_ERROR`,
 `UPLOAD_ERROR`, `DOWNLOAD_ERROR`, `VALIDATION_ERROR`, `TIMEOUT_ERROR`,

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Документ успешно скачан</title>
+    <style>
+      :root { color-scheme: light; font-family: Arial, sans-serif; }
+      * { box-sizing: border-box; }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        color: #17211c;
+        background: #f3f1ea;
+      }
+      main {
+        width: min(920px, calc(100vw - 80px));
+        padding: 64px;
+        border: 1px solid #cdd3c8;
+        border-top: 8px solid #c9f04e;
+        background: #fff;
+        box-shadow: 0 24px 70px rgba(23, 33, 28, .14);
+      }
+      .label { color: #126c4d; font-size: 14px; font-weight: 700; letter-spacing: .14em; }
+      h1 { margin: 18px 0 14px; font-size: 48px; line-height: 1.05; }
+      p { max-width: 680px; color: #5d6862; font-size: 20px; line-height: 1.5; }
+      dl { display: grid; grid-template-columns: 190px 1fr; gap: 14px; margin: 38px 0 0; }
+      dt { color: #7a847e; }
+      dd { margin: 0; font-family: monospace; font-weight: 700; }
+      .ok { display: inline-flex; align-items: center; gap: 10px; margin-top: 38px; color: #126c4d; font-weight: 700; }
+      .ok::before { content: "✓"; display: grid; width: 34px; height: 34px; place-items: center; border-radius: 50%; color: #fff; background: #126c4d; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="label">ФАБРИКА СЦЕНАРИЕВ · ЭТАП 4</div>
+      <h1>Файл сохранён и открыт</h1>
+      <p>Этот документ был загружен по HTTP, записан в файловую систему тестовой УН и затем открыт локально в Chromium.</p>
+      <dl>
+        <dt>Документ</dt><dd>stage4-demo-document.html</dd>
+        <dt>Операции</dt><dd>DOWNLOAD → SAVE → VERIFY → OPEN</dd>
+        <dt>Результат</dt><dd>SUCCESS</dd>
+      </dl>
+      <div class="ok">Полная цепочка выполнена</div>
+    </main>
+  </body>
+</html>

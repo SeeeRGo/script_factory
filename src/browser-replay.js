@@ -1,5 +1,6 @@
 import { access, mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createRunner, parse, PuppeteerRunnerExtension } from '@puppeteer/replay';
 import puppeteer from 'puppeteer';
 import { abortableDelay, InterpreterError, resolveTemplates } from './interpreter.js';
@@ -212,6 +213,73 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
     if (this.stepDelayMs > 0 && this.currentIndex < flow.steps.length - 1) {
       await abortableDelay(this.stepDelayMs, this.signal);
     }
+  }
+}
+
+export async function openFileInBrowser(options) {
+  const {
+    filePath,
+    signal,
+    executablePath: configuredExecutablePath,
+    headless = true,
+    holdOpenMs = 0,
+    windowWidth = 1400,
+    windowHeight = 860,
+    artifactDirectory,
+    publicArtifactBasePath,
+    jobId,
+    onBrowserLog = () => {}
+  } = options;
+  const normalizedHoldOpenMs = boundedNumber(holdOpenMs, 0, 60_000);
+  const normalizedWindowWidth = Math.max(800, Math.round(boundedNumber(windowWidth, 1400, 3840)));
+  const normalizedWindowHeight = Math.max(600, Math.round(boundedNumber(windowHeight, 860, 2160)));
+  const executablePath = await existingExecutablePath(configuredExecutablePath);
+  let browser;
+  const onAbort = () => { void browser?.close().catch(() => {}); };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    browser = await puppeteer.launch({
+      headless,
+      ...(executablePath ? { executablePath } : {}),
+      ...(!headless ? { defaultViewport: null } : { defaultViewport: { width: normalizedWindowWidth, height: normalizedWindowHeight } }),
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--allow-file-access-from-files',
+        `--window-size=${normalizedWindowWidth},${normalizedWindowHeight}`,
+        ...(!headless ? ['--start-maximized'] : [])
+      ]
+    });
+    const page = await browser.newPage();
+    const fileUrl = pathToFileURL(filePath).href;
+    await page.goto(fileUrl, { waitUntil: 'load', timeout: 15_000 });
+    const finalState = await pageSnapshot(page);
+    const artifact = await screenshotArtifact(
+      page,
+      artifactDirectory,
+      publicArtifactBasePath,
+      jobId,
+      'opened-file'
+    );
+    onBrowserLog('info', `Сохранённый файл открыт в Chromium: ${path.basename(filePath)}`);
+    if (normalizedHoldOpenMs > 0) {
+      onBrowserLog('info', `Открытый файл будет показан ещё ${normalizedHoldOpenMs} мс`);
+      await abortableDelay(normalizedHoldOpenMs, signal);
+    }
+    return { opened_url: fileUrl, page_title: finalState.page_title, artifact };
+  } catch (rawError) {
+    if (signal?.aborted) throw signal.reason;
+    if (rawError instanceof InterpreterError) throw rawError;
+    throw new InterpreterError('BROWSER_REPLAY_ERROR', `Не удалось открыть сохранённый файл в Chromium: ${rawError?.message || 'неизвестная ошибка'}`, {
+      cause: rawError,
+      statusCode: 500,
+      retryable: false,
+      details: { file: filePath }
+    });
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    await browser?.close().catch(() => {});
   }
 }
 

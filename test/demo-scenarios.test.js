@@ -117,6 +117,14 @@ test('homepage demo route keeps the Stage 3 browser workloads short enough for t
   assert.equal(yandexScenario.payload.context.search_query, 'официальная документация Node.js');
   const searchSubmitStep = yandexScenario.payload.script.steps.find((step) => step.title === 'Запустить поиск');
   assert.deepEqual({ type: searchSubmitStep.type, key: searchSubmitStep.key }, { type: 'keyDown', key: 'Enter' });
+
+  const fileScenario = demoScenarios.find((scenario) => scenario.id === 'download-save-open');
+  assert.ok(fileScenario);
+  assert.equal(fileScenario.payload.script.steps.length, 10);
+  const downloadStep = fileScenario.payload.script.steps.find((step) => step.action === 'download_files');
+  assert.equal(downloadStep.params.save, true);
+  assert.ok(fileScenario.payload.script.steps.some((step) => step.action === 'read_text_file'));
+  assert.ok(fileScenario.payload.script.steps.some((step) => step.action === 'open_file'));
 });
 
 test('blank editor template is a valid starting point', () => {
@@ -140,4 +148,18 @@ test('Stage 4 request fixture contains a configurable wait, file work and result
   assert.equal(wait.params.duration_ms, '{{delay_ms}}');
   assert.ok(payload.script.steps.some((step) => step.action === 'find_files'));
   assert.ok(payload.script.steps.some((step) => step.action === 'copy_files'));
+});
+
+test('download demo fixture saves, verifies and opens a real file', async () => {
+  const payload = JSON.parse(await readFile(
+    path.resolve(import.meta.dirname, '../demo/download-save-open.json'),
+    'utf8'
+  ));
+  assert.deepEqual(validateScript(payload.script), []);
+  assert.equal(payload.script.steps.length, 10);
+  assert.equal(payload.script.steps.find((step) => step.action === 'download_files').params.save, true);
+  assert.ok(payload.script.steps.some((step) => step.action === 'find_files'));
+  assert.ok(payload.script.steps.some((step) => step.action === 'read_text_file'));
+  assert.ok(payload.script.steps.some((step) => step.action === 'open_file'));
+  assert.ok(payload.script.steps.every((step) => step.title && step.description));
 });

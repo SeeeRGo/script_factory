@@ -6,6 +6,7 @@ import { resetDemoData } from './reset.mjs';
 const scenario = process.argv[2] || 'success';
 const expected = {
   success: { status: 'success' },
+  'download-save-open': { status: 'success' },
   'file-not-found': { status: 'failed', code: 'FILE_NOT_FOUND' },
   retry: { status: 'success', attempts: 2 },
   timeout: { status: 'timeout', code: 'TIMEOUT_ERROR' }
