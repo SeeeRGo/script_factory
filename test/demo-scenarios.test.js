@@ -123,6 +123,10 @@ test('homepage demo route keeps the Stage 3 browser workloads short enough for t
   assert.equal(fileScenario.payload.script.steps.length, 10);
   const downloadStep = fileScenario.payload.script.steps.find((step) => step.action === 'download_files');
   assert.equal(downloadStep.params.save, true);
+  assert.deepEqual(
+    downloadStep.params.files.map((file) => path.extname(file.filename)).sort(),
+    ['.csv', '.json', '.txt', '.xml']
+  );
   assert.ok(fileScenario.payload.script.steps.some((step) => step.action === 'read_text_file'));
   assert.ok(fileScenario.payload.script.steps.some((step) => step.action === 'open_file'));
 });
@@ -157,7 +161,14 @@ test('download demo fixture saves, verifies and opens a real file', async () => 
   ));
   assert.deepEqual(validateScript(payload.script), []);
   assert.equal(payload.script.steps.length, 10);
+  assert.equal(payload.script.inter_step_delay_ms, 10000);
   assert.equal(payload.script.steps.find((step) => step.action === 'download_files').params.save, true);
+  assert.equal(payload.script.steps.find((step) => step.action === 'download_files').params.files.length, 4);
+  assert.ok(payload.script.steps.find((step) => step.action === 'download_files').params.files
+    .every((file) => file.source_url.startsWith('https://')));
+  const ipStep = payload.script.steps.find((step) => step.action === 'check_ip');
+  assert.equal(ipStep.params.service_url, 'https://api64.ipify.org?format=json');
+  assert.equal(ipStep.params.current_ip, undefined);
   assert.ok(payload.script.steps.some((step) => step.action === 'find_files'));
   assert.ok(payload.script.steps.some((step) => step.action === 'read_text_file'));
   assert.ok(payload.script.steps.some((step) => step.action === 'open_file'));

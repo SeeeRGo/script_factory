@@ -250,44 +250,51 @@ const demoScenarioDefinitions = [
   {
     id: 'download-save-open',
     number: 'S4F',
-    title: 'Скачать и открыть файл',
+    title: 'Скачать файлы разных форматов',
     talkTime: '1 мин',
     runtime: '≈ 5–10 сек',
     result: 'REAL FILE',
     tone: 'success',
-    summary: 'Исполнитель скачивает документ по HTTP, сохраняет его на УН, проверяет содержимое и открывает локальный файл в Chromium.',
+    summary: 'Исполнитель скачивает XML, JSON, CSV и TXT по HTTP, сохраняет их на УН, проверяет содержимое и открывает XML в Яндекс Браузере.',
     points: [
-      'Файл физически записывается в каталог артефактов конкретного задания',
+      'Четыре файла физически записываются в каталог артефактов конкретного задания',
       'Размер и SHA-256 рассчитываются по фактически полученным данным',
       'Сохранённый документ открывается в Chromium и остаётся доступен в result.artifacts'
     ],
     payload: {
       priority: 8,
-      timeout_ms: 30000,
+      timeout_ms: 180000,
       retry_policy: { max_attempts: 2, backoff_ms: 500 },
-      context: { expected_ip: '127.0.0.1' },
+      context: {},
       script: {
         default_step_timeout_ms: 12000,
+        inter_step_delay_ms: 10000,
         steps: [
           { id: 'prepare', title: 'Подготовить задание', description: 'Фиксирует начало файлового сценария в прогрессе и журнале.', action: 'noop', duration_ms: 150 },
-          { id: 'network', title: 'Проверить доступность УН', description: 'Подтверждает, что сценарий выполняется на ожидаемой тестовой машине.', action: 'check_ip', params: { current_ip: '{{expected_ip}}', expected_ip: '{{expected_ip}}' }, duration_ms: 180 },
+          { id: 'network', title: 'Проверить публичный IP через интернет', description: 'Запрашивает фактический внешний IP тестовой УН у API ipify.', action: 'check_ip', params: { service_url: 'https://api64.ipify.org?format=json' }, duration_ms: 180 },
           { id: 'browser', title: 'Подготовить Chromium', description: 'Проверяет этап запуска браузера перед показом сохранённого документа.', action: 'launch_browser', params: { browser: 'chromium' }, duration_ms: 220 },
-          { id: 'source', title: 'Открыть источник файла', description: 'Фиксирует HTTP-адрес встроенного демо-документа перед загрузкой.', action: 'navigate', params: { url: '{{demo_file_url}}' }, duration_ms: 220 },
+          { id: 'source', title: 'Открыть источник XML', description: 'Фиксирует внешний HTTPS-адрес XML-файла перед загрузкой набора.', action: 'navigate', params: { url: 'https://www.w3schools.com/xml/note.xml' }, duration_ms: 220 },
           { id: 'source-ready', title: 'Дождаться готовности источника', description: 'Добавляет наглядное ожидание перед реальным сетевым запросом.', action: 'wait', params: { duration_ms: 250 }, timeout_ms: 1000 },
           {
             id: 'download',
-            title: 'Скачать и сохранить документ',
-            description: 'Получает файл по HTTP и записывает байты в каталог артефактов текущего задания.',
+            title: 'Скачать и сохранить файлы разных форматов',
+            description: 'Получает XML, JSON, CSV и TXT по HTTP и записывает их в каталог артефактов текущего задания.',
             action: 'download_files',
             params: {
               save: true,
               max_bytes: 1048576,
-              files: [{ filename: 'stage4-demo-document.html', source_url: '{{demo_file_url}}', mime_type: 'text/html' }]
-            }
+              files: [
+                { filename: 'stage4-report.xml', source_url: 'https://www.w3schools.com/xml/note.xml', mime_type: 'application/xml' },
+                { filename: 'stage4-result.json', source_url: 'https://jsonplaceholder.typicode.com/todos/1', mime_type: 'application/json' },
+                { filename: 'stage4-register.csv', source_url: 'https://raw.githubusercontent.com/cs109/2014_data/master/countries.csv', mime_type: 'text/csv' },
+                { filename: 'stage4-log.txt', source_url: 'https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore', mime_type: 'text/plain' }
+              ]
+            },
+            timeout_ms: 60000
           },
-          { id: 'verify-path', title: 'Проверить сохранение на диске', description: 'Повторно находит скачанный файл в фактическом каталоге задания.', action: 'find_files', params: { directory: '{{download_dir}}', prefixes: ['stage4-demo-document'] } },
+          { id: 'verify-path', title: 'Проверить сохранение на диске', description: 'Повторно находит скачанные файлы в фактическом каталоге задания.', action: 'find_files', params: { directory: '{{download_dir}}', prefixes: ['stage4-'] } },
           { id: 'verify-content', title: 'Прочитать сохранённый файл', description: 'Проверяет доступность и содержимое документа непосредственно с диска УН.', action: 'read_text_file', params: { path: '{{downloaded_files.0}}', max_bytes: 1048576 } },
-          { id: 'open', title: 'Открыть файл в Chromium', description: 'Открывает локальную сохранённую копию; результат виден через noVNC и на итоговом скриншоте.', action: 'open_file', params: { path: '{{downloaded_files.0}}' }, timeout_ms: 15000 },
+          { id: 'open', title: 'Открыть XML в Яндекс Браузере', description: 'Открывает локальную XML-копию; остальные форматы доступны в артефактах задания.', action: 'open_file', params: { path: '{{downloaded_files.0}}' }, timeout_ms: 120000 },
           { id: 'complete', title: 'Зафиксировать успешный результат', description: 'Завершает цепочку после скачивания, проверки и визуального открытия файла.', action: 'noop', duration_ms: 150 }
         ]
       }

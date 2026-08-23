@@ -42,7 +42,14 @@ const STATE_FILE = path.join(DATA_DIR, 'state.sqlite');
 const LEGACY_STATE_FILE = path.join(DATA_DIR, 'state.json');
 const OPENAPI_FILE = path.join(process.cwd(), 'openapi.yaml');
 const PUBLIC_DIR = path.join(process.cwd(), 'public');
-const DEMO_DOWNLOAD_FILE = path.join(process.cwd(), 'demo', 'fixtures', 'stage4-download-demo.html');
+const DEMO_DOWNLOAD_DIR = path.join(process.cwd(), 'demo', 'fixtures');
+const DEMO_DOWNLOAD_FILES = new Map([
+  ['stage4-download-demo.html', 'text/html; charset=utf-8'],
+  ['stage4-report.xml', 'application/xml; charset=utf-8'],
+  ['stage4-result.json', 'application/json; charset=utf-8'],
+  ['stage4-register.csv', 'text/csv; charset=utf-8'],
+  ['stage4-log.txt', 'text/plain; charset=utf-8']
+]);
 const SWAGGER_LOCALIZATION_FILE = path.join(process.cwd(), 'swagger-ru.js');
 const NOVNC_PROXY_PREFIX = '/browser-live';
 const NOVNC_INTERNAL_PORT = Number(process.env.NOVNC_INTERNAL_PORT || 33303);
@@ -610,12 +617,17 @@ async function sendPublicFile(res, filename) {
   res.end(body);
 }
 
-async function sendDemoDownloadFile(res) {
-  const body = await readFile(DEMO_DOWNLOAD_FILE);
+async function sendDemoDownloadFile(res, filename) {
+  const contentType = DEMO_DOWNLOAD_FILES.get(filename);
+  if (!contentType) {
+    sendJson(res, 404, { error: { code: 'NOT_FOUND', message: 'Демо-файл не найден' } });
+    return;
+  }
+  const body = await readFile(path.join(DEMO_DOWNLOAD_DIR, filename));
   res.writeHead(200, {
-    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Type': contentType,
     'Content-Length': body.length,
-    'Content-Disposition': 'attachment; filename="stage4-demo-document.html"',
+    'Content-Disposition': `attachment; filename="${filename}"`,
     'Cache-Control': 'no-store'
   });
   res.end(body);
@@ -959,6 +971,15 @@ function applyInterpreterEvent(job, event) {
         error: event.error
       });
     }
+    return;
+  }
+
+  if (event.type === 'inter_step_delay_started') {
+    logJob(job, 'info', `Пауза между шагами: ${event.duration_ms} мс`, {
+      after_step: event.after_step_index + 1,
+      before_step: event.before_step_index + 1,
+      duration_ms: event.duration_ms
+    });
     return;
   }
 
@@ -1561,8 +1582,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (method === 'GET' && pathname === '/demo/files/stage4-download-demo.html') {
-      await sendDemoDownloadFile(res);
+    if (method === 'GET' && pathname.startsWith('/demo/files/')) {
+      await sendDemoDownloadFile(res, pathname.slice('/demo/files/'.length));
       return;
     }
 

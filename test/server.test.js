@@ -267,6 +267,22 @@ test('serves the deterministic Stage 4 demo document as a download', async () =>
   assert.match(await response.text(), /Файл сохранён и открыт/);
 });
 
+test('serves non-HTML Stage 4 demo files with their declared formats', async () => {
+  const fixtures = [
+    ['stage4-report.xml', /application\/xml/, /<report/],
+    ['stage4-result.json', /application\/json/, /"document"/],
+    ['stage4-register.csv', /text\/csv/, /document_id;source/],
+    ['stage4-log.txt', /text\/plain/, /Результат: SUCCESS/]
+  ];
+  for (const [filename, contentType, bodyPattern] of fixtures) {
+    const response = await fetch(`${origin}/demo/files/${filename}`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), contentType);
+    assert.match(response.headers.get('content-disposition'), new RegExp(filename));
+    assert.match(await response.text(), bodyPattern);
+  }
+});
+
 test('serves the visual priority queue', async () => {
   const response = await webRequest('/queue');
   assert.equal(response.status, 200);

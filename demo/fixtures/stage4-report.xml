@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<report source="1C" stage="4">
+  <document>TEST_STAGE4_001</document>
+  <status>READY</status>
+  <amount currency="RUB">12500.50</amount>
+</report>

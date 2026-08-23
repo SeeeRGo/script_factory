@@ -1,15 +1,14 @@
 {
   "priority": 8,
-  "timeout_ms": 30000,
+  "timeout_ms": 180000,
   "retry_policy": {
     "max_attempts": 2,
     "backoff_ms": 500
   },
-  "context": {
-    "expected_ip": "127.0.0.1"
-  },
+  "context": {},
   "script": {
     "default_step_timeout_ms": 12000,
+    "inter_step_delay_ms": 10000,
     "steps": [
       {
         "id": "prepare",
@@ -20,12 +19,11 @@
       },
       {
         "id": "network",
-        "title": "Проверить доступность УН",
-        "description": "Подтверждает, что сценарий выполняется на ожидаемой тестовой машине.",
+        "title": "Проверить публичный IP через интернет",
+        "description": "Запрашивает фактический внешний IP тестовой УН у API ipify.",
         "action": "check_ip",
         "params": {
-          "current_ip": "{{expected_ip}}",
-          "expected_ip": "{{expected_ip}}"
+          "service_url": "https://api64.ipify.org?format=json"
         },
         "duration_ms": 180
       },
@@ -41,11 +39,11 @@
       },
       {
         "id": "source",
-        "title": "Открыть источник файла",
-        "description": "Фиксирует HTTP-адрес встроенного демо-документа перед загрузкой.",
+        "title": "Открыть источник XML",
+        "description": "Фиксирует HTTP-адрес XML-файла обмена перед загрузкой набора.",
         "action": "navigate",
         "params": {
-          "url": "{{demo_file_url}}"
+          "url": "https://www.w3schools.com/xml/note.xml"
         },
         "duration_ms": 220
       },
@@ -61,20 +59,36 @@
       },
       {
         "id": "download",
-        "title": "Скачать и сохранить документ",
-        "description": "Получает файл по HTTP и записывает байты в каталог артефактов текущего задания.",
+        "title": "Скачать и сохранить файлы разных форматов",
+        "description": "Получает XML, JSON, CSV и TXT по HTTP и записывает их в каталог артефактов текущего задания.",
         "action": "download_files",
         "params": {
           "save": true,
           "max_bytes": 1048576,
           "files": [
             {
-              "filename": "stage4-demo-document.html",
-              "source_url": "{{demo_file_url}}",
-              "mime_type": "text/html"
+              "filename": "stage4-report.xml",
+              "source_url": "https://www.w3schools.com/xml/note.xml",
+              "mime_type": "application/xml"
+            },
+            {
+              "filename": "stage4-result.json",
+              "source_url": "https://jsonplaceholder.typicode.com/todos/1",
+              "mime_type": "application/json"
+            },
+            {
+              "filename": "stage4-register.csv",
+              "source_url": "https://raw.githubusercontent.com/cs109/2014_data/master/countries.csv",
+              "mime_type": "text/csv"
+            },
+            {
+              "filename": "stage4-log.txt",
+              "source_url": "https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore",
+              "mime_type": "text/plain"
             }
           ]
-        }
+        },
+        "timeout_ms": 60000
       },
       {
         "id": "verify-path",
@@ -83,7 +97,7 @@
         "action": "find_files",
         "params": {
           "directory": "{{download_dir}}",
-          "prefixes": ["stage4-demo-document"]
+          "prefixes": ["stage4-"]
         }
       },
       {
@@ -98,13 +112,13 @@
       },
       {
         "id": "open",
-        "title": "Открыть файл в Chromium",
-        "description": "Открывает локальную сохранённую копию; результат виден через noVNC и на итоговом скриншоте.",
+        "title": "Открыть XML в Яндекс Браузере",
+        "description": "Открывает локальную сохранённую XML-копию; остальные форматы доступны в артефактах задания.",
         "action": "open_file",
         "params": {
           "path": "{{downloaded_files.0}}"
         },
-        "timeout_ms": 15000
+        "timeout_ms": 120000
       },
       {
         "id": "complete",

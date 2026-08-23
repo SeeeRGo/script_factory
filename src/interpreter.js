@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { isIP } from 'node:net';
 import path from 'node:path';
 import { parse as parsePuppeteerReplay } from '@puppeteer/replay';
 
@@ -7,6 +8,7 @@ const DEFAULT_STEP_TIMEOUT_MS = 10_000;
 
 export const ERROR_CODES = Object.freeze({
   IP_MISMATCH: 'IP_MISMATCH',
+  IP_LOOKUP_ERROR: 'IP_LOOKUP_ERROR',
   FILE_NOT_FOUND: 'FILE_NOT_FOUND',
   AUTH_ERROR: 'AUTH_ERROR',
   UPLOAD_ERROR: 'UPLOAD_ERROR',
@@ -224,14 +226,61 @@ export function createDefaultStepRegistry(options = {}) {
     .register('check_ip', async (input) => {
       await simulate(input);
       const { params } = input;
-      const currentIp = params.current_ip ?? input.context.current_ip;
+      const providerUrl = params.service_url || 'https://api64.ipify.org?format=json';
+      let currentIp = params.current_ip ?? input.context.current_ip;
+      let checkedOnline = false;
+      if (!currentIp) {
+        if (typeof fetchImpl !== 'function') {
+          throw new InterpreterError(ERROR_CODES.IP_LOOKUP_ERROR, 'Интернет-проверка IP недоступна в текущем окружении', {
+            statusCode: 503,
+            retryable: true
+          });
+        }
+        let response;
+        try {
+          response = await fetchImpl(providerUrl, { redirect: 'follow', signal: input.signal });
+        } catch (error) {
+          throw new InterpreterError(ERROR_CODES.IP_LOOKUP_ERROR, `Не удалось получить публичный IP через ${providerUrl}`, {
+            cause: error,
+            statusCode: 502,
+            retryable: true,
+            details: { service_url: providerUrl }
+          });
+        }
+        if (!response.ok) {
+          throw new InterpreterError(ERROR_CODES.IP_LOOKUP_ERROR, `Сервис проверки IP вернул HTTP ${response.status}`, {
+            statusCode: 502,
+            retryable: response.status >= 500,
+            details: { service_url: providerUrl, http_status: response.status }
+          });
+        }
+        const body = await response.text();
+        try {
+          currentIp = JSON.parse(body).ip;
+        } catch {
+          currentIp = body.trim();
+        }
+        checkedOnline = true;
+      }
+      if (!isIP(String(currentIp || '').trim())) {
+        throw new InterpreterError(ERROR_CODES.IP_LOOKUP_ERROR, 'Интернет-сервис вернул некорректный IP-адрес', {
+          statusCode: 502,
+          retryable: true,
+          details: { service_url: providerUrl, response_value: currentIp ?? null }
+        });
+      }
+      currentIp = String(currentIp).trim();
       if (params.expected_ip && currentIp && params.expected_ip !== currentIp) {
         throw new InterpreterError(ERROR_CODES.IP_MISMATCH, `Ожидался IP ${params.expected_ip}, получен ${currentIp}`, {
           statusCode: 400,
           details: { expected_ip: params.expected_ip, current_ip: currentIp }
         });
       }
-      return { current_ip: currentIp ?? params.expected_ip ?? null };
+      return {
+        current_ip: currentIp,
+        ip_checked_online: checkedOnline,
+        ip_service_url: checkedOnline ? providerUrl : null
+      };
     })
     .register('launch_browser', async (input) => {
       failWhen(input.params, ['fail', 'launch_failed'], ERROR_CODES.AUTH_ERROR, 'Не удалось запустить браузер');
@@ -614,6 +663,10 @@ export function validateScript(script, registry = createDefaultStepRegistry()) {
     && (!Number.isInteger(script.default_step_timeout_ms) || script.default_step_timeout_ms < 1)) {
     errors.push({ path: 'script.default_step_timeout_ms', message: 'default_step_timeout_ms должен быть положительным целым числом' });
   }
+  if (script.inter_step_delay_ms !== undefined
+    && (!Number.isInteger(script.inter_step_delay_ms) || script.inter_step_delay_ms < 0)) {
+    errors.push({ path: 'script.inter_step_delay_ms', message: 'inter_step_delay_ms должен быть целым числом не меньше 0' });
+  }
 
   script.steps.forEach((step, index) => {
     const path = `script.steps[${index}]`;
@@ -747,6 +800,17 @@ export async function executeScript(options) {
         duration_ms: Date.now() - stepStartedAt,
         output: output ?? null
       });
+      const interStepDelayMs = script.inter_step_delay_ms ?? 0;
+      if (interStepDelayMs > 0 && index < script.steps.length - 1) {
+        await onEvent({
+          type: 'inter_step_delay_started',
+          ts: new Date().toISOString(),
+          after_step_index: index,
+          before_step_index: index + 1,
+          duration_ms: interStepDelayMs
+        });
+        await abortableDelay(interStepDelayMs, signal);
+      }
     } catch (rawError) {
       const error = normalizeError(rawError);
       error.step_index = index + 1;

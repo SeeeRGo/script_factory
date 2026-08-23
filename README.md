@@ -112,7 +112,7 @@ size, and SHA-256 checksum. A following `open_file` step opens the saved local c
 in Chromium and adds a screenshot to the result. Every successful result also
 includes `job_id`, `uid`, and `un_id`.
 
-The normalized workflow errors are `IP_MISMATCH`, `FILE_NOT_FOUND`, `AUTH_ERROR`,
+The normalized workflow errors are `IP_MISMATCH`, `IP_LOOKUP_ERROR`, `FILE_NOT_FOUND`, `AUTH_ERROR`,
 `UPLOAD_ERROR`, `DOWNLOAD_ERROR`, `VALIDATION_ERROR`, `TIMEOUT_ERROR`,
 `PLUGIN_NOT_RUNNING`, `BROWSER_LAUNCH_ERROR`, and `BROWSER_REPLAY_ERROR`.
 Controlled filesystem operations additionally return `FILESYSTEM_ACCESS_DENIED`,

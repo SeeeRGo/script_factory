@@ -190,6 +190,34 @@ test('wait uses a duration supplied through the script context', async () => {
   assert.ok(Date.now() - startedAt >= 20);
 });
 
+test('inter_step_delay_ms pauses only between steps and can be disabled with zero', async () => {
+  const events = [];
+  const startedAt = Date.now();
+  await executeScript({
+    script: {
+      inter_step_delay_ms: 20,
+      steps: [
+        { action: 'noop', duration_ms: 0 },
+        { action: 'noop', duration_ms: 0 },
+        { action: 'noop', duration_ms: 0 }
+      ]
+    },
+    onEvent: (event) => events.push(event)
+  });
+  assert.ok(Date.now() - startedAt >= 35);
+  assert.equal(events.filter((event) => event.type === 'inter_step_delay_started').length, 2);
+
+  const disabledEvents = [];
+  await executeScript({
+    script: {
+      inter_step_delay_ms: 0,
+      steps: [{ action: 'noop', duration_ms: 0 }, { action: 'noop', duration_ms: 0 }]
+    },
+    onEvent: (event) => disabledEvents.push(event)
+  });
+  assert.equal(disabledEvents.some((event) => event.type === 'inter_step_delay_started'), false);
+});
+
 test('controlled file steps copy, read, write and delete only inside allowed roots', async (t) => {
   const workingDirectory = await mkdtemp(path.join(os.tmpdir(), 'script-factory-controlled-files-'));
   t.after(() => rm(workingDirectory, { recursive: true, force: true }));
@@ -283,6 +311,26 @@ test('downloads a real response, saves it and opens the local copy', async (t) =
   assert.equal(result.context.artifacts.length, 2);
   assert.equal(result.context.artifacts[0].public_url, '/artifacts/job-test/document.html');
   assert.match(result.context.artifacts[0].checksum_sha256, /^[a-f0-9]{64}$/);
+});
+
+test('check_ip obtains and validates the public IP through its internet provider', async () => {
+  const registry = createDefaultStepRegistry({
+    fetchImpl: async (url) => {
+      assert.equal(String(url), 'https://api64.ipify.org/?format=json');
+      return new Response('{"ip":"203.0.113.42"}', {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  });
+  const result = await executeScript({
+    registry,
+    script: {
+      steps: [{ action: 'check_ip', params: { service_url: 'https://api64.ipify.org/?format=json' } }]
+    }
+  });
+  assert.equal(result.context.current_ip, '203.0.113.42');
+  assert.equal(result.context.ip_checked_online, true);
+  assert.equal(result.context.ip_service_url, 'https://api64.ipify.org/?format=json');
 });
 
 for (const scenario of [
