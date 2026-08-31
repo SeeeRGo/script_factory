@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$ProjectPath = (Split-Path -Parent $PSScriptRoot),
   [int]$Port = 33001,
   [switch]$ExpectServiceRunning
