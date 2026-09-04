@@ -125,7 +125,11 @@ test('healthcheck exposes this UN and its local queue state', async () => {
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.status, 'ok');
+    assert.equal(body.ready, true);
     assert.equal(body.un_id, UN_ID);
+    assert.equal(body.checks.database.status, 'ok');
+    assert.equal(body.checks.filesystem.status, 'ok');
+    assert.equal(body.checks.browser.status, 'ok');
     assert.equal(body.queue.queued, 0);
     assert.equal(body.queue.running, 0);
     assert.equal(body.queue.max_parallel_jobs, 1);
@@ -153,6 +157,58 @@ test('healthcheck exposes this UN and its local queue state', async () => {
     max_parallel_jobs: 1,
     available_slots: 1
   });
+});
+
+test('accepts separated parameters and script text, supports uid lookup and detects idempotency conflicts', async () => {
+  const uid = `separated-${Date.now()}`;
+  const body = {
+    parameters: {
+      uid,
+      priority: 12,
+      timeout_ms: 2000,
+      log_level: 'debug',
+      context: { delay_ms: 5 }
+    },
+    script_text: JSON.stringify({
+      steps: [{ action: 'wait', params: { duration_ms: '{{delay_ms}}' }, timeout_ms: 200 }]
+    })
+  };
+  const createResponse = await request('/api/v2/jobs', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': uid },
+    body: JSON.stringify(body)
+  });
+  assert.equal(createResponse.status, 201);
+  const created = await createResponse.json();
+  assert.equal(created.job.uid, uid);
+  assert.equal(created.job.log_level, 'debug');
+
+  const byUidResponse = await request(`/api/v2/jobs/by-uid/${encodeURIComponent(uid)}`);
+  assert.equal(byUidResponse.status, 200);
+  assert.equal((await byUidResponse.json()).job.job_id, created.job.job_id);
+
+  const repeatedResponse = await request('/api/v2/jobs', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': uid },
+    body: JSON.stringify(body)
+  });
+  assert.equal(repeatedResponse.status, 200);
+  assert.equal((await repeatedResponse.json()).idempotent, true);
+
+  const conflictingBody = structuredClone(body);
+  conflictingBody.parameters.priority = 13;
+  const conflictResponse = await request('/api/v2/jobs', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': uid },
+    body: JSON.stringify(conflictingBody)
+  });
+  assert.equal(conflictResponse.status, 409);
+  assert.equal((await conflictResponse.json()).error.code, 'IDEMPOTENCY_CONFLICT');
+
+  const logsResponse = await request(`/api/v2/jobs/${created.job.job_id}/logs?min_level=debug`);
+  const logs = await logsResponse.json();
+  assert.equal(logs.log_level, 'debug');
+  assert.ok(logs.logs.some((entry) => entry.level === 'debug'));
 });
 
 test('healthcheck reflects active and queued jobs on this UN', async () => {
@@ -256,7 +312,7 @@ test('serves ready-to-run demo scenarios to the studio', async () => {
   const source = await response.text();
   assert.match(source, /Отчёт отправлен/);
   assert.match(source, /Повтор после сбоя/);
-  assert.match(source, /Скачать и открыть файл/);
+  assert.match(source, /Скачать файлы разных форматов/);
 });
 
 test('serves the deterministic Stage 4 demo document as a download', async () => {
@@ -459,6 +515,7 @@ test('executes a script through the API and exposes visual step state and logs',
     kind: 'downloaded_file',
     filename: 'receipt.pdf',
     local_path: '/downloads/receipt.pdf',
+    api_url: `/api/v2/jobs/${jobId}/artifacts/receipt_1`,
     source_url: 'https://example.test/receipt.pdf',
     mime_type: 'application/pdf',
     size_bytes: 128,
@@ -615,13 +672,61 @@ test('downloads, saves, verifies and opens the Stage 4 demo file', async () => {
   assert.ok(downloaded.size_bytes > 1000);
   assert.match(downloaded.checksum_sha256, /^[a-f0-9]{64}$/);
   assert.match(downloaded.public_url, new RegExp(`^/artifacts/${jobId}/`));
+  assert.equal(downloaded.api_url, `/api/v2/jobs/${jobId}/artifacts/${downloaded.artifact_id}`);
 
   const downloadedResponse = await webRequest(downloaded.public_url);
   assert.equal(downloadedResponse.status, 200);
   assert.match(await downloadedResponse.text(), /DOWNLOAD → SAVE → VERIFY → OPEN/);
+  const apiArtifactResponse = await request(`/api/v2/jobs/${jobId}/artifacts/${downloaded.artifact_id}`);
+  assert.equal(apiArtifactResponse.status, 200);
+  assert.match(await apiArtifactResponse.text(), /DOWNLOAD → SAVE → VERIFY → OPEN/);
   const screenshotResponse = await webRequest(screenshot.public_url);
   assert.equal(screenshotResponse.status, 200);
   assert.ok((await screenshotResponse.arrayBuffer()).byteLength > 1000);
+});
+
+test('keeps partial artifacts and diagnostic logs after a controlled file-flow failure', async () => {
+  const uid = `download-error-${Date.now()}`;
+  const payload = JSON.parse(await readFile(
+    path.resolve(import.meta.dirname, '../demo/download-save-open2.json'),
+    'utf8'
+  ));
+  payload.uid = uid;
+  payload.callback.url = `${origin}/demo/1c/callback?case=download-save-open2`;
+  payload.callback.backoff_ms = 5;
+  payload.callback.timeout_ms = 500;
+  const response = await request('/api/v2/jobs', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': uid },
+    body: JSON.stringify(payload)
+  });
+  assert.equal(response.status, 201);
+  const jobId = (await response.json()).job.job_id;
+
+  let job;
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    job = await request(`/api/v2/jobs/${jobId}`).then((jobResponse) => jobResponse.json()).then((body) => body.job);
+    if (job.status === 'validation_failed' && job.callback_delivery?.status === 'delivered') break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  assert.equal(job.status, 'validation_failed');
+  assert.equal(job.callback_delivery.status, 'delivered');
+  assert.equal(job.error.code, 'VALIDATION_ERROR');
+  assert.match(job.error.message, /download-save-open2/);
+  assert.equal(job.result.artifacts.length, 2);
+  assert.ok(job.result.artifacts.some((artifact) => artifact.filename === 'stage4-download-demo.html'));
+  assert.ok(job.result.artifacts.some((artifact) => artifact.kind === 'browser_screenshot'));
+
+  const callbackEvents = await request('/api/v2/demo/callback-events').then((eventResponse) => eventResponse.json());
+  const callbackEvent = callbackEvents.items.find((event) => event.job.uid === uid);
+  assert.equal(callbackEvent.job.error.code, 'VALIDATION_ERROR');
+  assert.equal(callbackEvent.job.result.artifacts.length, 2);
+
+  const errorLogs = await request(`/api/v2/jobs/${jobId}/logs?min_level=error`).then((logResponse) => logResponse.json());
+  assert.ok(errorLogs.logs.length >= 1);
+  assert.ok(errorLogs.logs.every((entry) => entry.level === 'error'));
 });
 
 test('executes a local Puppeteer Replay mail fixture without external delivery', async () => {

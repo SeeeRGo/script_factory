@@ -61,7 +61,7 @@ function boundedNumber(value, fallback, maximum) {
   return Math.min(parsed, maximum);
 }
 
-async function existingExecutablePath(configuredPath) {
+export async function resolveBrowserExecutablePath(configuredPath) {
   const candidates = [configuredPath, ...EXECUTABLE_CANDIDATES].filter(Boolean);
   for (const candidate of candidates) {
     try {
@@ -72,7 +72,9 @@ async function existingExecutablePath(configuredPath) {
     }
   }
   try {
-    return puppeteer.executablePath();
+    const bundledPath = puppeteer.executablePath();
+    await access(bundledPath);
+    return bundledPath;
   } catch {
     return undefined;
   }
@@ -233,7 +235,7 @@ export async function openFileInBrowser(options) {
   const normalizedHoldOpenMs = boundedNumber(holdOpenMs, 0, 60_000);
   const normalizedWindowWidth = Math.max(800, Math.round(boundedNumber(windowWidth, 1400, 3840)));
   const normalizedWindowHeight = Math.max(600, Math.round(boundedNumber(windowHeight, 860, 2160)));
-  const executablePath = await existingExecutablePath(configuredExecutablePath);
+  const executablePath = await resolveBrowserExecutablePath(configuredExecutablePath);
   let browser;
   const onAbort = () => { void browser?.close().catch(() => {}); };
   signal?.addEventListener('abort', onAbort, { once: true });
@@ -321,7 +323,7 @@ export async function executeBrowserReplay(options) {
     });
   }
   if (signal?.aborted) throw signal.reason;
-  const executablePath = await existingExecutablePath(configuredExecutablePath);
+  const executablePath = await resolveBrowserExecutablePath(configuredExecutablePath);
   let browser;
   let page;
   try {

@@ -1,0 +1,86 @@
+{
+  "uid": "REPLACE_WITH_UNIQUE_1C_UID",
+  "priority": 8,
+  "timeout_ms": 120000,
+  "retry_policy": {
+    "max_attempts": 1,
+    "backoff_ms": 500
+  },
+  "log_level": "debug",
+  "callback": {
+    "url": "http://1c-test.local:8080/script-factory/result",
+    "max_attempts": 5,
+    "backoff_ms": 1000,
+    "timeout_ms": 5000
+  },
+  "context": {},
+  "script": {
+    "default_step_timeout_ms": 30000,
+    "steps": [
+      {
+        "id": "prepare",
+        "title": "Подготовить диагностическое задание",
+        "description": "Начинает полный цикл загрузки с подробным уровнем логирования.",
+        "action": "noop",
+        "duration_ms": 50
+      },
+      {
+        "id": "download",
+        "title": "Скачать тестовый документ",
+        "description": "Загружает локальный демо-документ через HTTP сервиса и сохраняет его как артефакт.",
+        "action": "download_files",
+        "params": {
+          "save": true,
+          "max_bytes": 1048576,
+          "files": [
+            {
+              "filename": "stage4-download-demo.html",
+              "source_url": "{{service_base_url}}/demo/files/stage4-download-demo.html",
+              "mime_type": "text/html"
+            }
+          ]
+        }
+      },
+      {
+        "id": "verify-path",
+        "title": "Проверить сохранение",
+        "description": "Находит сохранённый документ в каталоге артефактов задания.",
+        "action": "find_files",
+        "params": {
+          "directory": "{{download_dir}}",
+          "prefixes": ["stage4-download-demo"]
+        }
+      },
+      {
+        "id": "verify-content",
+        "title": "Прочитать сохранённый документ",
+        "description": "Подтверждает, что содержимое файла доступно непосредственно на УН.",
+        "action": "read_text_file",
+        "params": {
+          "path": "{{downloaded_files.0}}",
+          "max_bytes": 1048576
+        }
+      },
+      {
+        "id": "open",
+        "title": "Открыть документ в браузере",
+        "description": "Открывает сохранённый документ и создаёт диагностический снимок экрана.",
+        "action": "open_file",
+        "params": {
+          "path": "{{downloaded_files.0}}"
+        },
+        "timeout_ms": 60000
+      },
+      {
+        "id": "controlled-failure",
+        "title": "Сформировать контролируемую ошибку",
+        "description": "После успешной загрузки и открытия завершает задание предсказуемой ошибкой для проверки логов и callback.",
+        "action": "validate_report",
+        "params": {
+          "valid": false,
+          "error_message": "Тестовая ошибка download-save-open2"
+        }
+      }
+    ]
+  }
+}

@@ -1,9 +1,17 @@
 {
+  "uid": "REPLACE_WITH_UNIQUE_1C_UID",
   "priority": 8,
   "timeout_ms": 180000,
   "retry_policy": {
     "max_attempts": 2,
     "backoff_ms": 500
+  },
+  "log_level": "info",
+  "callback": {
+    "url": "http://1c-test.local:8080/script-factory/result",
+    "max_attempts": 5,
+    "backoff_ms": 1000,
+    "timeout_ms": 5000
   },
   "context": {},
   "script": {

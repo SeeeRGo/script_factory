@@ -7,6 +7,7 @@ const scenario = process.argv[2] || 'success';
 const expected = {
   success: { status: 'success' },
   'download-save-open': { status: 'success' },
+  'download-save-open2': { status: 'validation_failed', code: 'VALIDATION_ERROR' },
   'file-not-found': { status: 'failed', code: 'FILE_NOT_FOUND' },
   retry: { status: 'success', attempts: 2 },
   timeout: { status: 'timeout', code: 'TIMEOUT_ERROR' }
@@ -23,6 +24,13 @@ const apiUrl = process.env.DEMO_API_URL || 'http://127.0.0.1:3000';
 const apiKey = process.env.API_KEY || 'dev-secret';
 const payload = JSON.parse(await readFile(path.join(demoDirectory, `${scenario}.json`), 'utf8'));
 const terminalStatuses = new Set(['success', 'failed', 'validation_failed', 'cancelled', 'timeout']);
+const runUid = `demo-${scenario}-${Date.now()}`;
+payload.uid = runUid;
+if (payload.callback && process.env.DEMO_CALLBACK_URL) {
+  payload.callback.url = process.env.DEMO_CALLBACK_URL;
+} else {
+  delete payload.callback;
+}
 
 await resetDemoData();
 console.log(`Сценарий: ${scenario}`);
@@ -33,7 +41,7 @@ const createResponse = await fetch(`${apiUrl}/api/v2/jobs`, {
   headers: {
     'Content-Type': 'application/json',
     'X-API-Key': apiKey,
-    'Idempotency-Key': `demo-${scenario}-${Date.now()}`
+    'Idempotency-Key': runUid
   },
   body: JSON.stringify(payload)
 });

@@ -820,6 +820,7 @@ export async function executeScript(options) {
         step_index: index + 1,
         action
       };
+      error.partial_context = { ...context };
       await onEvent({
         type: 'step_failed',
         ts: new Date().toISOString(),

@@ -160,7 +160,13 @@ components:
           default: 5000
     JobCreateRequest:
       type: object
+      description: Поддерживает прежний плоский формат и новый формат с parameters + script_text. Смешивать параметры верхнего уровня с parameters нельзя.
       properties:
+        parameters:
+          $ref: '#/components/schemas/JobParameters'
+        script_text:
+          type: string
+          description: Сценарий как сериализованный JSON-объект. Передаётся отдельно от parameters.
         uid:
           type: string
           description: Идентификатор задания во внешней системе и ключ идемпотентности. Также поддерживается Idempotency-Key.
@@ -180,8 +186,36 @@ components:
           type: object
           additionalProperties: true
           description: Начальный контекст интерпретатора, переопределяющий одноимённые значения сценария.
+        log_level:
+          $ref: '#/components/schemas/LogLevel'
         script:
           $ref: '#/components/schemas/AnyScript'
+    JobParameters:
+      type: object
+      description: Параметры постановки задания в новом разделённом формате.
+      properties:
+        uid:
+          type: string
+          description: Внешний идентификатор заявки и ключ идемпотентности.
+        priority:
+          type: integer
+          description: Чем меньше значение, тем выше приоритет.
+        timeout_ms:
+          type: integer
+          minimum: 1
+        retry_policy:
+          $ref: '#/components/schemas/RetryPolicy'
+        callback:
+          $ref: '#/components/schemas/CallbackConfig'
+        context:
+          type: object
+          additionalProperties: true
+        log_level:
+          $ref: '#/components/schemas/LogLevel'
+    LogLevel:
+      type: string
+      enum: [debug, info, warn, error]
+      default: info
     ExecutionStep:
       type: object
       properties:
@@ -296,6 +330,9 @@ components:
           type: string
           nullable: true
           description: Защищённая ссылка интерфейса на артефакт, если он доступен для просмотра.
+        api_url:
+          type: string
+          description: Относительный API-адрес скачивания с заголовком X-API-Key.
         mime_type:
           type: string
           nullable: true
@@ -361,17 +398,36 @@ components:
           minimum: 0
     HealthResponse:
       type: object
-      required: [status, service, request_id, un_id, queue]
+      required: [status, ready, service, request_id, un_id, checks, queue]
       properties:
         status:
           type: string
-          enum: [ok]
+          enum: [ok, error]
+        ready:
+          type: boolean
         service:
           type: string
         request_id:
           type: string
         un_id:
           type: string
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [ok, error]
+              message:
+                type: string
+              path:
+                type: string
+              executable_path:
+                type: string
+                nullable: true
+        error:
+          $ref: '#/components/schemas/ErrorBody'
         queue:
           $ref: '#/components/schemas/QueueHealth'
         browser_replay:
@@ -456,6 +512,8 @@ components:
           type: string
         uid:
           type: string
+        log_level:
+          $ref: '#/components/schemas/LogLevel'
         un_id:
           type: string
         status:
@@ -552,6 +610,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+        "503":
+          description: Сервис отвечает, но ещё не готов принимать задания
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
   /interpreter/actions:
     get:
       tags: [Интерпретатор]
@@ -604,6 +668,17 @@ paths:
             schema:
               $ref: '#/components/schemas/JobCreateRequest'
             examples:
+              separatedContract:
+                summary: Новый формат — параметры и текст сценария разделены
+                value:
+                  parameters:
+                    uid: 1c-job-000042
+                    priority: 30
+                    timeout_ms: 120000
+                    log_level: info
+                    context:
+                      delay_ms: 15000
+                  script_text: '{"default_step_timeout_ms":60000,"steps":[{"action":"wait","params":{"duration_ms":"{{delay_ms}}"}}]}'
               stage4OneC:
                 summary: Этап 4 — управляемая задержка и возврат результата в 1С
                 value:
@@ -786,6 +861,30 @@ paths:
                 $ref: '#/components/schemas/JobResponse'
         "400":
           description: Некорректный контракт задания или сценария
+        "409":
+          description: uid уже существует, но параметры или сценарий отличаются
+  /jobs/by-uid/{uid}:
+    get:
+      tags: [Задания]
+      summary: Получить задание по внешнему uid
+      parameters:
+        - in: path
+          name: uid
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Задание найдено
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job:
+                    $ref: '#/components/schemas/Job'
+        "404":
+          description: Задание не найдено
   /jobs/{job_id}:
     get:
       tags: [Задания]
@@ -832,6 +931,11 @@ paths:
           required: true
           schema:
             type: string
+        - in: query
+          name: min_level
+          description: Минимальная важность возвращаемых записей.
+          schema:
+            $ref: '#/components/schemas/LogLevel'
       responses:
         "200":
           description: Журнал задания
@@ -842,10 +946,37 @@ paths:
                 properties:
                   job_id:
                     type: string
+                  log_level:
+                    $ref: '#/components/schemas/LogLevel'
                   logs:
                     type: array
                     items:
                       $ref: '#/components/schemas/JobLog'
+  /jobs/{job_id}/artifacts/{artifact_id}:
+    get:
+      tags: [Задания]
+      summary: Скачать артефакт задания с авторизацией X-API-Key
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: artifact_id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Содержимое файла
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "404":
+          description: Артефакт или файл не найден
   /system/resources:
     get:
       tags: [Система]

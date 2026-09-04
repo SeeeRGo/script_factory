@@ -160,6 +160,9 @@ test('download demo fixture saves, verifies and opens a real file', async () => 
     'utf8'
   ));
   assert.deepEqual(validateScript(payload.script), []);
+  assert.equal(payload.uid, 'REPLACE_WITH_UNIQUE_1C_UID');
+  assert.match(payload.callback.url, /^http:/);
+  assert.equal(payload.log_level, 'info');
   assert.equal(payload.script.steps.length, 10);
   assert.equal(payload.script.inter_step_delay_ms, 10000);
   assert.equal(payload.script.steps.find((step) => step.action === 'download_files').params.save, true);
@@ -173,4 +176,20 @@ test('download demo fixture saves, verifies and opens a real file', async () => 
   assert.ok(payload.script.steps.some((step) => step.action === 'read_text_file'));
   assert.ok(payload.script.steps.some((step) => step.action === 'open_file'));
   assert.ok(payload.script.steps.every((step) => step.title && step.description));
+});
+
+test('download error demo completes the file cycle and then fails predictably with debug logs', async () => {
+  const payload = JSON.parse(await readFile(
+    path.resolve(import.meta.dirname, '../demo/download-save-open2.json'),
+    'utf8'
+  ));
+  assert.deepEqual(validateScript(payload.script), []);
+  assert.equal(payload.log_level, 'debug');
+  assert.match(payload.callback.url, /^http:/);
+  assert.ok(payload.script.steps.some((step) => step.action === 'download_files'));
+  assert.ok(payload.script.steps.some((step) => step.action === 'open_file'));
+  const failure = payload.script.steps.at(-1);
+  assert.equal(failure.action, 'validate_report');
+  assert.equal(failure.params.valid, false);
+  assert.match(failure.params.error_message, /download-save-open2/);
 });

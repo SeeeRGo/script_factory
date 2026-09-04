@@ -1,7 +1,7 @@
 import http from 'node:http';
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { statfsSync } from 'node:fs';
-import { mkdir, readFile } from 'node:fs/promises';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { constants as fsConstants, statfsSync } from 'node:fs';
+import { access, mkdir, readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,7 +13,11 @@ import {
   isPuppeteerReplayScript,
   validateScript
 } from './interpreter.js';
-import { executeBrowserReplay, openFileInBrowser } from './browser-replay.js';
+import {
+  executeBrowserReplay,
+  openFileInBrowser,
+  resolveBrowserExecutablePath
+} from './browser-replay.js';
 import { createDemoMail } from './demo-mail.js';
 
 const PORT = Number(process.env.PORT || 3000);
@@ -66,6 +70,8 @@ const FILESYSTEM_ALLOWED_ROOTS = String(process.env.FILESYSTEM_ALLOWED_ROOTS || 
   .filter(Boolean);
 const CORS_ALLOWED_HEADERS = 'X-API-Key, Idempotency-Key, Content-Type, Accept, Origin, Authorization';
 const CORS_ALLOWED_METHODS = 'GET, POST, PUT, OPTIONS';
+const LOG_LEVELS = Object.freeze(['debug', 'info', 'warn', 'error']);
+const LOG_LEVEL_PRIORITY = new Map(LOG_LEVELS.map((level, index) => [level, index]));
 const webSessions = new Map();
 const demoMail = createDemoMail({ login: DEMO_MAIL_LOGIN, password: DEMO_MAIL_PASSWORD });
 
@@ -267,6 +273,8 @@ function buildJobSnapshot(job) {
   return {
     job_id: job.job_id,
     uid: job.uid,
+    request_hash: job.request_hash,
+    log_level: job.log_level,
     status: job.status,
     priority: job.priority,
     request: job.request,
@@ -290,6 +298,8 @@ function restoreJob(snapshot) {
   const job = {
     job_id: snapshot.job_id,
     uid: snapshot.uid,
+    request_hash: snapshot.request_hash ?? null,
+    log_level: LOG_LEVEL_PRIORITY.has(snapshot.log_level) ? snapshot.log_level : 'info',
     status: snapshot.status,
     priority: Number.isFinite(snapshot.priority) ? snapshot.priority : 100,
     request: snapshot.request && typeof snapshot.request === 'object' ? snapshot.request : {},
@@ -633,16 +643,8 @@ async function sendDemoDownloadFile(res, filename) {
   res.end(body);
 }
 
-async function sendArtifactFile(res, pathname) {
-  const parts = pathname.split('/').filter(Boolean);
-  if (parts.length !== 3 || parts[0] !== 'artifacts') {
-    sendJson(res, 404, { error: { code: 'ARTIFACT_NOT_FOUND', message: 'Артефакт не найден' } });
-    return;
-  }
-  const [, jobId, encodedFilename] = parts;
-  const filename = path.basename(decodeURIComponent(encodedFilename));
-  const job = state.jobs.get(jobId);
-  const artifact = job?.result?.artifacts?.find((item) => item.filename === filename);
+async function sendJobArtifactFile(res, job, artifact) {
+  const filename = path.basename(artifact?.filename || 'artifact');
   const artifactRoot = path.resolve(ARTIFACTS_DIR);
   const localPath = artifact?.local_path ? path.resolve(artifact.local_path) : null;
   if (!artifact || !localPath || !localPath.startsWith(`${artifactRoot}${path.sep}`)) {
@@ -667,6 +669,19 @@ async function sendArtifactFile(res, pathname) {
   }
 }
 
+async function sendArtifactFile(res, pathname) {
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts.length !== 3 || parts[0] !== 'artifacts') {
+    sendJson(res, 404, { error: { code: 'ARTIFACT_NOT_FOUND', message: 'Артефакт не найден' } });
+    return;
+  }
+  const [, jobId, encodedFilename] = parts;
+  const filename = path.basename(decodeURIComponent(encodedFilename));
+  const job = state.jobs.get(jobId);
+  const artifact = job?.result?.artifacts?.find((item) => item.filename === filename);
+  await sendJobArtifactFile(res, job, artifact);
+}
+
 function applyCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', CORS_ALLOWED_METHODS);
@@ -675,21 +690,27 @@ function applyCorsHeaders(res) {
 }
 
 function logJob(job, level, message, details = undefined) {
-  job.logs.push({
-    ts: nowIso(),
-    level,
-    message,
-    ...(details === undefined ? {} : { details })
-  });
+  const configuredLevel = LOG_LEVEL_PRIORITY.has(job.log_level) ? job.log_level : 'info';
+  const eventPriority = LOG_LEVEL_PRIORITY.get(level) ?? LOG_LEVEL_PRIORITY.get('info');
+  if (eventPriority >= LOG_LEVEL_PRIORITY.get(configuredLevel)) {
+    job.logs.push({
+      ts: nowIso(),
+      level,
+      message,
+      ...(details === undefined ? {} : { details })
+    });
+  }
   job.updated_at = nowIso();
   schedulePersist();
 }
 
-function createJobRecord(payload) {
+function createJobRecord(payload, requestHash) {
   const callback = payload.callback;
   const job = {
     job_id: `job_${randomUUID()}`,
     uid: payload.uid,
+    request_hash: requestHash,
+    log_level: payload.log_level ?? 'info',
     status: 'queued',
     priority: Number.isFinite(payload.priority) ? payload.priority : 100,
     request: payload,
@@ -730,6 +751,7 @@ function summarizeJob(job) {
     job_id: job.job_id,
     uid: job.uid,
     un_id: UN_ID,
+    log_level: job.log_level,
     status: job.status,
     priority: job.priority,
     attempts: job.attempts,
@@ -745,6 +767,13 @@ function summarizeJob(job) {
     result: job.result,
     execution: job.execution
   };
+}
+
+function exposeArtifacts(jobId, artifacts) {
+  return artifacts.map((artifact) => ({
+    ...artifact,
+    api_url: `${BASE_PATH}/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(artifact.artifact_id)}`
+  }));
 }
 
 function sortQueue() {
@@ -776,6 +805,67 @@ function createApiError(code, message, statusCode = 400, retryable = false, deta
   error.retryable = retryable;
   error.details = details;
   return error;
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function requestHash(payload) {
+  return createHash('sha256').update(canonicalJson(payload)).digest('hex');
+}
+
+function parseScriptText(scriptText) {
+  if (typeof scriptText !== 'string' || !scriptText.trim()) {
+    throw createApiError('INVALID_PAYLOAD', 'Поле script_text должно быть непустой JSON-строкой', 400, false);
+  }
+  try {
+    const script = JSON.parse(scriptText);
+    if (!script || typeof script !== 'object' || Array.isArray(script)) {
+      throw new TypeError('Сценарий должен быть JSON-объектом');
+    }
+    return script;
+  } catch (error) {
+    throw createApiError('INVALID_SCRIPT_TEXT', `Не удалось разобрать script_text: ${error.message}`, 400, false);
+  }
+}
+
+function normalizeJobCreatePayload(rawPayload) {
+  if (rawPayload.parameters !== undefined
+    && (!rawPayload.parameters || typeof rawPayload.parameters !== 'object' || Array.isArray(rawPayload.parameters))) {
+    throw createApiError('INVALID_PAYLOAD', 'Поле parameters должно быть JSON-объектом', 400, false);
+  }
+
+  const parameterNames = ['uid', 'priority', 'timeout_ms', 'retry_policy', 'context', 'callback', 'log_level'];
+  if (rawPayload.parameters) {
+    const mixedFields = parameterNames.filter((name) => rawPayload[name] !== undefined);
+    if (mixedFields.length > 0) {
+      throw createApiError(
+        'INVALID_PAYLOAD',
+        `Параметры задания нельзя одновременно передавать на верхнем уровне и в parameters: ${mixedFields.join(', ')}`,
+        400,
+        false
+      );
+    }
+  }
+
+  if (rawPayload.script_text !== undefined && rawPayload.script !== undefined) {
+    throw createApiError('INVALID_PAYLOAD', 'Передайте только одно из полей: script или script_text', 400, false);
+  }
+
+  const payload = rawPayload.parameters ? { ...rawPayload.parameters } : { ...rawPayload };
+  const scriptSource = rawPayload.script_text !== undefined ? parseScriptText(rawPayload.script_text) : rawPayload.script;
+  delete payload.parameters;
+  delete payload.script_text;
+  if (scriptSource !== undefined) payload.script = scriptSource;
+  return payload;
 }
 
 function isRetryableError(error) {
@@ -1014,6 +1104,11 @@ async function executeJob(job) {
     const simulatedOutcome = script.simulate?.outcome || 'success';
     const simulatedDelay = Number.isFinite(script.simulate?.delay_ms) ? script.simulate.delay_ms : 250;
     const browserReplay = isPuppeteerReplayScript(script);
+    logJob(job, 'debug', 'Сценарий подготовлен к выполнению', {
+      runtime: browserReplay ? 'puppeteer-replay' : 'json-steps',
+      steps_total: steps.length,
+      request_hash: job.request_hash
+    });
     const serviceBaseUrl = process.env.SERVICE_BASE_URL || `http://127.0.0.1:${PORT}`;
     const artifactDirectory = path.join(ARTIFACTS_DIR, job.job_id);
     const publicArtifactBasePath = `/artifacts/${encodeURIComponent(job.job_id)}`;
@@ -1114,7 +1209,7 @@ async function executeJob(job) {
       uid: job.uid,
       un_id: UN_ID,
       artifacts: Array.isArray(interpreterResult.context?.artifacts)
-        ? interpreterResult.context.artifacts
+        ? exposeArtifacts(job.job_id, interpreterResult.context.artifacts)
         : [],
       runtime: browserReplay ? 'puppeteer-replay' : 'json-steps',
       ...(!browserReplay ? { simulated_outcome: simulatedOutcome } : {})
@@ -1173,16 +1268,25 @@ async function executeJob(job) {
       : 'failed';
     job.error = serializeJobError(error);
     const diagnosticArtifact = error?.details?.artifact;
-    if (diagnosticArtifact) {
+    const partialContext = error?.partial_context;
+    const partialArtifacts = Array.isArray(partialContext?.artifacts) ? partialContext.artifacts : [];
+    if (diagnosticArtifact || partialContext) {
       job.result = {
-        message: 'Браузерный сценарий завершился с ошибкой; сохранён диагностический скриншот',
+        message: diagnosticArtifact
+          ? 'Сценарий завершился с ошибкой; сохранён диагностический скриншот'
+          : 'Сценарий завершился с ошибкой; сохранён частичный результат',
         job_id: job.job_id,
         uid: job.uid,
         un_id: UN_ID,
-        artifacts: [diagnosticArtifact],
-        runtime: 'puppeteer-replay'
+        ...(partialContext ? { context: partialContext } : {}),
+        artifacts: exposeArtifacts(
+          job.job_id,
+          diagnosticArtifact ? [...partialArtifacts, diagnosticArtifact] : partialArtifacts
+        ),
+        runtime: isPuppeteerReplayScript(job.request.script) ? 'puppeteer-replay' : 'json-steps'
       };
     }
+    if (partialContext) job.execution.context = partialContext;
     job.execution.status = job.status;
     job.execution.finished_at = nowIso();
     job.finished_at = nowIso();
@@ -1275,20 +1379,67 @@ function buildQueueHealth() {
   };
 }
 
-function buildHealthResponse(requestId) {
+async function buildReadinessChecks() {
+  const checks = {
+    database: { status: 'ok' },
+    filesystem: { status: 'ok', path: DATA_DIR },
+    browser: { status: 'ok', executable_path: null }
+  };
+
+  try {
+    if (!db) throw new Error('SQLite не инициализирована');
+    db.prepare('SELECT 1 AS ready').get();
+  } catch (error) {
+    checks.database = { status: 'error', message: error.message };
+  }
+
+  try {
+    await mkdir(ARTIFACTS_DIR, { recursive: true });
+    await access(DATA_DIR, fsConstants.R_OK | fsConstants.W_OK);
+    await access(ARTIFACTS_DIR, fsConstants.R_OK | fsConstants.W_OK);
+  } catch (error) {
+    checks.filesystem = { status: 'error', path: DATA_DIR, message: error.message };
+  }
+
+  const browserExecutable = await resolveBrowserExecutablePath(process.env.PUPPETEER_EXECUTABLE_PATH);
+  if (browserExecutable) {
+    checks.browser.executable_path = browserExecutable;
+  } else {
+    checks.browser = {
+      status: 'error',
+      executable_path: null,
+      message: 'Не найден исполняемый файл Chromium или Яндекс Браузера'
+    };
+  }
+
+  return checks;
+}
+
+async function buildHealthResponse(requestId) {
   const headless = process.env.BROWSER_HEADLESS !== 'false';
   const noVncConfigured = process.env.NOVNC_ENABLED === 'true';
+  const checks = await buildReadinessChecks();
+  const failedCheck = Object.entries(checks).find(([, check]) => check.status !== 'ok');
+  const ready = !failedCheck;
   return {
-    status: 'ok',
+    status: ready ? 'ok' : 'error',
+    ready,
     service: 'script-factory',
     request_id: requestId,
     un_id: UN_ID,
+    checks,
+    ...(!ready ? {
+      error: {
+        code: `${failedCheck[0].toUpperCase()}_UNAVAILABLE`,
+        message: failedCheck[1].message || `Проверка ${failedCheck[0]} завершилась ошибкой`
+      }
+    } : {}),
     queue: buildQueueHealth(),
     browser_replay: {
-      available: true,
+      available: checks.browser.status === 'ok',
       engine: '@puppeteer/replay',
       browser_product: process.env.BROWSER_PRODUCT || 'chromium-compatible',
-      executable_path: process.env.PUPPETEER_EXECUTABLE_PATH || null,
+      executable_path: checks.browser.executable_path,
       headless,
       step_delay_ms: Number(process.env.BROWSER_STEP_DELAY_MS || 0),
       captcha_wait_ms: Number(process.env.BROWSER_CAPTCHA_WAIT_MS || 0),
@@ -1417,6 +1568,12 @@ function validateConfigPatch(payload) {
 
 function validateJobPayload(payload) {
   const errors = [];
+  if (payload.uid !== undefined && (typeof payload.uid !== 'string' || !payload.uid.trim())) {
+    errors.push({ path: 'uid', message: 'uid должен быть непустой строкой' });
+  }
+  if (payload.log_level !== undefined && !LOG_LEVEL_PRIORITY.has(payload.log_level)) {
+    errors.push({ path: 'log_level', message: `log_level должен быть одним из: ${LOG_LEVELS.join(', ')}` });
+  }
   if (payload.priority !== undefined && !Number.isFinite(payload.priority)) {
     errors.push({ path: 'priority', message: 'priority должен быть конечным числом' });
   }
@@ -1481,7 +1638,8 @@ const server = http.createServer(async (req, res) => {
     const method = req.method || 'GET';
 
     if (pathname === '/health') {
-      sendJson(res, 200, buildHealthResponse(requestId));
+      const health = await buildHealthResponse(requestId);
+      sendJson(res, health.ready ? 200 : 503, health);
       return;
     }
 
@@ -1623,7 +1781,8 @@ const server = http.createServer(async (req, res) => {
     const resourcePath = stripBasePath(pathname);
 
     if (method === 'GET' && resourcePath === '/health') {
-      sendJson(res, 200, buildHealthResponse(requestId));
+      const health = await buildHealthResponse(requestId);
+      sendJson(res, health.ready ? 200 : 503, health);
       return;
     }
 
@@ -1653,18 +1812,26 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'POST' && resourcePath === '/jobs') {
-      const payload = await readJsonBody(req);
-      if (!payload || typeof payload !== 'object') {
+      const rawPayload = await readJsonBody(req);
+      if (!rawPayload || typeof rawPayload !== 'object' || Array.isArray(rawPayload)) {
         throw createApiError('INVALID_PAYLOAD', 'Тело запроса должно быть JSON-объектом', 400, false);
       }
+      const payload = normalizeJobCreatePayload(rawPayload);
       const idempotencyKeyHeader = req.headers['idempotency-key'];
       const idempotencyKey = Array.isArray(idempotencyKeyHeader) ? idempotencyKeyHeader[0] : idempotencyKeyHeader;
-      const explicitUid = requestUrl.searchParams.get('uid') || payload.uid;
-      const uid = typeof explicitUid === 'string' && explicitUid.trim()
-        ? explicitUid.trim()
-        : typeof idempotencyKey === 'string' && idempotencyKey.trim()
-          ? idempotencyKey.trim()
-          : `job_${randomUUID()}`;
+      const queryUid = requestUrl.searchParams.get('uid');
+      const suppliedIdentifiers = [queryUid, payload.uid, idempotencyKey]
+        .filter((value) => typeof value === 'string' && value.trim())
+        .map((value) => value.trim());
+      if (new Set(suppliedIdentifiers).size > 1) {
+        throw createApiError(
+          'IDEMPOTENCY_KEY_MISMATCH',
+          'uid, параметр запроса uid и Idempotency-Key должны совпадать, если переданы одновременно',
+          400,
+          false
+        );
+      }
+      const uid = suppliedIdentifiers[0] ?? `job_${randomUUID()}`;
       if (payload.script !== undefined && (typeof payload.script !== 'object' || payload.script === null)) {
         throw createApiError('INVALID_PAYLOAD', 'Поле script должно быть объектом', 400, false);
       }
@@ -1680,17 +1847,27 @@ const server = http.createServer(async (req, res) => {
         });
       }
 
-      const existing = (typeof explicitUid === 'string' && explicitUid.trim())
+      const normalizedRequest = { ...payload, script, uid };
+      const incomingRequestHash = requestHash(normalizedRequest);
+      const existing = suppliedIdentifiers.length > 0
         ? [...state.jobs.values()].find((job) => job.uid === uid)
-        : (typeof idempotencyKey === 'string' && idempotencyKey.trim())
-          ? [...state.jobs.values()].find((job) => job.uid === uid)
-          : null;
+        : null;
       if (existing) {
+        const existingRequestHash = existing.request_hash ?? requestHash(existing.request);
+        if (existingRequestHash !== incomingRequestHash) {
+          throw createApiError(
+            'IDEMPOTENCY_CONFLICT',
+            'Задание с таким uid уже существует, но его параметры или сценарий отличаются',
+            409,
+            false,
+            { job_id: existing.job_id, uid }
+          );
+        }
         sendJson(res, 200, { job: summarizeJob(existing), idempotent: true });
         return;
       }
 
-      const job = createJobRecord({ ...payload, script, uid });
+      const job = createJobRecord(normalizedRequest, incomingRequestHash);
       state.jobs.set(job.job_id, job);
       enqueue(job);
       drainQueue();
@@ -1701,6 +1878,16 @@ const server = http.createServer(async (req, res) => {
 
     if (method === 'GET' && resourcePath.startsWith('/jobs/')) {
       const parts = resourcePath.split('/').filter(Boolean);
+      if (parts[1] === 'by-uid' && parts[2]) {
+        const uid = decodeURIComponent(parts.slice(2).join('/'));
+        const job = [...state.jobs.values()].find((item) => item.uid === uid);
+        if (!job) {
+          sendJson(res, 404, { error: { code: 'JOB_NOT_FOUND', message: 'Задание с указанным uid не найдено' } });
+          return;
+        }
+        sendJson(res, 200, { job: summarizeJob(job) });
+        return;
+      }
       const jobId = parts[1];
       const action = parts[2];
       const job = state.jobs.get(jobId);
@@ -1715,8 +1902,24 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      if (action === 'artifacts' && parts[3]) {
+        const identifier = decodeURIComponent(parts.slice(3).join('/'));
+        const artifact = job.result?.artifacts?.find((item) => (
+          item.artifact_id === identifier || item.filename === identifier
+        ));
+        await sendJobArtifactFile(res, job, artifact);
+        return;
+      }
+
       if (action === 'logs') {
-        sendJson(res, 200, { job_id: job.job_id, logs: job.logs });
+        const minimumLevel = requestUrl.searchParams.get('min_level');
+        if (minimumLevel && !LOG_LEVEL_PRIORITY.has(minimumLevel)) {
+          throw createApiError('INVALID_LOG_LEVEL', `min_level должен быть одним из: ${LOG_LEVELS.join(', ')}`, 400, false);
+        }
+        const logs = minimumLevel
+          ? job.logs.filter((entry) => (LOG_LEVEL_PRIORITY.get(entry.level) ?? 1) >= LOG_LEVEL_PRIORITY.get(minimumLevel))
+          : job.logs;
+        sendJson(res, 200, { job_id: job.job_id, log_level: job.log_level, logs });
         return;
       }
     }

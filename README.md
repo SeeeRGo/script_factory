@@ -10,6 +10,7 @@ callbacks for 1C. The Stage 2 JSON-steps interpreter remains backward compatible
 Документация этапа 4 и предыдущих демонстраций:
 
 - [контракт интеграции с 1С, Windows-УН, задержка, callback и нагрузочное демо](docs/stage-4-1c-integration.md);
+- [ответы по готовности УН, идентификаторам, дубликатам, callback и файловому циклу](docs/answers-1c-integration.md);
 - [как записывать и передавать новые браузерные сценарии](docs/script-creation.md);
 - [готовый 15-минутный план демонстрации](docs/demo-stage-3.md);
 - [живой показ Chromium через SSH и noVNC](docs/novnc-demo.md);
@@ -191,6 +192,9 @@ All `/api/v2/*` routes require `X-API-Key: dev-secret` by default.
 Set `API_KEY` to override the default.
 Swagger UI in `docker compose` preauthorizes the default dev key for convenience.
 `POST /api/v2/jobs` accepts an optional `Idempotency-Key` header. If omitted, the server generates `uid` automatically and returns it in the job response.
+The API accepts both the legacy request with a `script` object and the separated
+`parameters` + `script_text` contract. `GET /api/v2/jobs/by-uid/{uid}` resolves the
+server-side job identifier. Reusing a uid with different request content returns 409.
 
 ## Демо этапа 2: JSON-steps Interpreter
 
@@ -220,6 +224,8 @@ npm start
 В другом терминале можно запустить каждый сценарий отдельно:
 
 ```bash
+npm run demo:file
+npm run demo:file:error
 npm run demo:success
 npm run demo:error
 npm run demo:retry
