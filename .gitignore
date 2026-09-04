@@ -7,3 +7,4 @@ node_modules/
 data/
 demo-data/
 work/
+ansible/inventories/*/group_vars/all/vault.yml

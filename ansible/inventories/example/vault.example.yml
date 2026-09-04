@@ -1,0 +1,14 @@
+---
+# Скопируйте в group_vars/all/vault.yml, замените значения и выполните:
+# ansible-vault encrypt inventories/production/group_vars/all/vault.yml
+vault_ansible_user: DOMAIN\ansible-deploy
+vault_ansible_password: replace-with-winrm-password
+vault_script_factory_api_keys:
+  un-001: replace-with-api-key
+  un-002: replace-with-api-key
+vault_script_factory_web_passwords:
+  un-001: replace-with-web-password
+  un-002: replace-with-web-password
+vault_script_factory_callback_tokens:
+  un-001: replace-with-callback-token
+  un-002: replace-with-callback-token

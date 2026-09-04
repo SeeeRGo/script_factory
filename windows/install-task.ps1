@@ -1,6 +1,9 @@
 ﻿param(
   [string]$ProjectPath = (Split-Path -Parent $PSScriptRoot),
+  [string]$EnvFile = '',
   [string]$TaskName = 'ScriptFactory-Test-UN',
+  [string]$RunAsUser = '',
+  [switch]$SkipDependencyInstall,
   [int]$Port = 33001
 )
 
@@ -11,23 +14,37 @@ if (-not $nodeVersion -or [int]($nodeVersion.TrimStart('v').Split('.')[0]) -lt 2
 }
 
 Set-Location $ProjectPath
-if (-not (Test-Path '.env')) {
+$configurationFile = if ($EnvFile) {
+  if ([IO.Path]::IsPathRooted($EnvFile)) {
+    [IO.Path]::GetFullPath($EnvFile)
+  } else {
+    [IO.Path]::GetFullPath((Join-Path $ProjectPath $EnvFile))
+  }
+} else {
+  Join-Path $ProjectPath '.env'
+}
+if (-not (Test-Path $configurationFile) -and -not $EnvFile) {
   Copy-Item 'windows\.env.example' '.env'
   throw 'Создан .env. Заполните секреты и повторите установку.'
 }
+if (-not (Test-Path $configurationFile)) {
+  throw "Не найден файл конфигурации $configurationFile"
+}
 
 $preflight = Join-Path $ProjectPath 'windows\preflight.ps1'
-& $preflight -ProjectPath $ProjectPath -Port $Port
+& $preflight -ProjectPath $ProjectPath -EnvFile $configurationFile -Port $Port
 if ($LASTEXITCODE -ne 0) { throw 'Windows preflight завершился с ошибкой' }
 
-$env:PUPPETEER_SKIP_DOWNLOAD = 'true'
-npm ci --omit=dev
-if ($LASTEXITCODE -ne 0) { throw 'npm ci завершился с ошибкой' }
+if (-not $SkipDependencyInstall) {
+  $env:PUPPETEER_SKIP_DOWNLOAD = 'true'
+  npm ci --omit=dev
+  if ($LASTEXITCODE -ne 0) { throw 'npm ci завершился с ошибкой' }
+}
 
-$userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$userId = if ($RunAsUser) { $RunAsUser } else { [System.Security.Principal.WindowsIdentity]::GetCurrent().Name }
 $powerShell = (Get-Command powershell.exe).Source
 $startScript = Join-Path $ProjectPath 'windows\start-worker.ps1'
-$arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$startScript`" -ProjectPath `"$ProjectPath`""
+$arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$startScript`" -ProjectPath `"$ProjectPath`" -EnvFile `"$configurationFile`""
 $action = New-ScheduledTaskAction -Execute $powerShell -Argument $arguments -WorkingDirectory $ProjectPath
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
 $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Highest

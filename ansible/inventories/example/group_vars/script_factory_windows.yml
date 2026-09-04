@@ -1,0 +1,28 @@
+---
+script_factory_base_dir: C:\ProgramData\ScriptFactory
+script_factory_task_name: ScriptFactory-Worker
+script_factory_port: 33001
+script_factory_serial: 25%
+
+script_factory_api_key: "{{ vault_script_factory_api_keys[inventory_hostname] }}"
+script_factory_web_login: demo
+script_factory_web_password: "{{ vault_script_factory_web_passwords[inventory_hostname] }}"
+script_factory_callback_auth_token: "{{ vault_script_factory_callback_tokens[inventory_hostname] }}"
+
+script_factory_data_dir: C:\ProgramData\ScriptFactory\shared\data
+script_factory_allowed_roots:
+  - C:\ProgramData\ScriptFactory\shared\work
+  - C:\ProgramData\ScriptFactory\shared\data
+script_factory_callback_allowed_origins:
+  - http://1c-test.local:8080
+
+script_factory_max_parallel_jobs: 3
+script_factory_default_job_timeout_ms: 300000
+script_factory_retry_max_attempts: 2
+script_factory_retry_backoff_ms: 1000
+script_factory_browser_headless: false
+script_factory_browser_step_delay_ms: 250
+script_factory_browser_hold_open_ms: 3000
+script_factory_browser_captcha_wait_ms: 120000
+script_factory_browser_window_width: 1400
+script_factory_browser_window_height: 860

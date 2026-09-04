@@ -1,5 +1,6 @@
 ﻿param(
   [string]$ProjectPath = (Split-Path -Parent $PSScriptRoot),
+  [string]$EnvFile = '',
   [int]$Port = 33001,
   [switch]$ExpectServiceRunning
 )
@@ -28,10 +29,18 @@ function Resolve-ProjectPath([string]$Value) {
   return [IO.Path]::GetFullPath((Join-Path $ProjectPath $Value))
 }
 
-$envFile = Join-Path $ProjectPath '.env'
-$configuration = Read-DotEnv $envFile
-if (-not (Test-Path $envFile)) {
-  $errors.Add("Не найден $envFile")
+$configurationFile = if ($EnvFile) {
+  if ([IO.Path]::IsPathRooted($EnvFile)) {
+    [IO.Path]::GetFullPath($EnvFile)
+  } else {
+    [IO.Path]::GetFullPath((Join-Path $ProjectPath $EnvFile))
+  }
+} else {
+  Join-Path $ProjectPath '.env'
+}
+$configuration = Read-DotEnv $configurationFile
+if (-not (Test-Path $configurationFile)) {
+  $errors.Add("Не найден $configurationFile")
 }
 
 $nodeVersion = $null
@@ -94,6 +103,10 @@ if ($ExpectServiceRunning -and $listener) {
   try {
     $health = Invoke-RestMethod "http://127.0.0.1:$Port/health" -TimeoutSec 5
     if ($health.status -ne 'ok') { $errors.Add('Healthcheck не вернул status=ok') }
+    if ($health.ready -ne $true) {
+      $message = if ($health.error.message) { ": $($health.error.message)" } else { '' }
+      $errors.Add("Healthcheck не вернул ready=true$message")
+    }
     if ($configuration['UN_ID'] -and $health.un_id -ne $configuration['UN_ID']) {
       $errors.Add("Healthcheck вернул другую УН: $($health.un_id)")
     }
@@ -116,6 +129,7 @@ $report = [ordered]@{
   ok = $errors.Count -eq 0
   checked_at = (Get-Date).ToString('o')
   project_path = $ProjectPath
+  env_file = $configurationFile
   node_version = $nodeVersion
   yandex_browser = $browserPath
   port = $Port

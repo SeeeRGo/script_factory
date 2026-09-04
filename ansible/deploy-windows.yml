@@ -1,0 +1,436 @@
+---
+- name: Build an immutable Script Factory release on the controller
+  hosts: localhost
+  gather_facts: false
+  vars:
+    source_root: "{{ playbook_dir }}/.."
+    requested_git_ref: "{{ script_factory_git_ref | default('HEAD') }}"
+  tasks:
+    - name: Resolve the requested Git revision
+      ansible.builtin.command:
+        argv:
+          - git
+          - -C
+          - "{{ source_root }}"
+          - rev-parse
+          - --short=12
+          - "{{ requested_git_ref }}^{commit}"
+      register: resolved_revision
+      changed_when: false
+
+    - name: Select the release identifier
+      ansible.builtin.set_fact:
+        deployment_release_id: "{{ script_factory_release_id | default(resolved_revision.stdout, true) }}"
+        deployment_archive: "/tmp/script-factory-{{ script_factory_release_id | default(resolved_revision.stdout, true) }}.zip"
+
+    - name: Validate the release identifier
+      ansible.builtin.assert:
+        that:
+          - deployment_release_id is match('^[A-Za-z0-9._-]+$')
+        fail_msg: script_factory_release_id may contain only letters, digits, dots, underscores and hyphens
+
+    - name: Create the release archive from tracked files
+      ansible.builtin.command:
+        argv:
+          - git
+          - -C
+          - "{{ source_root }}"
+          - archive
+          - --format=zip
+          - "--output={{ deployment_archive }}"
+          - "{{ requested_git_ref }}"
+      changed_when: true
+
+- name: Deploy Script Factory to Windows execution nodes
+  hosts: script_factory_windows
+  gather_facts: false
+  strategy: linear
+  serial: "{{ script_factory_serial | default('25%') }}"
+  vars:
+    release_id: "{{ hostvars['localhost'].deployment_release_id }}"
+    release_archive: "{{ hostvars['localhost'].deployment_archive }}"
+    releases_dir: '{{ script_factory_base_dir }}\releases'
+    shared_dir: '{{ script_factory_base_dir }}\shared'
+    configs_dir: '{{ script_factory_base_dir }}\shared\configs'
+    package_cache_dir: '{{ script_factory_base_dir }}\packages'
+    release_path: '{{ script_factory_base_dir }}\releases\{{ release_id }}'
+    remote_archive: '{{ script_factory_base_dir }}\packages\{{ release_id }}.zip'
+    env_file: '{{ script_factory_base_dir }}\shared\configs\{{ release_id }}.env'
+    current_release_file: '{{ script_factory_base_dir }}\shared\current-release.txt'
+    powershell_path: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe
+    task_arguments: >-
+      -NoProfile -ExecutionPolicy Bypass
+      -File "{{ release_path }}\windows\start-worker.ps1"
+      -ProjectPath "{{ release_path }}"
+      -EnvFile "{{ env_file }}"
+  pre_tasks:
+    - name: Validate required host variables
+      ansible.builtin.assert:
+        that:
+          - script_factory_un_id | length > 0
+          - script_factory_run_as_user | length > 0
+          - script_factory_browser_path | length > 0
+          - script_factory_api_key | length > 0
+          - script_factory_web_password | length > 0
+          - script_factory_callback_auth_token | length > 0
+        fail_msg: Define the UN identifier, run-as account, browser path and Vault-backed secrets for every host
+      no_log: true
+
+    - name: Validate values written to the environment file
+      ansible.builtin.assert:
+        that:
+          - item.find('"') == -1
+          - item.find('\r') == -1
+          - item.find('\n') == -1
+        fail_msg: Environment values cannot contain double quotes or line breaks
+      loop:
+        - "{{ script_factory_api_key }}"
+        - "{{ script_factory_un_id }}"
+        - "{{ script_factory_web_login }}"
+        - "{{ script_factory_web_password }}"
+        - "{{ script_factory_callback_auth_token }}"
+      no_log: true
+
+    - name: Create deployment directories
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - "{{ releases_dir }}"
+        - "{{ shared_dir }}"
+        - "{{ configs_dir }}"
+        - "{{ package_cache_dir }}"
+        - "{{ script_factory_data_dir }}"
+        - '{{ shared_dir }}\work'
+        - '{{ shared_dir }}\work\incoming'
+        - '{{ shared_dir }}\work\outgoing'
+        - '{{ shared_dir }}\work\archive'
+
+    - name: Check installed Node.js and Yandex Browser
+      ansible.windows.win_powershell:
+        script: |
+          param($BrowserPath)
+          $node = Get-Command node.exe -ErrorAction Stop
+          $versionText = (& $node.Source --version).Trim().TrimStart('v')
+          if ([int]($versionText.Split('.')[0]) -lt 24) {
+            throw "Node.js 24+ is required; found $versionText"
+          }
+          if (-not (Test-Path -LiteralPath $BrowserPath -PathType Leaf)) {
+            throw "Yandex Browser not found at $BrowserPath"
+          }
+        parameters:
+          BrowserPath: "{{ script_factory_browser_path }}"
+
+    - name: Allow the worker account to run a scheduled task
+      ansible.windows.win_user_right:
+        name: SeBatchLogonRight
+        users:
+          - "{{ script_factory_run_as_user }}"
+        action: add
+
+    - name: Read the current release marker
+      ansible.windows.win_stat:
+        path: "{{ current_release_file }}"
+      register: current_release_marker
+
+    - name: Load the current release marker
+      ansible.builtin.slurp:
+        src: "{{ current_release_file }}"
+      register: current_release_content
+      when: current_release_marker.stat.exists
+
+    - name: Remember the previous release
+      ansible.builtin.set_fact:
+        previous_release_id: >-
+          {{ (current_release_content.content | b64decode | trim)
+             if current_release_marker.stat.exists else '' }}
+
+    - name: Require a new immutable release identifier
+      ansible.builtin.assert:
+        that:
+          - previous_release_id != release_id
+        fail_msg: "Release {{ release_id }} is already active; deploy another Git revision or set a new release id"
+
+  tasks:
+    - name: Remove an incomplete release directory
+      ansible.windows.win_file:
+        path: "{{ release_path }}"
+        state: absent
+
+    - name: Copy the release archive
+      ansible.windows.win_copy:
+        src: "{{ release_archive }}"
+        dest: "{{ remote_archive }}"
+
+    - name: Expand the release archive
+      ansible.windows.win_powershell:
+        script: |
+          param($Archive, $Destination)
+          New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+          Expand-Archive -LiteralPath $Archive -DestinationPath $Destination -Force
+        parameters:
+          Archive: "{{ remote_archive }}"
+          Destination: "{{ release_path }}"
+
+    - name: Allow the worker account to read the release
+      ansible.windows.win_acl:
+        path: "{{ release_path }}"
+        user: "{{ script_factory_run_as_user }}"
+        rights: ReadAndExecute
+        type: allow
+        state: present
+        inherit: ContainerInherit,ObjectInherit
+        propagation: None
+
+    - name: Allow the worker account to modify shared data
+      ansible.windows.win_acl:
+        path: "{{ shared_dir }}"
+        user: "{{ script_factory_run_as_user }}"
+        rights: Modify
+        type: allow
+        state: present
+        inherit: ContainerInherit,ObjectInherit
+        propagation: None
+
+    - name: Add explicit access to the configuration directory
+      ansible.windows.win_acl:
+        path: "{{ configs_dir }}"
+        user: "{{ item.user }}"
+        rights: "{{ item.rights }}"
+        type: allow
+        state: present
+        inherit: ContainerInherit,ObjectInherit
+        propagation: None
+      loop:
+        - user: SYSTEM
+          rights: FullControl
+        - user: BUILTIN\Administrators
+          rights: FullControl
+        - user: "{{ script_factory_run_as_user }}"
+          rights: ReadAndExecute
+      no_log: true
+
+    - name: Remove inherited access from the configuration directory
+      ansible.windows.win_acl_inheritance:
+        path: "{{ configs_dir }}"
+        state: absent
+        reorganize: false
+      no_log: true
+
+    - name: Render the host-specific environment file
+      ansible.windows.win_template:
+        src: script-factory.env.j2
+        dest: "{{ env_file }}"
+      no_log: true
+
+    - name: Add explicit access to the environment file
+      ansible.windows.win_acl:
+        path: "{{ env_file }}"
+        user: "{{ item.user }}"
+        rights: "{{ item.rights }}"
+        type: allow
+        state: present
+      loop:
+        - user: SYSTEM
+          rights: FullControl
+        - user: BUILTIN\Administrators
+          rights: FullControl
+        - user: "{{ script_factory_run_as_user }}"
+          rights: Read
+      no_log: true
+
+    - name: Remove inherited access from the environment file
+      ansible.windows.win_acl_inheritance:
+        path: "{{ env_file }}"
+        state: absent
+        reorganize: false
+      no_log: true
+
+    - name: Install production dependencies in the release
+      ansible.windows.win_powershell:
+        script: |
+          param($ProjectPath)
+          $env:PUPPETEER_SKIP_DOWNLOAD = 'true'
+          Set-Location -LiteralPath $ProjectPath
+          & npm.cmd ci --omit=dev
+          if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
+        parameters:
+          ProjectPath: "{{ release_path }}"
+
+    - name: Run preflight before cutover
+      ansible.windows.win_powershell:
+        script: |
+          param($ProjectPath, $ConfigurationFile, $Port)
+          & "$ProjectPath\windows\preflight.ps1" -ProjectPath $ProjectPath -EnvFile $ConfigurationFile -Port $Port
+          if ($LASTEXITCODE -ne 0) { throw 'Script Factory preflight failed' }
+        parameters:
+          ProjectPath: "{{ release_path }}"
+          ConfigurationFile: "{{ env_file }}"
+          Port: "{{ script_factory_port }}"
+
+    - name: Ensure the API firewall rule exists
+      community.windows.win_firewall_rule:
+        name: Script Factory API
+        localport: "{{ script_factory_port }}"
+        action: allow
+        direction: in
+        protocol: tcp
+        state: present
+        enabled: true
+
+    - name: Cut over to the new release and verify it
+      block:
+        - name: Stop the current worker task
+          ansible.windows.win_powershell:
+            script: |
+              param($TaskName)
+              $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+              if ($task -and $task.State -eq 'Running') {
+                Stop-ScheduledTask -TaskName $TaskName
+              }
+            parameters:
+              TaskName: "{{ script_factory_task_name }}"
+
+        - name: Point the scheduled task at the new release
+          community.windows.win_scheduled_task:
+            name: "{{ script_factory_task_name }}"
+            description: Script Factory headed worker managed by Ansible
+            actions:
+              - path: "{{ powershell_path }}"
+                arguments: "{{ task_arguments }}"
+                working_directory: "{{ release_path }}"
+            triggers:
+              - type: logon
+                user_id: "{{ script_factory_run_as_user }}"
+            username: "{{ script_factory_run_as_user }}"
+            logon_type: interactive_token
+            run_level: highest
+            restart_count: 3
+            restart_interval: PT1M
+            execution_time_limit: PT0S
+            multiple_instances: 2
+            enabled: true
+            state: present
+
+        - name: Start the new worker task
+          ansible.windows.win_powershell:
+            script: |
+              param($TaskName)
+              Start-ScheduledTask -TaskName $TaskName
+            parameters:
+              TaskName: "{{ script_factory_task_name }}"
+
+        - name: Wait for the new worker healthcheck
+          ansible.windows.win_uri:
+            url: "http://127.0.0.1:{{ script_factory_port }}/health"
+            method: GET
+            return_content: true
+            status_code: 200
+            use_proxy: false
+          register: deployed_health
+          until:
+            - deployed_health.status_code | default(0) == 200
+            - deployed_health.json.ready | default(false) | bool
+          retries: 30
+          delay: 2
+
+        - name: Verify the identity and checks of the new worker
+          ansible.builtin.assert:
+            that:
+              - deployed_health.json.status == 'ok'
+              - deployed_health.json.un_id == script_factory_un_id
+              - deployed_health.json.checks.database.status == 'ok'
+              - deployed_health.json.checks.filesystem.status == 'ok'
+              - deployed_health.json.checks.browser.status == 'ok'
+            fail_msg: "The new release healthcheck is not ready or belongs to another UN"
+
+        - name: Commit the current release marker
+          ansible.windows.win_copy:
+            content: "{{ release_id }}\r\n"
+            dest: "{{ current_release_file }}"
+
+      rescue:
+        - name: Stop the failed worker task
+          ansible.windows.win_powershell:
+            script: |
+              param($TaskName)
+              $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+              if ($task -and $task.State -eq 'Running') {
+                Stop-ScheduledTask -TaskName $TaskName
+              }
+            parameters:
+              TaskName: "{{ script_factory_task_name }}"
+
+        - name: Restore the previous scheduled task action
+          community.windows.win_scheduled_task:
+            name: "{{ script_factory_task_name }}"
+            description: Script Factory headed worker managed by Ansible
+            actions:
+              - path: "{{ powershell_path }}"
+                arguments: >-
+                  -NoProfile -ExecutionPolicy Bypass
+                  -File "{{ releases_dir }}\{{ previous_release_id }}\windows\start-worker.ps1"
+                  -ProjectPath "{{ releases_dir }}\{{ previous_release_id }}"
+                  -EnvFile "{{ configs_dir }}\{{ previous_release_id }}.env"
+                working_directory: '{{ releases_dir }}\{{ previous_release_id }}'
+            triggers:
+              - type: logon
+                user_id: "{{ script_factory_run_as_user }}"
+            username: "{{ script_factory_run_as_user }}"
+            logon_type: interactive_token
+            run_level: highest
+            restart_count: 3
+            restart_interval: PT1M
+            execution_time_limit: PT0S
+            multiple_instances: 2
+            enabled: true
+            state: present
+          when: previous_release_id | length > 0
+
+        - name: Start the previous release
+          ansible.windows.win_powershell:
+            script: |
+              param($TaskName)
+              Start-ScheduledTask -TaskName $TaskName
+            parameters:
+              TaskName: "{{ script_factory_task_name }}"
+          when: previous_release_id | length > 0
+
+        - name: Verify the restored release healthcheck
+          ansible.windows.win_uri:
+            url: "http://127.0.0.1:{{ script_factory_port }}/health"
+            method: GET
+            return_content: true
+            status_code: 200
+            use_proxy: false
+          register: rollback_health
+          until:
+            - rollback_health.status_code | default(0) == 200
+            - rollback_health.json.ready | default(false) | bool
+            - rollback_health.json.un_id | default('') == script_factory_un_id
+          retries: 30
+          delay: 2
+          failed_when: false
+          when: previous_release_id | length > 0
+
+        - name: Remove the task after a failed first deployment
+          community.windows.win_scheduled_task:
+            name: "{{ script_factory_task_name }}"
+            state: absent
+          when: previous_release_id | length == 0
+
+        - name: Report the automatic rollback
+          ansible.builtin.fail:
+            msg: >-
+              Release {{ release_id }} failed its health gate.
+              {{ ('The task was rolled back to ' + previous_release_id +
+                  '; restored health ready=' +
+                  (rollback_health.json.ready | default(false) | string) + '.')
+                 if previous_release_id | length > 0
+                 else 'There was no previous release; the scheduled task was removed.' }}
+
+      always:
+        - name: Remove the transferred release archive
+          ansible.windows.win_file:
+            path: "{{ remote_archive }}"
+            state: absent
