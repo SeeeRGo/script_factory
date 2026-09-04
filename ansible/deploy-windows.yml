@@ -278,6 +278,26 @@
         state: present
         enabled: true
 
+    - name: Read the current worker healthcheck before cutover
+      ansible.windows.win_uri:
+        url: "http://127.0.0.1:{{ script_factory_port }}/health"
+        method: GET
+        return_content: true
+        status_code:
+          - 200
+          - 503
+        use_proxy: false
+      register: current_health
+      when: previous_release_id | length > 0
+
+    - name: Refuse to interrupt queued or running jobs
+      ansible.builtin.assert:
+        that:
+          - current_health.json.queue.running | int == 0
+          - current_health.json.queue.queued | int == 0
+        fail_msg: Pause new submissions from 1C and wait until the UN queue is empty before updating
+      when: previous_release_id | length > 0
+
     - name: Cut over to the new release and verify it
       block:
         - name: Stop the current worker task
