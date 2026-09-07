@@ -15,6 +15,9 @@ const DEMO_MAIL_LOGIN = 'browser-demo-user';
 const DEMO_MAIL_PASSWORD = 'browser-demo-password';
 const PORT = 36000 + Math.floor(Math.random() * 2000);
 const origin = `http://127.0.0.1:${PORT}`;
+const packageMetadata = JSON.parse(
+  await readFile(new URL('../package.json', import.meta.url), 'utf8')
+);
 let child;
 let webCookie;
 let webSetCookie;
@@ -126,6 +129,8 @@ test('healthcheck exposes this UN and its local queue state', async () => {
     const body = await response.json();
     assert.equal(body.status, 'ok');
     assert.equal(body.ready, true);
+    assert.equal(body.version, packageMetadata.version);
+    assert.equal(body.release_date, packageMetadata.releaseDate);
     assert.equal(body.un_id, UN_ID);
     assert.equal(body.checks.database.status, 'ok');
     assert.equal(body.checks.filesystem.status, 'ok');

@@ -1,6 +1,6 @@
 # Ответы по интеграции 1С с УН
 
-Документ фиксирует ответы и принятые изменения по состоянию на 4 сентября 2026 года.
+Документ фиксирует ответы и принятые изменения по состоянию на 7 сентября 2026 года.
 
 ## 1. Как определить готовность УН
 
@@ -16,6 +16,7 @@ GET http://TEST_UN_HOST:33001/health
 - `status` равен `ok`;
 - `ready` равен `true`;
 - `service` равен `script-factory`;
+- `version` и `release_date` соответствуют ожидаемому релизу;
 - `un_id` совпадает с идентификатором ожидаемой УН;
 - проверки `checks.database`, `checks.filesystem` и `checks.browser` имеют `status: ok`.
 
@@ -33,6 +34,10 @@ GET http://TEST_UN_HOST:33001/health
 {
   "status": "error",
   "ready": false,
+  "service": "script-factory",
+  "version": "0.4.0",
+  "release_date": "07.09.2026",
+  "un_id": "un-test-windows-01",
   "error": {
     "code": "BROWSER_UNAVAILABLE",
     "message": "Не найден исполняемый файл Chromium или Яндекс Браузера"

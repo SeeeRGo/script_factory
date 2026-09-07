@@ -9,7 +9,7 @@ PowerShell. Проект на УН должен быть установлен к
 - `C:\ScriptFactory` — каталог установленного проекта;
 - `ScriptFactory-Test-UN` — имя Scheduled Task;
 - `un-001` — ожидаемый `UN_ID`;
-- `f586f88a12bc` — точный номер Git-версии для установки.
+- `0123456789ab` — пример точного номера Git commit для установки.
 
 Замените эти значения на свои. PowerShell нужно запустить от имени администратора.
 
@@ -45,7 +45,7 @@ queued  : 0
 $ProjectPath = 'C:\ScriptFactory'
 $TaskName = 'ScriptFactory-Test-UN'
 $ExpectedUnId = 'un-001'
-$NewVersion = 'f586f88a12bc'
+$NewCommit = '0123456789ab'
 
 Set-Location $ProjectPath
 ```
@@ -63,21 +63,65 @@ git status --short
 кто и зачем изменил эти файлы. Не удаляйте локальные изменения командами `reset` или
 `checkout`.
 
-## Шаг 3. Скачать нужную версию и запомнить текущую
+## Шаг 3. Скачать и полностью проверить новую версию
 
 ```powershell
 $OldVersion = (git rev-parse HEAD).Trim()
 git fetch --tags origin
-git rev-parse --verify "$NewVersion^{commit}"
+if ($LASTEXITCODE -ne 0) { throw 'Не удалось получить данные из Git' }
+
+git rev-parse --verify "$NewCommit^{commit}"
+if ($LASTEXITCODE -ne 0) { throw 'Указанная Git-версия не найдена' }
 ```
 
-Последняя команда должна вывести полный номер commit без ошибки.
+`git rev-parse` должен вывести полный номер commit без ошибки. Теперь проверьте, что
+локальный Git содержит не только commit, но и все файлы этой версии:
+
+```powershell
+$VersionObjects = @(git rev-list --objects --missing=print $NewCommit)
+if ($LASTEXITCODE -ne 0) { throw 'Не удалось проверить объекты Git' }
+
+$MissingObjects = @($VersionObjects | Where-Object { $_.StartsWith('?') })
+if ($MissingObjects.Count -gt 0) {
+    $MissingObjects
+    throw 'Репозиторий неполный: отсутствуют объекты новой версии'
+}
+```
+
+Выполните заключительную проверку: Git должен суметь собрать полный архив новой версии.
+Архив нужен только для проверки и после неё удаляется:
+
+```powershell
+$ArchiveCheck = Join-Path $env:TEMP "script-factory-check-$([guid]::NewGuid().ToString('N')).zip"
+git archive --format=zip --output "$ArchiveCheck" $NewCommit
+if ($LASTEXITCODE -ne 0) {
+    Remove-Item $ArchiveCheck -Force -ErrorAction SilentlyContinue
+    throw 'Git не смог полностью прочитать новую версию'
+}
+
+Remove-Item $ArchiveCheck -Force
+
+$ExpectedPackage = git show "${NewCommit}:package.json" | ConvertFrom-Json
+$ExpectedVersion = $ExpectedPackage.version
+$ExpectedReleaseDate = $ExpectedPackage.releaseDate
+```
+
+Если любая проверка завершилась ошибкой, не переходите к шагу 4 и не останавливайте
+Scheduled Task. Сначала восстановите репозиторий:
+
+```powershell
+git fetch origin --tags --prune --force --refetch
+```
+
+После этого повторите проверки. Если отсутствующие объекты остались, используйте новый
+чистый клон в отдельном каталоге; текущий рабочий каталог и `.git` не удаляйте.
 
 Посмотрите сохранённые номера:
 
 ```powershell
-"Текущая версия: $OldVersion"
-"Новая версия:    $NewVersion"
+"Текущий Git commit: $OldVersion"
+"Новый Git commit: $NewCommit"
+"Версия сервиса:   $ExpectedVersion от $ExpectedReleaseDate"
 ```
 
 Не закрывайте это окно PowerShell: переменная `$OldVersion` понадобится для отката.
@@ -116,7 +160,7 @@ if (Test-Path "$ProjectPath\data") {
 ## Шаг 5. Установить новую версию
 
 ```powershell
-git checkout --detach $NewVersion
+git checkout --detach $NewCommit
 if ($LASTEXITCODE -ne 0) { throw 'Не удалось переключить Git-версию' }
 
 $env:PUPPETEER_SKIP_DOWNLOAD = 'true'
@@ -162,6 +206,8 @@ $Health | ConvertTo-Json -Depth 8
 - `status` равен `ok`;
 - `ready` равен `true`;
 - `un_id` равен значению `$ExpectedUnId`;
+- `version` равен значению `$ExpectedVersion`;
+- `release_date` равен значению `$ExpectedReleaseDate`;
 - `checks.database.status`, `checks.filesystem.status` и `checks.browser.status` равны
   `ok`.
 
@@ -170,6 +216,8 @@ $Health | ConvertTo-Json -Depth 8
 ```powershell
 if (-not $Health.ready) { throw 'УН не готова' }
 if ($Health.un_id -ne $ExpectedUnId) { throw "Получен другой UN_ID: $($Health.un_id)" }
+if ($Health.version -ne $ExpectedVersion) { throw "Запущена другая версия: $($Health.version)" }
+if ($Health.release_date -ne $ExpectedReleaseDate) { throw "Другая дата релиза: $($Health.release_date)" }
 ```
 
 ## Шаг 7. Выполнить тестовое задание
@@ -238,7 +286,7 @@ $RollbackHealth | ConvertTo-Json -Depth 8
 
 ```text
 зафиксировать новую версию → остановить задания из 1С → дождаться пустой очереди
-→ сохранить старую версию → остановить Scheduled Task → сделать резервную копию
+→ сохранить старую версию → проверить все объекты Git → остановить Scheduled Task → сделать резервную копию
 → git checkout новой версии → npm ci → preflight → запустить Scheduled Task
 → проверить /health → выполнить тест из 1С
 ```

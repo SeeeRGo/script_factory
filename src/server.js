@@ -54,6 +54,11 @@ const DEMO_DOWNLOAD_FILES = new Map([
   ['stage4-register.csv', 'text/csv; charset=utf-8'],
   ['stage4-log.txt', 'text/plain; charset=utf-8']
 ]);
+const PACKAGE_METADATA = JSON.parse(
+  await readFile(new URL('../package.json', import.meta.url), 'utf8')
+);
+const SERVICE_VERSION = PACKAGE_METADATA.version;
+const SERVICE_RELEASE_DATE = PACKAGE_METADATA.releaseDate;
 const SWAGGER_LOCALIZATION_FILE = path.join(process.cwd(), 'swagger-ru.js');
 const NOVNC_PROXY_PREFIX = '/browser-live';
 const NOVNC_INTERNAL_PORT = Number(process.env.NOVNC_INTERNAL_PORT || 33303);
@@ -115,6 +120,12 @@ function nowIso() {
 function validateRuntimeConfig() {
   if (!WEB_LOGIN || !WEB_PASSWORD || !UN_ID) {
     throw new Error('WEB_LOGIN, WEB_PASSWORD и UN_ID должны быть заданы в .env или переменных окружения');
+  }
+  if (!/^\d+\.\d+\.\d+$/.test(SERVICE_VERSION || '')) {
+    throw new Error('package.json.version должен иметь формат MAJOR.MINOR.PATCH');
+  }
+  if (!/^\d{2}\.\d{2}\.\d{4}$/.test(SERVICE_RELEASE_DATE || '')) {
+    throw new Error('package.json.releaseDate должен иметь формат DD.MM.YYYY');
   }
 }
 
@@ -1425,6 +1436,8 @@ async function buildHealthResponse(requestId) {
     status: ready ? 'ok' : 'error',
     ready,
     service: 'script-factory',
+    version: SERVICE_VERSION,
+    release_date: SERVICE_RELEASE_DATE,
     request_id: requestId,
     un_id: UN_ID,
     checks,

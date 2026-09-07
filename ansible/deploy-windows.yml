@@ -18,10 +18,23 @@
       register: resolved_revision
       changed_when: false
 
+    - name: Read release metadata from package.json
+      ansible.builtin.command:
+        argv:
+          - git
+          - -C
+          - "{{ source_root }}"
+          - show
+          - "{{ requested_git_ref }}:package.json"
+      register: release_package_json
+      changed_when: false
+
     - name: Select the release identifier
       ansible.builtin.set_fact:
         deployment_release_id: "{{ script_factory_release_id | default(resolved_revision.stdout, true) }}"
         deployment_archive: "/tmp/script-factory-{{ script_factory_release_id | default(resolved_revision.stdout, true) }}.zip"
+        deployment_version: "{{ (release_package_json.stdout | from_json).version }}"
+        deployment_release_date: "{{ (release_package_json.stdout | from_json).releaseDate }}"
 
     - name: Validate the release identifier
       ansible.builtin.assert:
@@ -49,6 +62,8 @@
   vars:
     release_id: "{{ hostvars['localhost'].deployment_release_id }}"
     release_archive: "{{ hostvars['localhost'].deployment_archive }}"
+    expected_version: "{{ hostvars['localhost'].deployment_version }}"
+    expected_release_date: "{{ hostvars['localhost'].deployment_release_date }}"
     releases_dir: '{{ script_factory_base_dir }}\releases'
     shared_dir: '{{ script_factory_base_dir }}\shared'
     configs_dir: '{{ script_factory_base_dir }}\shared\configs'
@@ -359,6 +374,8 @@
             that:
               - deployed_health.json.status == 'ok'
               - deployed_health.json.un_id == script_factory_un_id
+              - deployed_health.json.version == expected_version
+              - deployed_health.json.release_date == expected_release_date
               - deployed_health.json.checks.database.status == 'ok'
               - deployed_health.json.checks.filesystem.status == 'ok'
               - deployed_health.json.checks.browser.status == 'ok'

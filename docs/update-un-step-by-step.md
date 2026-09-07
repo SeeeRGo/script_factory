@@ -10,7 +10,7 @@
 
 - `/opt/script_factory` — каталог проекта на Linux-компьютере с Ansible;
 - `un-001` — имя пилотной УН в Ansible inventory;
-- `f586f88` — номер версии Git, которую нужно установить.
+- `0123456789ab` — пример номера Git commit, который нужно установить.
 
 Замените эти значения на свои.
 
@@ -46,13 +46,13 @@ git pull --ff-only
 git rev-parse --short=12 HEAD
 ```
 
-Последняя команда покажет номер версии, например:
+Последняя команда покажет номер Git commit, например:
 
 ```text
-f586f88a12bc
+0123456789ab
 ```
 
-Скопируйте этот номер. Далее он обозначен как `<ВЕРСИЯ>`.
+Скопируйте этот номер. Далее он обозначен как `<GIT_COMMIT>`.
 
 Важно: устанавливайте конкретный номер Git, а не просто `HEAD`. Тогда на всех УН будет
 точно одна и та же версия, а в случае проблемы будет понятно, что откатывать.
@@ -93,7 +93,7 @@ curl http://IP_ПИЛОТНОЙ_УН:33001/health
 
 ## Шаг 3. Проверить playbook
 
-Подставьте номер версии из шага 1:
+Подставьте номер Git commit из шага 1:
 
 ```bash
 ansible-playbook \
@@ -101,7 +101,7 @@ ansible-playbook \
   deploy-windows.yml \
   --syntax-check \
   --ask-vault-pass \
-  -e script_factory_git_ref=<ВЕРСИЯ>
+  -e "script_factory_git_ref=<GIT_COMMIT>"
 ```
 
 При успешной проверке Ansible выведет имя playbook без сообщения об ошибке.
@@ -114,7 +114,7 @@ ansible-playbook \
   deploy-windows.yml \
   --limit 'localhost:un-001' \
   --ask-vault-pass \
-  -e script_factory_git_ref=<ВЕРСИЯ>
+  -e "script_factory_git_ref=<GIT_COMMIT>"
 ```
 
 `localhost` удалять из команды нельзя: на нём Ansible собирает архив обновления.
@@ -150,13 +150,16 @@ curl http://IP_ПИЛОТНОЙ_УН:33001/health
 {
   "status": "ok",
   "ready": true,
-  "un_id": "un-001"
+  "un_id": "un-001",
+  "version": "0.4.0",
+  "release_date": "07.09.2026"
 }
 ```
 
 Также проверьте:
 
 - `un_id` соответствует нужной УН;
+- `version` и `release_date` соответствуют устанавливаемому `package.json`;
 - `checks.database.status` равен `ok`;
 - `checks.filesystem.status` равен `ok`;
 - `checks.browser.status` равен `ok`;
@@ -171,7 +174,7 @@ curl http://IP_ПИЛОТНОЙ_УН:33001/health
 Get-Content 'C:\ProgramData\ScriptFactory\shared\current-release.txt'
 ```
 
-Он должен совпадать с `<ВЕРСИЯ>`.
+Он должен совпадать с `<GIT_COMMIT>`.
 
 ## Шаг 6. Обновить остальные УН
 
@@ -184,7 +187,7 @@ ansible-playbook \
   deploy-windows.yml \
   --limit 'localhost:script_factory_windows:!un-001' \
   --ask-vault-pass \
-  -e script_factory_git_ref=<ВЕРСИЯ>
+  -e "script_factory_git_ref=<GIT_COMMIT>"
 ```
 
 По умолчанию машины обновляются партиями по 25%. Это уменьшает число УН, затронутых
