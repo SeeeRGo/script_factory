@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.6.1
+  version: 0.6.2
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
