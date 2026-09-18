@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { constants as fsConstants, statfsSync } from 'node:fs';
-import { access, mkdir, readFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import os from 'node:os';
 import path from 'node:path';
@@ -703,6 +703,14 @@ async function sendJobArtifactFile(res, job, artifact) {
 
 function jobArtifactManifest(job) {
   return Array.isArray(job?.result?.artifacts) ? job.result.artifacts : [];
+}
+
+async function removeJobArtifacts(job) {
+  const artifactRoot = path.resolve(ARTIFACTS_DIR);
+  const jobDir = path.resolve(artifactRoot, job.job_id);
+  if (jobDir === artifactRoot || !jobDir.startsWith(`${artifactRoot}${path.sep}`)) return false;
+  await rm(jobDir, { recursive: true, force: true });
+  return true;
 }
 
 async function sendArtifactFile(res, pathname) {
@@ -2127,6 +2135,43 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, { job_id: job.job_id, log_level: job.log_level, logs });
         return;
       }
+    }
+
+    if (method === 'DELETE' && resourcePath.startsWith('/jobs/')) {
+      const parts = resourcePath.split('/').filter(Boolean);
+      if (parts.length !== 2) {
+        sendJson(res, 404, { error: { code: 'NOT_FOUND', message: 'Маршрут не найден' } });
+        return;
+      }
+      const jobId = parts[1];
+      const job = state.jobs.get(jobId);
+
+      if (!job) {
+        sendJson(res, 404, { error: { code: 'JOB_NOT_FOUND', message: 'Задание не найдено' } });
+        return;
+      }
+
+      if (job.status === 'running' || job.status === 'retrying') {
+        throw createApiError(
+          'JOB_IN_PROGRESS',
+          'Нельзя удалить выполняющееся задание: сначала отмените его',
+          409,
+          false
+        );
+      }
+
+      if (job.status === 'queued') {
+        removeFromQueue(job.job_id);
+      }
+      if (state.callbackTimers.has(job.job_id)) {
+        clearTimeout(state.callbackTimers.get(job.job_id));
+        state.callbackTimers.delete(job.job_id);
+      }
+      const artifactsRemoved = await removeJobArtifacts(job);
+      state.jobs.delete(job.job_id);
+      schedulePersist();
+      sendJson(res, 200, { deleted: true, job_id: job.job_id, artifacts_removed: artifactsRemoved });
+      return;
     }
 
     if (method === 'POST' && resourcePath.endsWith('/cancel')) {

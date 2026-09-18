@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -19,6 +19,7 @@ const packageMetadata = JSON.parse(
   await readFile(new URL('../package.json', import.meta.url), 'utf8')
 );
 let child;
+let dataDir;
 let webCookie;
 let webSetCookie;
 
@@ -58,7 +59,7 @@ async function webRequest(pathname, options = {}) {
 }
 
 test.before(async () => {
-  const dataDir = await mkdtemp(path.join(tmpdir(), 'script-factory-test-'));
+  dataDir = await mkdtemp(path.join(tmpdir(), 'script-factory-test-'));
   child = spawn(process.execPath, ['src/server.js'], {
     cwd: path.resolve(import.meta.dirname, '..'),
     env: {
@@ -859,4 +860,98 @@ test('executes both multi-job queue demo cases with the expected scheduling sema
     });
     assert.equal(result.passed, true, result.checks.map((check) => `${check.passed}: ${check.message}`).join('\n'));
   }
+});
+
+test('deletes a finished job together with its artifact files', async () => {
+  const createResponse = await request('/api/v2/jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      uid: `delete-${Date.now()}`,
+      timeout_ms: 15000,
+      script: {
+        steps: [
+          {
+            id: 'download',
+            action: 'download_files',
+            params: {
+              save: true,
+              files: [{ filename: 'delete-me.html', source_url: '{{demo_file_url}}' }]
+            }
+          }
+        ]
+      }
+    })
+  });
+  assert.equal(createResponse.status, 201);
+  const jobId = (await createResponse.json()).job.job_id;
+
+  let job;
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    job = (await (await request(`/api/v2/jobs/${jobId}`)).json()).job;
+    if (['success', 'failed', 'validation_failed', 'timeout'].includes(job.status)) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(job.status, 'success', JSON.stringify(job.error));
+  assert.equal(job.result.artifacts.length, 1);
+
+  const artifactApiUrl = job.result.artifacts[0];
+  const artifactResponse = await request(artifactApiUrl);
+  assert.equal(artifactResponse.status, 200);
+
+  const jobArtifactsDir = path.join(dataDir, 'artifacts', jobId);
+  assert.ok((await readdir(jobArtifactsDir)).length > 0);
+
+  const deleteResponse = await request(`/api/v2/jobs/${jobId}`, { method: 'DELETE' });
+  assert.equal(deleteResponse.status, 200);
+  const deleteBody = await deleteResponse.json();
+  assert.equal(deleteBody.deleted, true);
+  assert.equal(deleteBody.job_id, jobId);
+  assert.equal(deleteBody.artifacts_removed, true);
+
+  const getAfterDelete = await request(`/api/v2/jobs/${jobId}`);
+  assert.equal(getAfterDelete.status, 404);
+  assert.equal((await getAfterDelete.json()).error.code, 'JOB_NOT_FOUND');
+
+  const artifactAfterDelete = await request(artifactApiUrl);
+  assert.equal(artifactAfterDelete.status, 404);
+
+  await assert.rejects(() => readdir(jobArtifactsDir), /ENOENT/);
+});
+
+test('refuses to delete a running job and deletes it after cancellation', async () => {
+  const createResponse = await request('/api/v2/jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      script: { steps: [{ action: 'noop', duration_ms: 2000 }] }
+    })
+  });
+  const jobId = (await createResponse.json()).job.job_id;
+
+  const busyDelete = await request(`/api/v2/jobs/${jobId}`, { method: 'DELETE' });
+  assert.equal(busyDelete.status, 409);
+  assert.equal((await busyDelete.json()).error.code, 'JOB_IN_PROGRESS');
+
+  const cancelResponse = await request(`/api/v2/jobs/${jobId}/cancel`, { method: 'POST' });
+  assert.ok([200, 202].includes(cancelResponse.status));
+
+  let job;
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    job = (await (await request(`/api/v2/jobs/${jobId}`)).json()).job;
+    if (job.status === 'cancelled') break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.equal(job.status, 'cancelled');
+
+  const deleteResponse = await request(`/api/v2/jobs/${jobId}`, { method: 'DELETE' });
+  assert.equal(deleteResponse.status, 200);
+  assert.equal((await deleteResponse.json()).deleted, true);
+  assert.equal((await (await request(`/api/v2/jobs/${jobId}`)).json()).error.code, 'JOB_NOT_FOUND');
+});
+
+test('returns 404 when deleting an unknown job', async () => {
+  const response = await request('/api/v2/jobs/does-not-exist', { method: 'DELETE' });
+  assert.equal(response.status, 404);
+  assert.equal((await response.json()).error.code, 'JOB_NOT_FOUND');
 });
