@@ -180,6 +180,31 @@ test('healthcheck exposes this UN and its local queue state', async () => {
   assert.deepEqual(nestedLeafNames.filter((name) => name.split('.').length > 2), [...new Set(nestedLeafNames.filter((name) => name.split('.').length > 2))]);
 });
 
+test('exposes and validates the configurable job retention period', async () => {
+  const initialResponse = await request('/api/v2/system/config');
+  assert.equal(initialResponse.status, 200);
+  assert.equal((await initialResponse.json()).config.job_retention_days, 30);
+
+  const updateResponse = await request('/api/v2/system/config', {
+    method: 'PUT',
+    body: JSON.stringify({ job_retention_days: 31 })
+  });
+  assert.equal(updateResponse.status, 200);
+  assert.equal((await updateResponse.json()).config.job_retention_days, 31);
+
+  const invalidResponse = await request('/api/v2/system/config', {
+    method: 'PUT',
+    body: JSON.stringify({ job_retention_days: 0 })
+  });
+  assert.equal(invalidResponse.status, 400);
+  assert.equal((await invalidResponse.json()).error.code, 'INVALID_CONFIG');
+
+  await request('/api/v2/system/config', {
+    method: 'PUT',
+    body: JSON.stringify({ job_retention_days: 30 })
+  });
+});
+
 test('accepts separated parameters and script text, supports uid lookup and detects idempotency conflicts', async () => {
   const uid = `separated-${Date.now()}`;
   const body = {

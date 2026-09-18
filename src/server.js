@@ -21,6 +21,7 @@ import {
 import { createDemoMail } from './demo-mail.js';
 import { checkExternalIp, detectYandexVersion, prefixResourceFields } from './system-checks.js';
 import { serializeJobResult } from './job-result.js';
+import { isJobExpired } from './job-retention.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -65,6 +66,7 @@ const SWAGGER_LOCALIZATION_FILE = path.join(process.cwd(), 'swagger-ru.js');
 const NOVNC_PROXY_PREFIX = '/browser-live';
 const NOVNC_INTERNAL_PORT = Number(process.env.NOVNC_INTERNAL_PORT || 33303);
 const PERSIST_DEBOUNCE_MS = Number(process.env.PERSIST_DEBOUNCE_MS || 50);
+const JOB_CLEANUP_INTERVAL_MS = Number(process.env.JOB_CLEANUP_INTERVAL_MS || 24 * 60 * 60 * 1000);
 const CALLBACK_AUTH_TOKEN = process.env.CALLBACK_AUTH_TOKEN || '';
 const CALLBACK_AUTH_USERNAME = process.env.CALLBACK_AUTH_USERNAME || '';
 const CALLBACK_AUTH_PASSWORD = process.env.CALLBACK_AUTH_PASSWORD || '';
@@ -106,6 +108,7 @@ const state = {
   config: {
     max_parallel_jobs: Number(process.env.MAX_PARALLEL_JOBS || 1),
     default_job_timeout_ms: Number(process.env.DEFAULT_JOB_TIMEOUT_MS || 30000),
+    job_retention_days: Number(process.env.JOB_RETENTION_DAYS || 30),
     retry_policy: {
       max_attempts: Number(process.env.RETRY_MAX_ATTEMPTS || 2),
       backoff_ms: Number(process.env.RETRY_BACKOFF_MS || 500)
@@ -132,6 +135,7 @@ let previousSystemCpuSample = os.cpus().map((cpu) => ({ ...cpu.times }));
 
 let persistTimer = null;
 let persistRequested = false;
+let cleanupTimer = null;
 let db = null;
 
 function nowIso() {
@@ -270,6 +274,7 @@ function defaultConfig() {
   return {
     max_parallel_jobs: Number(process.env.MAX_PARALLEL_JOBS || 1),
     default_job_timeout_ms: Number(process.env.DEFAULT_JOB_TIMEOUT_MS || 30000),
+    job_retention_days: Number(process.env.JOB_RETENTION_DAYS || 30),
     retry_policy: {
       max_attempts: Number(process.env.RETRY_MAX_ATTEMPTS || 2),
       backoff_ms: Number(process.env.RETRY_BACKOFF_MS || 500)
@@ -711,6 +716,56 @@ async function removeJobArtifacts(job) {
   if (jobDir === artifactRoot || !jobDir.startsWith(`${artifactRoot}${path.sep}`)) return false;
   await rm(jobDir, { recursive: true, force: true });
   return true;
+}
+
+function deletePersistedJob(jobId) {
+  db?.prepare('DELETE FROM jobs WHERE job_id = ?').run(jobId);
+}
+
+async function cleanupExpiredJobs() {
+  const expiredJobs = [...state.jobs.values()].filter((job) => (
+    isJobExpired(job, state.config.job_retention_days)
+  ));
+  let deleted = 0;
+
+  for (const job of expiredJobs) {
+    try {
+      await removeJobArtifacts(job);
+      if (state.callbackTimers.has(job.job_id)) {
+        clearTimeout(state.callbackTimers.get(job.job_id));
+        state.callbackTimers.delete(job.job_id);
+      }
+      state.jobs.delete(job.job_id);
+      deletePersistedJob(job.job_id);
+      deleted += 1;
+    } catch (error) {
+      console.error(`Failed to clean up expired job ${job.job_id}:`, error);
+    }
+  }
+
+  if (deleted > 0) {
+    schedulePersist();
+    console.log(`Cleaned up ${deleted} expired job(s)`);
+  }
+  return deleted;
+}
+
+function scheduleJobCleanup() {
+  if (cleanupTimer) clearTimeout(cleanupTimer);
+  const intervalMs = Number.isFinite(JOB_CLEANUP_INTERVAL_MS)
+    ? Math.max(60_000, JOB_CLEANUP_INTERVAL_MS)
+    : 24 * 60 * 60 * 1000;
+  cleanupTimer = setTimeout(async () => {
+    cleanupTimer = null;
+    try {
+      await cleanupExpiredJobs();
+    } catch (error) {
+      console.error('Failed to clean up expired jobs:', error);
+    } finally {
+      scheduleJobCleanup();
+    }
+  }, intervalMs);
+  cleanupTimer.unref();
 }
 
 async function sendArtifactFile(res, pathname) {
@@ -1739,6 +1794,13 @@ function validateConfigPatch(payload) {
     next.default_job_timeout_ms = payload.default_job_timeout_ms;
   }
 
+  if (payload.job_retention_days !== undefined) {
+    if (!Number.isInteger(payload.job_retention_days) || payload.job_retention_days < 1) {
+      throw createApiError('INVALID_CONFIG', 'job_retention_days должен быть положительным целым числом', 400, false);
+    }
+    next.job_retention_days = payload.job_retention_days;
+  }
+
   if (payload.retry_policy !== undefined) {
     const retry = payload.retry_policy;
     if (typeof retry !== 'object' || retry === null) {
@@ -2169,6 +2231,7 @@ const server = http.createServer(async (req, res) => {
       }
       const artifactsRemoved = await removeJobArtifacts(job);
       state.jobs.delete(job.job_id);
+      deletePersistedJob(job.job_id);
       schedulePersist();
       sendJson(res, 200, { deleted: true, job_id: job.job_id, artifacts_removed: artifactsRemoved });
       return;
@@ -2235,6 +2298,7 @@ const server = http.createServer(async (req, res) => {
       state.config = validateConfigPatch(payload);
       drainQueue();
       schedulePersist();
+      await cleanupExpiredJobs();
       sendJson(res, 200, { config: state.config });
       return;
     }
@@ -2294,10 +2358,12 @@ async function main() {
   validateRuntimeConfig();
   state.config = defaultConfig();
   await loadPersistedState();
+  await cleanupExpiredJobs();
   schedulePersist();
   await flushPersistence();
   for (const job of state.jobs.values()) scheduleResultCallback(job);
   drainQueue();
+  scheduleJobCleanup();
 
   server.listen(PORT, HOST, () => {
     console.log(`script-factory listening on http://${HOST}:${PORT}`);
@@ -2309,6 +2375,10 @@ async function shutdown(code = 0) {
   if (persistTimer) {
     clearTimeout(persistTimer);
     persistTimer = null;
+  }
+  if (cleanupTimer) {
+    clearTimeout(cleanupTimer);
+    cleanupTimer = null;
   }
   for (const timer of state.callbackTimers.values()) clearTimeout(timer);
   state.callbackTimers.clear();

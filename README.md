@@ -78,6 +78,9 @@ DEMO_API_URL=http://127.0.0.1:33001 npm run demo:success
 ```
 
 State is persisted to `data/state.sqlite` locally and `/app/data/state.sqlite` in Docker.
+Completed jobs, including their logs, results, and artifact files, are removed automatically
+after `JOB_RETENTION_DAYS` days (30 by default). The persisted `job_retention_days` setting
+can also be changed through `PUT /api/v2/system/config`.
 
 ## Execution Studio
 
@@ -181,6 +184,7 @@ WEB_LOGIN=<interface-login>
 WEB_PASSWORD=<strong-interface-password>
 WEB_COOKIE_SECURE=true
 DATA_DIR=/app/data
+JOB_RETENTION_DAYS=30
 HOST=0.0.0.0
 ```
 

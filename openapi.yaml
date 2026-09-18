@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.6.4
+  version: 0.6.5
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
@@ -645,6 +645,11 @@ components:
         default_job_timeout_ms:
           type: integer
           example: 30000
+        job_retention_days:
+          type: integer
+          minimum: 1
+          default: 30
+          description: Срок хранения завершённых заданий, их логов, результатов и артефактов в днях.
         retry_policy:
           $ref: '#/components/schemas/RetryPolicy'
 security:
@@ -1128,6 +1133,7 @@ paths:
             example:
               max_parallel_jobs: 2
               default_job_timeout_ms: 30000
+              job_retention_days: 30
               retry_policy:
                 max_attempts: 2
                 backoff_ms: 500
