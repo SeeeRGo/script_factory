@@ -1256,7 +1256,12 @@ function applyInterpreterEvent(job, event) {
       });
       logJob(job, 'info', `Шаг ${event.step_index + 1}/${execution.total_steps} запущен`, {
         action: event.action,
+        step_id: event.step_id
+      });
+      logJob(job, 'debug', `Параметры шага ${event.step_index + 1}/${execution.total_steps} подготовлены`, {
+        action: event.action,
         step_id: event.step_id,
+        attempt: job.attempts,
         params: event.params
       });
     } else if (event.type === 'step_completed') {
@@ -1273,8 +1278,15 @@ function applyInterpreterEvent(job, event) {
       logJob(job, 'info', `Шаг ${event.step_index + 1}/${execution.total_steps} завершён`, {
         action: event.action,
         step_id: event.step_id,
+        duration_ms: event.duration_ms
+      });
+      logJob(job, 'debug', `Результат шага ${event.step_index + 1}/${execution.total_steps} сохранён`, {
+        action: event.action,
+        step_id: event.step_id,
         duration_ms: event.duration_ms,
-        output: event.output
+        output: event.output,
+        completed_steps: execution.completed_steps,
+        percent: execution.percent
       });
     } else if (event.type === 'step_failed') {
       Object.assign(step, {
@@ -1311,6 +1323,14 @@ function applyInterpreterEvent(job, event) {
     execution.finished_at = event.ts;
     execution.duration_ms = event.result.duration_ms;
     execution.context = event.result.context;
+    logJob(job, 'debug', 'Интерпретатор завершил сценарий', {
+      duration_ms: event.result.duration_ms,
+      steps_executed: event.result.steps_executed,
+      context_keys: Object.keys(event.result.context || {}).sort(),
+      artifacts_count: Array.isArray(event.result.context?.artifacts)
+        ? event.result.context.artifacts.length
+        : 0
+    });
   }
 }
 
@@ -1445,7 +1465,18 @@ async function executeJob(job) {
       ...(!browserReplay ? { simulated_outcome: simulatedOutcome } : {})
     };
     job.finished_at = nowIso();
-    logJob(job, 'info', 'Задание успешно выполнено', job.result);
+    logJob(job, 'debug', 'Итоговые данные задания сформированы', {
+      runtime: job.result.runtime,
+      duration_ms: job.result.duration_ms,
+      steps_executed: job.result.steps_executed,
+      artifacts: job.result.artifacts,
+      context_keys: Object.keys(job.result.context || {}).sort()
+    });
+    logJob(job, 'info', 'Задание успешно выполнено', {
+      duration_ms: job.result.duration_ms,
+      steps_executed: job.result.steps_executed,
+      artifacts_count: job.result.artifacts.length
+    });
   } catch (error) {
     if (error?.code === 'CANCELLED') {
       job.status = 'cancelled';

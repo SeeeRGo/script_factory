@@ -257,6 +257,49 @@ test('accepts separated parameters and script text, supports uid lookup and dete
   assert.ok(logs.logs.some((entry) => entry.level === 'debug'));
 });
 
+test('debug logging contains step diagnostics that are absent from info logging', async () => {
+  const createAndWait = async (logLevel) => {
+    const response = await request('/api/v2/jobs', {
+      method: 'POST',
+      body: JSON.stringify({
+        uid: `logging-${logLevel}-${Date.now()}`,
+        log_level: logLevel,
+        script: {
+          steps: [
+            { id: 'pause', action: 'wait', params: { duration_ms: 5 } },
+            { id: 'finish', action: 'noop', params: { marker: logLevel } }
+          ]
+        }
+      })
+    });
+    assert.equal(response.status, 201);
+    const jobId = (await response.json()).job.job_id;
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      const job = await request(`/api/v2/jobs/${jobId}`).then((jobResponse) => jobResponse.json()).then((body) => body.job);
+      if (job.status === 'success') break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return request(`/api/v2/jobs/${jobId}/logs`).then((logResponse) => logResponse.json());
+  };
+
+  const [debugLog, infoLog] = await Promise.all([
+    createAndWait('debug'),
+    createAndWait('info')
+  ]);
+  const debugEntries = debugLog.logs.filter((entry) => entry.level === 'debug');
+
+  assert.ok(debugEntries.length >= 6, JSON.stringify(debugEntries));
+  assert.ok(debugEntries.some((entry) => entry.message === 'Параметры шага 1/2 подготовлены'));
+  assert.ok(debugEntries.some((entry) => entry.message === 'Результат шага 2/2 сохранён'));
+  assert.ok(debugEntries.some((entry) => entry.message === 'Интерпретатор завершил сценарий'));
+  assert.ok(debugEntries.some((entry) => entry.message === 'Итоговые данные задания сформированы'));
+  assert.ok(debugLog.logs.length > infoLog.logs.length);
+  assert.ok(infoLog.logs.every((entry) => entry.level !== 'debug'));
+  assert.ok(infoLog.logs.some((entry) => entry.message === 'Шаг 1/2 запущен'));
+  assert.ok(infoLog.logs.some((entry) => entry.message === 'Задание успешно выполнено'));
+});
+
 test('healthcheck reflects active and queued jobs on this UN', async () => {
   const createJob = async (uid) => {
     const response = await request('/api/v2/jobs', {
