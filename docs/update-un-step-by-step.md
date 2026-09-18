@@ -151,7 +151,7 @@ curl http://IP_ПИЛОТНОЙ_УН:33001/health
   "status": "ok",
   "ready": true,
   "un_id": "un-001",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "release_date": "07.09.2026"
 }
 ```

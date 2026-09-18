@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.4.0
+  version: 0.6.0
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
@@ -349,34 +349,21 @@ components:
     JobResult:
       type: object
       nullable: true
-      required: [job_id, uid, un_id, artifacts]
+      description: >-
+        Итог выполнения. artifacts содержит пути (api_url) всех сохранённых файлов
+        без привязки к результатам; Rezult_N — произвольные по составу поля
+        для результата N, набор и количество зависят от сценария.
+      required: [artifacts]
       properties:
-        job_id:
-          type: string
-        uid:
-          type: string
-          description: Идентификатор задания во внешней системе.
-        un_id:
-          type: string
-          description: Идентификатор УН, выполнившей задание.
-        message:
-          type: string
-        steps_executed:
-          type: integer
-        duration_ms:
-          type: integer
-        context:
-          type: object
-          additionalProperties: true
         artifacts:
           type: array
+          description: Пути всех скачанных файлов; пустой массив, если сценарий не скачивает файлы.
           items:
-            $ref: '#/components/schemas/Artifact'
-        simulated_outcome:
-          type: string
-        runtime:
-          type: string
-          enum: [json-steps, puppeteer-replay]
+            type: string
+      additionalProperties:
+        type: object
+        description: Значение Rezult_N — произвольный JSON-объект результата N.
+        additionalProperties: true
     QueueHealth:
       type: object
       required: [status, queued, running, max_parallel_jobs, available_slots]
@@ -409,7 +396,7 @@ components:
           type: string
         version:
           type: string
-          example: 0.4.0
+          example: 0.5.0
         release_date:
           type: string
           pattern: '^\d{2}\.\d{2}\.\d{4}$'
@@ -469,39 +456,55 @@ components:
                   type: string
     SystemResources:
       type: object
+      description: Все вложенные поля имеют уникальные имена с префиксом структуры.
       properties:
         un_id:
           type: string
+        api_version:
+          type: string
+          description: Версия API на УН.
+          example: v2
+        service_version:
+          type: string
+          description: Версия релиза службы.
+        release_date:
+          type: string
+          description: Дата релиза службы в формате DD.MM.YYYY.
         uptime_seconds:
           type: integer
         cpu:
           type: object
           properties:
-            logical_cores: { type: integer }
-            system_percent: { type: number }
-            process_percent: { type: number }
-            load_average:
+            cpu_logical_cores: { type: integer }
+            cpu_system_percent: { type: number }
+            cpu_process_percent: { type: number }
+            cpu_load_average:
               type: array
               items: { type: number }
         memory:
           type: object
           properties:
-            total_bytes: { type: integer }
-            free_bytes: { type: integer }
-            used_percent: { type: number }
-            process_rss_bytes: { type: integer }
-            process_heap_used_bytes: { type: integer }
+            memory_total_bytes: { type: integer }
+            memory_free_bytes: { type: integer }
+            memory_used_percent: { type: number }
+            memory_process_rss_bytes: { type: integer }
+            memory_process_heap_used_bytes: { type: integer }
         disk:
           type: object
           nullable: true
           properties:
-            path: { type: string }
-            total_bytes: { type: integer }
-            free_bytes: { type: integer }
-            used_percent: { type: number }
+            disk_path: { type: string }
+            disk_total_bytes: { type: integer }
+            disk_free_bytes: { type: integer }
+            disk_used_percent: { type: number }
         memory_usage:
           type: object
-          additionalProperties: true
+          properties:
+            memory_usage_rss: { type: integer }
+            memory_usage_heapTotal: { type: integer }
+            memory_usage_heapUsed: { type: integer }
+            memory_usage_external: { type: integer }
+            memory_usage_arrayBuffers: { type: integer }
         jobs_total:
           type: integer
         jobs_running:
@@ -509,7 +512,28 @@ components:
         jobs_queued:
           type: integer
         queue:
-          $ref: '#/components/schemas/QueueHealth'
+          type: object
+          properties:
+            queue_status: { type: string, enum: [idle, processing, busy] }
+            queue_queued: { type: integer }
+            queue_running: { type: integer }
+            queue_max_parallel_jobs: { type: integer }
+            queue_available_slots: { type: integer }
+        browser_replay:
+          type: object
+          properties:
+            browser_replay_available: { type: boolean }
+            browser_replay_browser_product: { type: string }
+            browser_replay_executable_path: { type: string, nullable: true }
+            browser_replay_headless: { type: boolean }
+            browser_replay_step_delay_ms: { type: number }
+            browser_replay_captcha_wait_ms: { type: number }
+            browser_replay_live_view_enabled: { type: boolean }
+            browser_replay_demo_mail_messages: { type: integer }
+        yandex_browser_version:
+          type: string
+          nullable: true
+          description: Версия Яндекс Браузера или null, если определить не удалось.
         node_version:
           type: string
     Job:
@@ -566,6 +590,27 @@ components:
             attempts: { type: integer }
             max_attempts: { type: integer }
             last_http_status: { type: integer, nullable: true }
+            last_response_at: { type: string, format: date-time, nullable: true }
+            last_response_content_type: { type: string, nullable: true }
+            last_response_body:
+              type: string
+              nullable: true
+              description: Тело последнего HTTP-ответа callback, не более 16 КиБ.
+            last_response_body_truncated:
+              type: boolean
+              description: Признак обрезки тела последнего ответа по ограничению 16 КиБ.
+            response_history:
+              type: array
+              description: Сохранённые HTTP-ответы всех попыток доставки callback.
+              items:
+                type: object
+                properties:
+                  attempt: { type: integer }
+                  received_at: { type: string, format: date-time }
+                  http_status: { type: integer }
+                  content_type: { type: string, nullable: true }
+                  body: { type: string }
+                  body_truncated: { type: boolean }
             next_retry_at: { type: string, format: date-time, nullable: true }
             delivered_at: { type: string, format: date-time, nullable: true }
         execution:
@@ -995,6 +1040,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SystemResources'
+  /system/ip-check:
+    get:
+      tags: [Система]
+      summary: Проверить соответствие внешнего IP УН адресу из settings.ini
+      description: >-
+        Читает C:\_external ip monitor\settings.ini ([main] ip_adress), определяет
+        внешний адрес через сервис ipify и возвращает только статус проверки без значений IP.
+      responses:
+        "200":
+          description: Проверка пройдена
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+        "503":
+          description: Проверка не пройдена
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      code:
+                        type: string
+                        enum: [IP_SETTINGS_READ_FAILED, IP_SETTINGS_INVALID, IP_LOOKUP_FAILED, IP_LOOKUP_INVALID, IP_MISMATCH, IP_CHECK_TIMEOUT]
+                      message:
+                        type: string
   /system/config:
     get:
       tags: [Система]

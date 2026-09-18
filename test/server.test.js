@@ -76,6 +76,7 @@ test.before(async () => {
       DEMO_1C_CALLBACK_ENABLED: 'true',
       PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
       BROWSER_HEADLESS: 'true',
+      CALLBACK_ALLOWED_ORIGINS: origin,
       DATA_DIR: dataDir
     },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -150,18 +151,32 @@ test('healthcheck exposes this UN and its local queue state', async () => {
   assert.equal(resourcesResponse.status, 200);
   const resources = await resourcesResponse.json();
   assert.equal(resources.un_id, UN_ID);
-  assert.ok(resources.cpu.logical_cores >= 1);
-  assert.ok(resources.cpu.system_percent >= 0);
-  assert.ok(resources.memory.total_bytes > 0);
-  assert.ok(resources.memory.used_percent >= 0);
-  assert.ok(resources.disk === null || resources.disk.total_bytes > 0);
+  assert.equal(resources.api_version, 'v2');
+  assert.equal(resources.service_version, packageMetadata.version);
+  assert.equal(resources.release_date, packageMetadata.releaseDate);
+  assert.ok(resources.cpu.cpu_logical_cores >= 1);
+  assert.ok(resources.cpu.cpu_system_percent >= 0);
+  assert.ok(resources.memory.memory_total_bytes > 0);
+  assert.ok(resources.memory.memory_used_percent >= 0);
+  assert.ok(resources.disk === null || resources.disk.disk_total_bytes > 0);
+  assert.ok(typeof resources.yandex_browser_version === 'string' || resources.yandex_browser_version === null);
   assert.deepEqual(resources.queue, {
-    status: 'idle',
-    queued: 0,
-    running: 0,
-    max_parallel_jobs: 1,
-    available_slots: 1
+    queue_status: 'idle',
+    queue_queued: 0,
+    queue_running: 0,
+    queue_max_parallel_jobs: 1,
+    queue_available_slots: 1
   });
+  const nestedLeafNames = [];
+  const collectLeaves = (value, prefix) => {
+    if (value === null || typeof value !== 'object') {
+      nestedLeafNames.push(prefix);
+      return;
+    }
+    for (const [key, item] of Object.entries(value)) collectLeaves(item, `${prefix}.${key}`);
+  };
+  collectLeaves(resources, '');
+  assert.deepEqual(nestedLeafNames.filter((name) => name.split('.').length > 2), [...new Set(nestedLeafNames.filter((name) => name.split('.').length > 2))]);
 });
 
 test('accepts separated parameters and script text, supports uid lookup and detects idempotency conflicts', async () => {
@@ -275,12 +290,12 @@ test('runs several jobs in parallel and exposes occupied capacity', async () => 
     const runningDeadline = Date.now() + 1000;
     while (Date.now() < runningDeadline) {
       resources = await request('/api/v2/system/resources').then((response) => response.json());
-      if (resources.queue.running === 3) break;
+      if (resources.queue.queue_running === 3) break;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    assert.equal(resources.queue.running, 3);
-    assert.equal(resources.queue.max_parallel_jobs, 3);
-    assert.equal(resources.queue.available_slots, 0);
+    assert.equal(resources.queue.queue_running, 3);
+    assert.equal(resources.queue.queue_max_parallel_jobs, 3);
+    assert.equal(resources.queue.queue_available_slots, 0);
 
     for (const jobId of jobIds) {
       const deadline = Date.now() + 2000;
@@ -509,24 +524,11 @@ test('executes a script through the API and exposes visual step state and logs',
   assert.equal(job.execution.percent, 100);
   assert.equal(job.execution.completed_steps, 6);
   assert.ok(job.execution.steps.every((step) => step.status === 'success'));
-  assert.deepEqual(job.result.context.uploaded_files, ['FNS.xml']);
-  assert.equal(job.result.job_id, jobId);
-  assert.equal(job.result.uid, externalUid);
-  assert.equal(job.result.un_id, UN_ID);
-  assert.equal(job.result.artifacts.length, 1);
-  const { created_at: artifactCreatedAt, ...artifact } = job.result.artifacts[0];
-  assert.deepEqual(artifact, {
-    artifact_id: 'receipt_1',
-    kind: 'downloaded_file',
-    filename: 'receipt.pdf',
-    local_path: '/downloads/receipt.pdf',
-    api_url: `/api/v2/jobs/${jobId}/artifacts/receipt_1`,
-    source_url: 'https://example.test/receipt.pdf',
-    mime_type: 'application/pdf',
-    size_bytes: 128,
-    checksum_sha256: 'abc123'
-  });
-  assert.ok(Number.isFinite(Date.parse(artifactCreatedAt)));
+  assert.deepEqual(job.execution.context.uploaded_files, ['FNS.xml']);
+  assert.deepEqual(job.result.artifacts, [
+    `/api/v2/jobs/${jobId}/artifacts/receipt_1`
+  ]);
+  assert.deepEqual(Object.keys(job.result).filter((key) => key !== 'artifacts'), []);
 
   const logResponse = await request(`/api/v2/jobs/${jobId}/logs`);
   const logBody = await logResponse.json();
@@ -586,14 +588,60 @@ test('returns a terminal result to 1C callback with retries and delivery state',
   }
 
   assert.equal(job.status, 'success');
-  assert.equal(job.result.context.waited_ms, 20);
+  assert.equal(job.execution.context.waited_ms, 20);
   assert.equal(job.callback_delivery.status, 'delivered');
   assert.equal(job.callback_delivery.attempts, 2);
+  assert.equal(job.callback_delivery.last_http_status, 204);
+  assert.equal(job.callback_delivery.last_response_body, '');
+  assert.equal(job.callback_delivery.last_response_body_truncated, false);
+  assert.equal(job.callback_delivery.response_history.length, 2);
+  assert.equal(job.callback_delivery.response_history[0].http_status, 503);
+  assert.match(job.callback_delivery.response_history[0].content_type, /^application\/json/);
+  assert.match(job.callback_delivery.response_history[0].body, /DEMO_CALLBACK_FAILURE/);
+  assert.equal(job.callback_delivery.response_history[0].body_truncated, false);
+  assert.equal(job.callback_delivery.response_history[1].http_status, 204);
+  assert.equal(job.callback_delivery.response_history[1].body, '');
   const callbackEvents = await request('/api/v2/demo/callback-events').then((eventResponse) => eventResponse.json());
   const delivered = callbackEvents.items.at(-1);
   assert.equal(delivered.event, 'job.completed');
   assert.equal(delivered.job.job_id, jobId);
-  assert.equal(delivered.job.result.uid, job.uid);
+  assert.deepEqual(delivered.job.result, { artifacts: [] });
+});
+
+test('stores the response body when a 1C callback is rejected with HTTP 402', async () => {
+  const response = await request('/api/v2/jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      uid: `callback-402-${Date.now()}`,
+      timeout_ms: 2000,
+      callback: {
+        url: `${origin}/demo/1c/callback?response_status=402`,
+        max_attempts: 1,
+        timeout_ms: 500
+      },
+      script: { steps: [{ action: 'noop' }] }
+    })
+  });
+  assert.equal(response.status, 201);
+  const jobId = (await response.json()).job.job_id;
+
+  let job;
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    job = (await (await request(`/api/v2/jobs/${jobId}`)).json()).job;
+    if (job.callback_delivery?.status === 'failed') break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  assert.equal(job.status, 'success');
+  assert.equal(job.callback_delivery.status, 'failed');
+  assert.equal(job.callback_delivery.last_http_status, 402);
+  assert.match(job.callback_delivery.last_response_content_type, /^application\/json/);
+  assert.match(job.callback_delivery.last_response_body, /DEMO_CALLBACK_REJECTED/);
+  assert.equal(job.callback_delivery.last_response_body_truncated, false);
+  assert.equal(job.callback_delivery.response_history.length, 1);
+  assert.equal(job.callback_delivery.error.http_status, 402);
+  assert.equal(job.callback_delivery.error.response_body, job.callback_delivery.last_response_body);
 });
 
 test('cancels an active interpreter step through its abort signal', async () => {
@@ -668,26 +716,20 @@ test('downloads, saves, verifies and opens the Stage 4 demo file', async () => {
   }
 
   assert.equal(job.status, 'success', JSON.stringify(job.error));
-  assert.match(job.result.context.file_content, /Файл сохранён и открыт/);
-  assert.match(job.result.context.opened_url, /^file:/);
-  const downloaded = job.result.artifacts.find((artifact) => artifact.kind === 'downloaded_file');
-  const screenshot = job.result.artifacts.find((artifact) => artifact.kind === 'browser_screenshot');
-  assert.ok(downloaded);
-  assert.ok(screenshot);
-  assert.ok(downloaded.size_bytes > 1000);
-  assert.match(downloaded.checksum_sha256, /^[a-f0-9]{64}$/);
-  assert.match(downloaded.public_url, new RegExp(`^/artifacts/${jobId}/`));
-  assert.equal(downloaded.api_url, `/api/v2/jobs/${jobId}/artifacts/${downloaded.artifact_id}`);
+  assert.match(job.execution.context.file_content, /Файл сохранён и открыт/);
+  assert.match(job.execution.context.opened_url, /^file:/);
+  assert.equal(job.result.artifacts.length, 2);
+  assert.ok(job.result.artifacts.every((item) => typeof item === 'string' && item.startsWith('/api/v2/jobs/')));
 
-  const downloadedResponse = await webRequest(downloaded.public_url);
+  for (const apiUrl of job.result.artifacts) {
+    const artifactResponse = await request(apiUrl);
+    assert.equal(artifactResponse.status, 200, apiUrl);
+    assert.ok((await artifactResponse.arrayBuffer()).byteLength > 1000, apiUrl);
+  }
+  const downloadedApiUrl = job.result.artifacts[0];
+  const downloadedResponse = await webRequest(`/artifacts/${jobId}/stage4-demo-document.html`);
   assert.equal(downloadedResponse.status, 200);
   assert.match(await downloadedResponse.text(), /DOWNLOAD → SAVE → VERIFY → OPEN/);
-  const apiArtifactResponse = await request(`/api/v2/jobs/${jobId}/artifacts/${downloaded.artifact_id}`);
-  assert.equal(apiArtifactResponse.status, 200);
-  assert.match(await apiArtifactResponse.text(), /DOWNLOAD → SAVE → VERIFY → OPEN/);
-  const screenshotResponse = await webRequest(screenshot.public_url);
-  assert.equal(screenshotResponse.status, 200);
-  assert.ok((await screenshotResponse.arrayBuffer()).byteLength > 1000);
 });
 
 test('keeps partial artifacts and diagnostic logs after a controlled file-flow failure', async () => {
@@ -721,8 +763,7 @@ test('keeps partial artifacts and diagnostic logs after a controlled file-flow f
   assert.equal(job.error.code, 'VALIDATION_ERROR');
   assert.match(job.error.message, /download-save-open2/);
   assert.equal(job.result.artifacts.length, 2);
-  assert.ok(job.result.artifacts.some((artifact) => artifact.filename === 'stage4-download-demo.html'));
-  assert.ok(job.result.artifacts.some((artifact) => artifact.kind === 'browser_screenshot'));
+  assert.ok(job.result.artifacts.every((item) => typeof item === 'string' && item.startsWith('/api/v2/jobs/')));
 
   const callbackEvents = await request('/api/v2/demo/callback-events').then((eventResponse) => eventResponse.json());
   const callbackEvent = callbackEvents.items.find((event) => event.job.uid === uid);
@@ -766,8 +807,6 @@ test('executes a local Puppeteer Replay mail fixture without external delivery',
   }
 
   assert.equal(job.status, 'success', JSON.stringify(job.error));
-  assert.equal(job.result.runtime, 'puppeteer-replay');
-  assert.equal(job.result.steps_executed, 18);
   assert.equal(job.execution.completed_steps, 18);
   assert.ok(job.execution.steps.every((step) => step.status === 'success'));
   assert.ok(job.execution.steps.every((step) => step.title && step.description));
@@ -779,15 +818,12 @@ test('executes a local Puppeteer Replay mail fixture without external delivery',
   assert.equal(passwordStep.params.value, '••••••');
   assert.doesNotMatch(JSON.stringify(job), new RegExp(DEMO_MAIL_PASSWORD));
 
-  const screenshot = job.result.artifacts.find((artifact) => artifact.kind === 'browser_screenshot');
-  assert.ok(screenshot);
-  assert.equal(screenshot.mime_type, 'image/png');
-  assert.ok(screenshot.size_bytes > 1000);
-
-  const artifactResponse = await webRequest(screenshot.public_url);
-  assert.equal(artifactResponse.status, 200);
-  assert.equal(artifactResponse.headers.get('content-type'), 'image/png');
-  assert.ok((await artifactResponse.arrayBuffer()).byteLength > 1000);
+  const screenshotApiUrl = job.result.artifacts[0];
+  assert.ok(typeof screenshotApiUrl === 'string' && screenshotApiUrl.startsWith('/api/v2/jobs/'), JSON.stringify(job.result));
+  const screenshotResponse = await request(screenshotApiUrl);
+  assert.equal(screenshotResponse.status, 200);
+  assert.equal(screenshotResponse.headers.get('content-type'), 'image/png');
+  assert.ok((await screenshotResponse.arrayBuffer()).byteLength > 1000);
 
   const mailLogin = await fetch(`${origin}/demo/mail/api/login`, {
     method: 'POST',

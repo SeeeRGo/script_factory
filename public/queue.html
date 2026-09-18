@@ -411,10 +411,10 @@
       }
 
       function renderResources(resources) {
-        const cpu = Math.max(0, Math.min(100, Number(resources.cpu?.system_percent || 0)));
-        const memory = Math.max(0, Math.min(100, Number(resources.memory?.used_percent || 0)));
-        const running = Number(resources.queue?.running || 0);
-        const capacity = Math.max(1, Number(resources.queue?.max_parallel_jobs || 1));
+        const cpu = Math.max(0, Math.min(100, Number(resources.cpu?.cpu_system_percent || 0)));
+        const memory = Math.max(0, Math.min(100, Number(resources.memory?.memory_used_percent || 0)));
+        const running = Number(resources.queue?.queue_running || 0);
+        const capacity = Math.max(1, Number(resources.queue?.queue_max_parallel_jobs || 1));
         const slots = Math.max(0, Math.min(100, running / capacity * 100));
         elements['resource-cpu'].textContent = `${cpu.toFixed(1)}%`;
         elements['resource-memory'].textContent = `${memory.toFixed(1)}%`;

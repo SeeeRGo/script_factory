@@ -61,9 +61,9 @@ let peakRunning = 0;
 while (true) {
   const current = await Promise.all(jobs.map((job) => request(`/api/v2/jobs/${job.job_id}`).then((body) => body.job)));
   const resources = await request('/api/v2/system/resources');
-  peakRunning = Math.max(peakRunning, resources.queue.running);
+  peakRunning = Math.max(peakRunning, resources.queue.queue_running);
   console.log(
-    `${new Date().toLocaleTimeString('ru-RU')} · CPU ${resources.cpu.system_percent}% · RAM ${resources.memory.used_percent}% · `
+    `${new Date().toLocaleTimeString('ru-RU')} · CPU ${resources.cpu.cpu_system_percent}% · RAM ${resources.memory.memory_used_percent}% · `
     + current.map((job) => `P${job.priority}:${job.status}`).join(' | ')
   );
   if (current.every((job) => terminal.has(job.status))) {

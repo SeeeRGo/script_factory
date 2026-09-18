@@ -19,6 +19,8 @@ import {
   resolveBrowserExecutablePath
 } from './browser-replay.js';
 import { createDemoMail } from './demo-mail.js';
+import { checkExternalIp, detectYandexVersion, prefixResourceFields } from './system-checks.js';
+import { serializeJobResult } from './job-result.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -64,17 +66,36 @@ const NOVNC_PROXY_PREFIX = '/browser-live';
 const NOVNC_INTERNAL_PORT = Number(process.env.NOVNC_INTERNAL_PORT || 33303);
 const PERSIST_DEBOUNCE_MS = Number(process.env.PERSIST_DEBOUNCE_MS || 50);
 const CALLBACK_AUTH_TOKEN = process.env.CALLBACK_AUTH_TOKEN || '';
+const CALLBACK_AUTH_USERNAME = process.env.CALLBACK_AUTH_USERNAME || '';
+const CALLBACK_AUTH_PASSWORD = process.env.CALLBACK_AUTH_PASSWORD || '';
 const DEMO_1C_CALLBACK_ENABLED = process.env.DEMO_1C_CALLBACK_ENABLED === 'true';
 const CALLBACK_ALLOWED_ORIGINS = String(process.env.CALLBACK_ALLOWED_ORIGINS || '')
   .split(',')
   .map((origin) => origin.trim())
-  .filter(Boolean);
+  .filter(Boolean)
+  .map(normalizeCallbackAllowedOrigin);
+const CALLBACK_AUTHORIZATION = buildCallbackAuthorization();
+const CALLBACK_REDACTION_VALUES = [...new Set([
+  CALLBACK_AUTH_TOKEN,
+  CALLBACK_AUTH_USERNAME,
+  CALLBACK_AUTH_PASSWORD,
+  CALLBACK_AUTHORIZATION,
+  ...(CALLBACK_AUTH_USERNAME && CALLBACK_AUTH_PASSWORD ? [
+    `${CALLBACK_AUTH_USERNAME}:${CALLBACK_AUTH_PASSWORD}`,
+    Buffer.from(`${CALLBACK_AUTH_USERNAME}:${CALLBACK_AUTH_PASSWORD}`, 'utf8').toString('base64')
+  ] : [])
+].filter(Boolean).flatMap((value) => [
+  value,
+  encodeURIComponent(value),
+  JSON.stringify(value).slice(1, -1)
+]))].sort((a, b) => b.length - a.length);
 const FILESYSTEM_ALLOWED_ROOTS = String(process.env.FILESYSTEM_ALLOWED_ROOTS || '')
   .split(path.delimiter)
   .map((root) => root.trim())
   .filter(Boolean);
 const CORS_ALLOWED_HEADERS = 'X-API-Key, Idempotency-Key, Content-Type, Accept, Origin, Authorization';
 const CORS_ALLOWED_METHODS = 'GET, POST, PUT, OPTIONS';
+const CALLBACK_RESPONSE_BODY_MAX_BYTES = 16 * 1024;
 const LOG_LEVELS = Object.freeze(['debug', 'info', 'warn', 'error']);
 const LOG_LEVEL_PRIORITY = new Map(LOG_LEVELS.map((level, index) => [level, index]));
 const webSessions = new Map();
@@ -680,6 +701,10 @@ async function sendJobArtifactFile(res, job, artifact) {
   }
 }
 
+function jobArtifactManifest(job) {
+  return Array.isArray(job?.result?.artifacts) ? job.result.artifacts : [];
+}
+
 async function sendArtifactFile(res, pathname) {
   const parts = pathname.split('/').filter(Boolean);
   if (parts.length !== 3 || parts[0] !== 'artifacts') {
@@ -689,7 +714,7 @@ async function sendArtifactFile(res, pathname) {
   const [, jobId, encodedFilename] = parts;
   const filename = path.basename(decodeURIComponent(encodedFilename));
   const job = state.jobs.get(jobId);
-  const artifact = job?.result?.artifacts?.find((item) => item.filename === filename);
+  const artifact = jobArtifactManifest(job).find((item) => item.filename === filename);
   await sendJobArtifactFile(res, job, artifact);
 }
 
@@ -744,6 +769,11 @@ function createJobRecord(payload, requestHash) {
       attempts: 0,
       max_attempts: callback.max_attempts ?? 5,
       last_http_status: null,
+      last_response_at: null,
+      last_response_content_type: null,
+      last_response_body: null,
+      last_response_body_truncated: false,
+      response_history: [],
       next_retry_at: null,
       delivered_at: null,
       error: null
@@ -775,7 +805,7 @@ function summarizeJob(job) {
     finished_at: job.finished_at,
     error: job.error,
     callback_delivery: job.callback_delivery,
-    result: job.result,
+    result: serializeJobResult(job.result),
     execution: job.execution
   };
 }
@@ -896,13 +926,83 @@ function serializeJobError(error) {
 
 const TERMINAL_JOB_STATUSES = new Set(['success', 'failed', 'validation_failed', 'cancelled', 'timeout']);
 
+function parseCallbackUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw createApiError('INVALID_CALLBACK', 'callback.url должен быть корректным абсолютным URL', 400, false);
+  }
+  const authority = typeof value === 'string' && value.match(/^https?:\/\/([^/?#]+)/i)?.[1];
+  if (!authority || /[\s\\]/.test(value) || url.username || url.password || authority.includes('@')) {
+    throw createApiError('INVALID_CALLBACK', 'callback.url не должен содержать учётные данные или некорректный адрес', 400, false);
+  }
+  if ([...url.searchParams.keys()].some((key) => /^(?:callback_)?(?:auth(?:entication|orization)?|(?:auth_)?(?:user(?:name)?|password|token)|access_token|api_key)$/i.test(key))) {
+    throw createApiError('INVALID_CALLBACK', 'Учётные данные callback разрешены только в переменных окружения', 400, false);
+  }
+  const literalLoopback = /^(127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(authority);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && literalLoopback)) {
+    throw createApiError('INVALID_CALLBACK', 'callback.url требует HTTPS, кроме literal loopback 127.0.0.1 или [::1]', 400, false);
+  }
+  return url;
+}
+
+function normalizeCallbackAllowedOrigin(value) {
+  try {
+    const url = parseCallbackUrl(value);
+    if (url.pathname !== '/' || url.search || url.hash || /[?#]/.test(value)) throw new Error();
+    return url.origin;
+  } catch {
+    throw new Error('CALLBACK_ALLOWED_ORIGINS должен содержать только HTTPS origins без учётных данных; HTTP разрешён для 127.0.0.1 и [::1]');
+  }
+}
+
+function buildCallbackAuthorization() {
+  const basicConfigured = Boolean(CALLBACK_AUTH_USERNAME || CALLBACK_AUTH_PASSWORD);
+  if (CALLBACK_AUTH_TOKEN && basicConfigured) {
+    throw new Error('Задайте только CALLBACK_AUTH_TOKEN или пару CALLBACK_AUTH_USERNAME/CALLBACK_AUTH_PASSWORD');
+  }
+  if (basicConfigured && (!CALLBACK_AUTH_USERNAME || !CALLBACK_AUTH_PASSWORD)) {
+    throw new Error('CALLBACK_AUTH_USERNAME и CALLBACK_AUTH_PASSWORD должны быть заданы вместе');
+  }
+  if (/[\u0000-\u001f\u007f:]/.test(CALLBACK_AUTH_USERNAME)
+    || /[\u0000-\u001f\u007f]/.test(CALLBACK_AUTH_PASSWORD)
+    || (CALLBACK_AUTH_TOKEN && !/^[A-Za-z0-9\-._~+/]+=*$/.test(CALLBACK_AUTH_TOKEN))) {
+    throw new Error('Некорректные значения переменных CALLBACK_AUTH');
+  }
+  if ((CALLBACK_AUTH_TOKEN || basicConfigured) && CALLBACK_ALLOWED_ORIGINS.length === 0) {
+    throw new Error('При настройке CALLBACK_AUTH требуется CALLBACK_ALLOWED_ORIGINS');
+  }
+  if (basicConfigured) {
+    return `Basic ${Buffer.from(`${CALLBACK_AUTH_USERNAME}:${CALLBACK_AUTH_PASSWORD}`, 'utf8').toString('base64')}`;
+  }
+  return CALLBACK_AUTH_TOKEN ? `Bearer ${CALLBACK_AUTH_TOKEN}` : '';
+}
+
+function redactCallbackText(value, truncated = false) {
+  if (typeof value !== 'string') return value;
+  let text = value;
+  for (const secret of CALLBACK_REDACTION_VALUES) {
+    text = text.split(secret).join('[REDACTED]');
+    if (truncated) {
+      for (let length = Math.min(secret.length - 1, text.length); length > 0; length -= 1) {
+        if (text.endsWith(secret.slice(0, length))) {
+          text = `${text.slice(0, -length)}[REDACTED]`;
+          break;
+        }
+      }
+    }
+  }
+  return text;
+}
+
 function validateCallbackOrigin(value) {
-  const url = new URL(value);
-  if (!['http:', 'https:'].includes(url.protocol)) {
-    throw createApiError('INVALID_CALLBACK', 'callback.url должен использовать http или https', 400, false);
+  const url = parseCallbackUrl(value);
+  if (redactCallbackText(value) !== value) {
+    throw createApiError('INVALID_CALLBACK', 'callback.url не должен содержать настроенные учётные данные', 400, false);
   }
   if (CALLBACK_ALLOWED_ORIGINS.length > 0 && !CALLBACK_ALLOWED_ORIGINS.includes(url.origin)) {
-    throw createApiError('CALLBACK_ORIGIN_DENIED', `Адрес callback не входит в CALLBACK_ALLOWED_ORIGINS: ${url.origin}`, 400, false);
+    throw createApiError('CALLBACK_ORIGIN_DENIED', 'Адрес callback не входит в CALLBACK_ALLOWED_ORIGINS', 400, false);
   }
   return url;
 }
@@ -916,6 +1016,40 @@ function callbackEvent(job) {
   };
 }
 
+async function readCallbackResponseBody(response) {
+  if (!response.body) return { body: '', truncated: false };
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let body = '';
+  let bytesRead = 0;
+  let truncated = false;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const remaining = CALLBACK_RESPONSE_BODY_MAX_BYTES - bytesRead;
+    if (remaining <= 0) {
+      truncated = true;
+      await reader.cancel();
+      break;
+    }
+
+    const chunk = value.byteLength > remaining ? value.subarray(0, remaining) : value;
+    body += decoder.decode(chunk, { stream: true });
+    bytesRead += chunk.byteLength;
+    if (chunk.byteLength < value.byteLength) {
+      truncated = true;
+      await reader.cancel();
+      break;
+    }
+  }
+
+  body += decoder.decode();
+  return { body: redactCallbackText(body, truncated), truncated };
+}
+
 async function deliverResultCallback(job) {
   const delivery = job.callback_delivery;
   if (!delivery || delivery.status === 'delivered' || !TERMINAL_JOB_STATUSES.has(job.status)) return;
@@ -926,7 +1060,7 @@ async function deliverResultCallback(job) {
   delivery.next_retry_at = null;
   delivery.error = null;
   logJob(job, 'info', 'Отправка результата в 1С', {
-    callback_url: delivery.url,
+    callback_url: redactCallbackText(delivery.url),
     callback_attempt: delivery.attempts,
     callback_max_attempts: delivery.max_attempts
   });
@@ -935,20 +1069,37 @@ async function deliverResultCallback(job) {
   const controller = new AbortController();
   const timeoutMs = callback.timeout_ms ?? 5000;
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let responseDetails = null;
   try {
     const response = await fetch(validateCallbackOrigin(delivery.url), {
       method: 'POST',
+      redirect: 'error',
       signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
         'X-Script-Factory-Event': 'job.completed',
         'Idempotency-Key': `${job.job_id}:${job.status}:${job.finished_at}`,
-        ...(CALLBACK_AUTH_TOKEN ? { Authorization: `Bearer ${CALLBACK_AUTH_TOKEN}` } : {})
+        ...(CALLBACK_AUTHORIZATION ? { Authorization: CALLBACK_AUTHORIZATION } : {})
       },
       body: JSON.stringify(callbackEvent(job))
     });
+    const responseBody = await readCallbackResponseBody(response);
+    responseDetails = {
+      attempt: delivery.attempts,
+      received_at: nowIso(),
+      http_status: response.status,
+      content_type: redactCallbackText(response.headers.get('content-type')),
+      body: responseBody.body,
+      body_truncated: responseBody.truncated
+    };
     delivery.last_http_status = response.status;
+    delivery.last_response_at = responseDetails.received_at;
+    delivery.last_response_content_type = responseDetails.content_type;
+    delivery.last_response_body = responseDetails.body;
+    delivery.last_response_body_truncated = responseDetails.body_truncated;
+    if (!Array.isArray(delivery.response_history)) delivery.response_history = [];
+    delivery.response_history.push(responseDetails);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     delivery.status = 'delivered';
     delivery.delivered_at = nowIso();
@@ -961,7 +1112,12 @@ async function deliverResultCallback(job) {
       code: error?.name === 'AbortError' ? 'CALLBACK_TIMEOUT' : 'CALLBACK_DELIVERY_ERROR',
       message: error?.name === 'AbortError'
         ? `Callback не ответил за ${timeoutMs} мс`
-        : error?.message || 'Ошибка доставки результата'
+        : redactCallbackText(error?.message || 'Ошибка доставки результата'),
+      ...(responseDetails ? {
+        http_status: responseDetails.http_status,
+        response_body: responseDetails.body,
+        response_body_truncated: responseDetails.body_truncated
+      } : {})
     };
     if (delivery.attempts >= delivery.max_attempts) {
       delivery.status = 'failed';
@@ -1467,6 +1623,24 @@ async function buildHealthResponse(requestId) {
   };
 }
 
+let yandexVersionCheck = null;
+let yandexVersionCheckedAt = 0;
+
+async function buildVersionedSystemResources() {
+  if (!yandexVersionCheck || Date.now() - yandexVersionCheckedAt >= 60_000) {
+    yandexVersionCheckedAt = Date.now();
+    yandexVersionCheck = detectYandexVersion();
+  }
+  const yandexVersion = await yandexVersionCheck;
+  return prefixResourceFields({
+    api_version: 'v2',
+    service_version: SERVICE_VERSION,
+    release_date: SERVICE_RELEASE_DATE,
+    yandex_browser_version: yandexVersion,
+    ...buildSystemResources()
+  });
+}
+
 function buildSystemResources() {
   const headless = process.env.BROWSER_HEADLESS !== 'false';
   const memoryUsage = process.memoryUsage();
@@ -1615,6 +1789,14 @@ function validateJobPayload(payload) {
     if (!callback || typeof callback !== 'object' || Array.isArray(callback)) {
       errors.push({ path: 'callback', message: 'callback должен быть объектом' });
     } else {
+      const allowedCallbackKeys = ['url', 'max_attempts', 'backoff_ms', 'timeout_ms'];
+      const unknownKeys = Object.keys(callback).filter((key) => !allowedCallbackKeys.includes(key));
+      if (unknownKeys.length > 0) {
+        errors.push({
+          path: 'callback',
+          message: `callback поддерживает только поля ${allowedCallbackKeys.join(', ')}; недопустимые поля: ${unknownKeys.join(', ')}`
+        });
+      }
       if (typeof callback.url !== 'string' || !callback.url.trim()) {
         errors.push({ path: 'callback.url', message: 'callback.url должен быть непустой строкой' });
       } else {
@@ -1662,6 +1844,16 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const event = await readJsonBody(req);
+      const forcedStatus = Number(requestUrl.searchParams.get('response_status'));
+      if (Number.isInteger(forcedStatus) && forcedStatus >= 400 && forcedStatus <= 599) {
+        sendJson(res, forcedStatus, {
+          error: {
+            code: 'DEMO_CALLBACK_REJECTED',
+            message: `Демонстрационный callback отклонён с HTTP ${forcedStatus}`
+          }
+        });
+        return;
+      }
       const failOnceKey = requestUrl.searchParams.get('fail_once');
       if (failOnceKey && !state.demoCallbackFailures.has(failOnceKey)) {
         state.demoCallbackFailures.add(failOnceKey);
@@ -1917,7 +2109,7 @@ const server = http.createServer(async (req, res) => {
 
       if (action === 'artifacts' && parts[3]) {
         const identifier = decodeURIComponent(parts.slice(3).join('/'));
-        const artifact = job.result?.artifacts?.find((item) => (
+        const artifact = jobArtifactManifest(job).find((item) => (
           item.artifact_id === identifier || item.filename === identifier
         ));
         await sendJobArtifactFile(res, job, artifact);
@@ -1975,7 +2167,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'GET' && resourcePath === '/system/resources') {
-      sendJson(res, 200, buildSystemResources());
+      sendJson(res, 200, await buildVersionedSystemResources());
+      return;
+    }
+
+    if (method === 'GET' && resourcePath === '/system/ip-check') {
+      res.setHeader('Cache-Control', 'no-store');
+      sendJson(res, 200, await checkExternalIp());
       return;
     }
 

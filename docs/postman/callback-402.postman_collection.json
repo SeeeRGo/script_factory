@@ -1,0 +1,148 @@
+{
+  "info": {
+    "_postman_id": "33cd0140-743e-4aa7-9664-8de0719ce9b0",
+    "name": "Script Factory — диагностика callback 1С (401/402)",
+    "description": "Два запроса к HTTP-сервису 1С: контрольный запрос с неверным ключом должен вернуть 401, запрос с тем же CALLBACK_AUTH_TOKEN, который использует УН, позволяет воспроизвести 402. Перед запуском заполните переменную validCallbackToken.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Неверный ключ — ожидается 401",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Script-Factory-Event",
+            "value": "job.completed"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "postman-invalid-{{$timestamp}}"
+          }
+        ],
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{invalidCallbackToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"event_id\": \"postman-invalid-{{$guid}}\",\n  \"event\": \"job.completed\",\n  \"occurred_at\": \"{{$isoTimestamp}}\",\n  \"job\": {\n    \"job_id\": \"job_postman_invalid\",\n    \"uid\": \"postman-invalid\",\n    \"un_id\": \"un-postman\",\n    \"status\": \"success\",\n    \"result\": {\n      \"message\": \"Проверка неверного ключа\"\n    },\n    \"error\": null\n  }\n}"
+        },
+        "url": "{{callbackUrl}}",
+        "description": "Контрольная проверка ветки отказа в авторизации."
+      },
+      "response": [],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Неверный ключ возвращает HTTP 401', function () {",
+              "  pm.response.to.have.status(401);",
+              "});",
+              "console.log('Тело ответа 401:', pm.response.text());"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Ключ УН — ожидается воспроизведение 402",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (!pm.collectionVariables.get('validCallbackToken')) {",
+              "  throw new Error('Заполните переменную коллекции validCallbackToken значением CALLBACK_AUTH_TOKEN с УН');",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('После успешной авторизации воспроизводится HTTP 402', function () {",
+              "  pm.response.to.have.status(402);",
+              "});",
+              "console.log('Тело ответа после авторизации:', pm.response.text());"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Script-Factory-Event",
+            "value": "job.completed"
+          },
+          {
+            "key": "Idempotency-Key",
+            "value": "postman-valid-{{$timestamp}}"
+          }
+        ],
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{validCallbackToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"event_id\": \"postman-valid-{{$guid}}\",\n  \"event\": \"job.completed\",\n  \"occurred_at\": \"{{$isoTimestamp}}\",\n  \"job\": {\n    \"job_id\": \"job_postman_valid\",\n    \"uid\": \"postman-valid\",\n    \"un_id\": \"un-postman\",\n    \"status\": \"success\",\n    \"result\": {\n      \"message\": \"Проверка callback с ключом УН\"\n    },\n    \"error\": null\n  }\n}"
+        },
+        "url": "{{callbackUrl}}",
+        "description": "Использует тот же Bearer-токен, который сервис УН берёт из CALLBACK_AUTH_TOKEN."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "callbackUrl",
+      "value": "https://dev.companya.ru/assistent2_copy/hs/TaskRezult/Rezult/",
+      "type": "string"
+    },
+    {
+      "key": "invalidCallbackToken",
+      "value": "intentionally-invalid-token",
+      "type": "string"
+    },
+    {
+      "key": "validCallbackToken",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

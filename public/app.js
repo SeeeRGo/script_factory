@@ -211,29 +211,25 @@ function renderExecution(job = null, previewSteps = null) {
 }
 
 function renderArtifacts(job) {
-  const artifacts = job?.result?.artifacts || [];
+  const artifacts = (Array.isArray(job?.result?.artifacts) ? job.result.artifacts : [])
+    .filter((item) => typeof item === 'string');
   elements['artifact-section'].hidden = artifacts.length === 0;
   if (artifacts.length === 0) {
     elements.artifacts.replaceChildren();
     return;
   }
-  elements.artifacts.replaceChildren(...artifacts.map((artifact) => {
+  elements.artifacts.replaceChildren(...artifacts.map((apiUrl) => {
     const link = document.createElement('a');
     link.className = 'artifact-card';
-    link.href = artifact.public_url || '#';
+    link.href = apiUrl;
     link.target = '_blank';
     link.rel = 'noreferrer';
-    if (artifact.kind === 'browser_screenshot' && artifact.public_url) {
-      const image = document.createElement('img');
-      image.src = artifact.public_url;
-      image.alt = `Скриншот результата ${artifact.filename}`;
-      link.append(image);
-    }
+    const filename = decodeURIComponent(apiUrl.split('/').pop() || 'artifact');
     const caption = document.createElement('span');
     const name = document.createElement('strong');
-    name.textContent = artifact.filename;
+    name.textContent = filename;
     const kind = document.createElement('small');
-    kind.textContent = artifact.kind;
+    kind.textContent = 'artifact';
     caption.append(name, kind);
     link.append(caption);
     return link;

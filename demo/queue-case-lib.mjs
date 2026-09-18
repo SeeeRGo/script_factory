@@ -158,7 +158,7 @@ export async function runQueueCase(definition, options) {
   };
 
   const resources = await request('/api/v2/system/resources');
-  if (resources.queue.running > 0 || resources.queue.queued > 0) {
+  if (resources.queue.queue_running > 0 || resources.queue.queue_queued > 0) {
     throw new Error('Для воспроизводимого показа очередь должна быть пустой перед запуском кейса');
   }
   const originalConfig = (await request('/api/v2/system/config')).config;

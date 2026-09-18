@@ -117,12 +117,14 @@ curl -X POST http://TEST_UN_HOST:33001/api/v2/jobs \
 | `timeout` | превышен тайм-аут |
 | `cancelled` | отменено |
 
-Финальные статусы: `success`, `failed`, `validation_failed`, `timeout`, `cancelled`. Результат содержит `job_id`, внешний `uid`, `un_id`, итоговый контекст, длительность и `artifacts`. Для файлов указываются имя, путь на УН, размер, MIME-тип и контрольная сумма, если она известна.
+Финальные статусы: `success`, `failed`, `validation_failed`, `timeout`, `cancelled`. Результат `job.result` содержит только `artifacts` и объекты `Rezult_N`: в `artifacts` передаются пути всех сохранённых файлов без привязки к результатам, а `Rezult_N` — произвольные объекты результата сценария. Идентификаторы задания, контекст выполнения и диагностические данные находятся в соседних полях `job` (`job_id`, `uid`, `un_id`, `execution.context`).
 
-Артефакт можно скачать из 1С по `result.artifacts[].api_url` с заголовком `X-API-Key` через
+Артефакт можно скачать из 1С по пути из `result.artifacts` с заголовком `X-API-Key` через
 `GET /api/v2/jobs/{job_id}/artifacts/{artifact_id}`. Журнал поддерживает фильтр
 `GET /api/v2/jobs/{job_id}/logs?min_level=warn`; уровень хранения задаётся полем
-`log_level` задания (`debug`, `info`, `warn`, `error`).
+`log_level` задания (`debug`, `info`, `warn`, `error`). Соответствие внешнего IP
+настройкам `C:\_external ip monitor\settings.ini` проверяет отдельный метод
+`GET /api/v2/system/ip-check` (200 `{"status":"success"}` или 503 с текстом ошибки).
 
 ## 4. Возврат результата в 1С
 
@@ -149,18 +151,31 @@ Idempotency-Key: <job_id>:<status>:<finished_at>
     "un_id": "un-test-windows-01",
     "status": "success",
     "result": {
-      "job_id": "job_...",
-      "uid": "1c-stage4-delay-001",
-      "un_id": "un-test-windows-01",
-      "context": { "waited_ms": 15000 },
-      "artifacts": []
+      "artifacts": [],
+      "Rezult_1": { "waited_ms": 15000 }
     },
     "error": null
   }
 }
 ```
 
+Объекты `Rezult_N` сценарий кладёт в `context` под ключами `Rezult_1`, `Rezult_2`, …;
+их количество и состав полей зависят от сценария. Идентификаторы задания и контекст
+выполнения остаются в соседних полях `job`, а не в `job.result`.
+
 1С должна проверить Bearer-токен, сохранить событие транзакционно по `Idempotency-Key` и только затем вернуть любой HTTP 2xx. При сетевой ошибке или не-2xx УН повторяет callback с экспоненциальной паузой. Параметры `max_attempts`, `backoff_ms`, `timeout_ms` задаются в `callback`. Текущее состояние доставки доступно в `job.callback_delivery`: `pending`, `delivering`, `retrying`, `delivered` или `failed`.
+
+Авторизация callback настраивается на УН переменными окружения: `CALLBACK_AUTH_TOKEN`
+отправляет `Authorization: Bearer <token>`, а `CALLBACK_AUTH_USERNAME` и
+`CALLBACK_AUTH_PASSWORD` — `Authorization: Basic <base64>`; одновременно задавать оба
+способа нельзя. При включённой авторизации обязателен `CALLBACK_ALLOWED_ORIGINS`,
+требуется HTTPS (кроме literal `127.0.0.1` и `[::1]`), а логин и пароль никогда не
+передаются в задании: неизвестные поля `callback` отклоняются с HTTP 400.
+
+Для диагностики УН сохраняет статус, Content-Type и тело HTTP-ответа каждой попытки в
+`callback_delivery.response_history`. Последний ответ также доступен в полях
+`last_http_status`, `last_response_content_type` и `last_response_body`. Тело каждого
+ответа ограничено 16 КиБ; признак `body_truncated` сообщает, что оно было обрезано.
 
 Опрос статуса остаётся резервным механизмом: потеря callback не приводит к потере результата в SQLite УН.
 
