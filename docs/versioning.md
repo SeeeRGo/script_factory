@@ -4,8 +4,8 @@
 
 ```json
 {
-  "version": "0.5.0",
-  "releaseDate": "07.09.2026"
+  "version": "0.6.0",
+  "releaseDate": "18.09.2026"
 }
 ```
 
@@ -31,13 +31,13 @@ npm run hooks:install
 До `git add` и `git commit` повысьте версию:
 
 ```bash
-# Обычный коммит или исправление: 0.5.0 → 0.5.1
+# Обычный коммит или исправление: 0.6.0 → 0.6.1
 npm run version:bump -- patch
 
-# Новая обратно совместимая функция: 0.5.0 → 0.6.0
+# Новая обратно совместимая функция: 0.6.0 → 0.7.0
 npm run version:bump -- minor
 
-# Несовместимое изменение API: 0.5.0 → 1.0.0
+# Несовместимое изменение API: 0.6.0 → 1.0.0
 npm run version:bump -- major
 ```
 
@@ -64,8 +64,8 @@ npm run version:check
 {
   "status": "ok",
   "ready": true,
-  "version": "0.5.0",
-  "release_date": "07.09.2026"
+  "version": "0.6.0",
+  "release_date": "18.09.2026"
 }
 ```
 

@@ -36,8 +36,8 @@ GET http://TEST_UN_HOST:33001/health
   "status": "error",
   "ready": false,
   "service": "script-factory",
-  "version": "0.5.0",
-  "release_date": "07.09.2026",
+  "version": "0.6.0",
+  "release_date": "18.09.2026",
   "un_id": "un-test-windows-01",
   "error": {
     "code": "BROWSER_UNAVAILABLE",
