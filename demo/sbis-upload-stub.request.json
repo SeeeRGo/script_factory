@@ -1,0 +1,135 @@
+{
+  "log_level": "info",
+  "timeout_ms": 120000,
+  "retry_policy": {
+    "max_attempts": 1,
+    "backoff_ms": 0
+  },
+  "script": {
+    "title": "СБИС: загрузка тестовой заглушки без отправки",
+    "timeout": 30000,
+    "steps": [
+      {
+        "type": "navigate",
+        "url": "https://online.sbis.ru/"
+      },
+      {
+        "type": "waitForElement",
+        "selectors": [
+          [
+            "text/По ключу подписи"
+          ]
+        ],
+        "visible": true
+      },
+      {
+        "type": "click",
+        "selectors": [
+          [
+            "text/По ключу подписи"
+          ]
+        ],
+        "offsetX": 85,
+        "offsetY": 15,
+        "assertedEvents": [
+          {
+            "type": "navigation",
+            "url": "https://online.sbis.ru/",
+            "title": "Saby"
+          }
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://report.saby.ru/"
+      },
+      {
+        "type": "waitForExpression",
+        "expression": "new Promise(resolve => setTimeout(() => resolve(true), 4000))"
+      },
+      {
+        "type": "waitForElement",
+        "selectors": [
+          [
+            "[title=\"Загрузить\"]"
+          ]
+        ],
+        "visible": true
+      },
+      {
+        "type": "click",
+        "selectors": [
+          [
+            "[title=\"Загрузить\"]"
+          ]
+        ],
+        "offsetX": 16,
+        "offsetY": 14
+      },
+      {
+        "type": "waitForExpression",
+        "expression": "new Promise(resolve => setTimeout(() => resolve(true), 1500))"
+      },
+      {
+        "type": "click",
+        "selectors": [
+          [
+            "text/С компьютера"
+          ]
+        ],
+        "offsetX": 65,
+        "offsetY": 12
+      },
+      {
+        "type": "waitForExpression",
+        "expression": "new Promise(resolve => setTimeout(() => resolve(true), 2000))"
+      },
+      {
+        "type": "click",
+        "selectors": [
+          [
+            "text/Загрузки"
+          ]
+        ],
+        "offsetX": 35,
+        "offsetY": 10
+      },
+      {
+        "type": "waitForExpression",
+        "expression": "new Promise(resolve => setTimeout(() => resolve(true), 2000))"
+      },
+      {
+        "type": "doubleClick",
+        "selectors": [
+          [
+            "text/TEST_ONLY_NOT_A_REPORT.xml"
+          ]
+        ],
+        "offsetX": 90,
+        "offsetY": 10
+      },
+      {
+        "type": "waitForExpression",
+        "expression": "new Promise(resolve => setTimeout(() => resolve(true), 8000))"
+      },
+      {
+        "type": "waitForElement",
+        "selectors": [
+          [
+            "text/Что сделать с файлом?"
+          ]
+        ],
+        "visible": true
+      },
+      {
+        "type": "waitForElement",
+        "selectors": [
+          [
+            "text/TEST_ONLY_NOT_A_REPORT.xml"
+          ]
+        ],
+        "visible": true
+      }
+    ]
+  }
+}

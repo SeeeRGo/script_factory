@@ -1,0 +1,227 @@
+{
+  "format": "sbis-report",
+  "title": "СБИС: полный цикл обработки отчётности",
+  "version": "1.0.0",
+  "default_step_timeout_ms": 60000,
+  "context": {
+    "mode": "validate_only",
+    "submit_enabled": false,
+    "inn": null,
+    "authority": "FNS",
+    "prefixes": [],
+    "root_dir": null,
+    "loaded_dir": null,
+    "allow_multiple": true,
+    "login_url": "https://online.sbis.ru/",
+    "report_url": "https://report.saby.ru/",
+    "authenticated_url": "https://online.sbis.ru/",
+    "validation_timeout_ms": 300000,
+    "submit_timeout_ms": 300000,
+    "ui": {
+      "organization_steps": [],
+      "organization_selector": null,
+      "upload_steps": [
+        {
+          "type": "click",
+          "selectors": [
+            [
+              "[title=\"Загрузить\"]"
+            ]
+          ],
+          "offsetX": 16,
+          "offsetY": 14
+        },
+        {
+          "type": "waitForElement",
+          "selectors": [
+            [
+              "text/С компьютера"
+            ]
+          ],
+          "visible": true
+        },
+        {
+          "type": "click",
+          "selectors": [
+            [
+              "text/С компьютера"
+            ]
+          ],
+          "offsetX": 65,
+          "offsetY": 12
+        },
+        {
+          "type": "waitForElement",
+          "selectors": [
+            [
+              "text/Загрузки"
+            ]
+          ],
+          "visible": true
+        },
+        {
+          "type": "click",
+          "selectors": [
+            [
+              "text/Загрузки"
+            ]
+          ],
+          "offsetX": 35,
+          "offsetY": 10
+        },
+        {
+          "type": "waitForElement",
+          "selectors": [
+            [
+              "text/{{file_name}}"
+            ]
+          ],
+          "visible": true
+        },
+        {
+          "type": "doubleClick",
+          "selectors": [
+            [
+              "text/{{file_name}}"
+            ]
+          ],
+          "offsetX": 90,
+          "offsetY": 10
+        }
+      ],
+      "report_scope_selector": null,
+      "validate_steps": [
+        {
+          "type": "click",
+          "selectors": [
+            [
+              "text/Проверить"
+            ]
+          ],
+          "offsetX": 20,
+          "offsetY": 10
+        }
+      ],
+      "validation_status_selector": null,
+      "protocol_selector": null,
+      "validation_success_text": "Ошибок не обнаружено",
+      "validation_failure_text": null,
+      "reopen_steps": [],
+      "submit_steps": [
+        {
+          "type": "click",
+          "selectors": [
+            [
+              "text/К отправке"
+            ]
+          ],
+          "offsetX": 20,
+          "offsetY": 10
+        }
+      ],
+      "sent_status_selector": null,
+      "authority_paths": {
+        "FNS": "/page/fns",
+        "SFR": null,
+        "ROSSTAT": null
+      },
+      "authority_steps": [
+        {
+          "type": "waitForExpression",
+          "expression": "document.title === 'Отчеты'"
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "action": "check_ip",
+      "title": "Сверить внешний IP с настройкой УН"
+    },
+    {
+      "action": "launch_browser",
+      "title": "Запустить браузер"
+    },
+    {
+      "action": "navigate",
+      "title": "Открыть страницу входа",
+      "timeout_ms": 100000,
+      "params": {
+        "url": "{{login_url}}"
+      }
+    },
+    {
+      "action": "auth_ecp",
+      "title": "Войти по ЭЦП",
+      "timeout_ms": 60000,
+      "params": {
+        "steps": [
+          {
+            "type": "waitForElement",
+            "selectors": [
+              [
+                "text/По ключу подписи"
+              ]
+            ],
+            "visible": true
+          },
+          {
+            "type": "click",
+            "selectors": [
+              [
+                "text/По ключу подписи"
+              ]
+            ],
+            "offsetX": 85,
+            "offsetY": 15,
+            "assertedEvents": [
+              {
+                "type": "navigation",
+                "url": "https://online.sbis.ru/",
+                "title": "Saby"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "action": "navigate",
+      "title": "Открыть отчётность",
+      "timeout_ms": 100000,
+      "params": {
+        "url": "{{report_url}}"
+      }
+    },
+    {
+      "action": "select_authority",
+      "title": "Выбрать ведомство и подтвердить ИНН"
+    },
+    {
+      "action": "find_files",
+      "title": "Найти последние XML по каждому префиксу"
+    },
+    {
+      "action": "upload_files",
+      "title": "Загрузить и проверить каждый XML в отдельной карточке",
+      "timeout_ms": 900000
+    },
+    {
+      "action": "validate_report",
+      "title": "Проверить результаты и наличие протоколов"
+    },
+    {
+      "action": "conditional_submit",
+      "title": "Отправить только проверенные отчёты",
+      "timeout_ms": 900000
+    },
+    {
+      "action": "move_files",
+      "title": "Архивировать только подтверждённо отправленные файлы"
+    },
+    {
+      "action": "return_result",
+      "title": "Сформировать результат для 1С"
+    }
+  ]
+}

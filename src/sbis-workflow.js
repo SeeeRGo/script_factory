@@ -1,0 +1,316 @@
+import { constants } from 'node:fs';
+import { copyFile, mkdir, readFile, readdir, realpath, stat, unlink, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import puppeteer from 'puppeteer';
+import { createRunner, parse, PuppeteerRunnerExtension } from '@puppeteer/replay';
+import { StepRegistry, executeScript, InterpreterError, resolveTemplates, abortableDelay } from './interpreter.js';
+import { resolveBrowserExecutablePath } from './browser-replay.js';
+import { checkExternalIp } from './system-checks.js';
+
+const fail = (code, message, details) => { throw new InterpreterError(code, message, { details }); };
+const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const inside = (file, root) => { const rel = path.relative(root, file); return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel)); };
+
+export async function checkedPath(value, roots, { directory = false } = {}) {
+  if (typeof value !== 'string' || !value) fail('MISSING_PARAMETER', 'Не задан путь к файлу или каталогу');
+  const resolved = await realpath(path.resolve(value));
+  const realRoots = await Promise.all(roots.map((root) => realpath(root)));
+  if (!realRoots.some((root) => inside(resolved, root))) fail('FILESYSTEM_ACCESS_DENIED', 'Путь вне разрешённых каталогов', { path: value });
+  const info = await stat(resolved);
+  if (directory ? !info.isDirectory() : !info.isFile()) fail('INVALID_PATH', 'Неверный тип объекта файловой системы');
+  return resolved;
+}
+
+export async function findLatestReports({ root_dir, prefixes, allow_multiple = true }, roots) {
+  if (!Array.isArray(prefixes) || !prefixes.length || prefixes.some((p) => typeof p !== 'string' || !p.trim())) {
+    fail('MISSING_PARAMETER', 'prefixes должен содержать непустые префиксы имён XML');
+  }
+  const dir = await checkedPath(root_dir, roots, { directory: true });
+  const entries = await readdir(dir, { withFileTypes: true });
+  const selected = new Map();
+  for (const prefix of prefixes) {
+    const matches = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.xml') || !entry.name.startsWith(prefix)) continue;
+      const file = await checkedPath(path.join(dir, entry.name), roots);
+      const info = await stat(file);
+      matches.push({ path: file, filename: entry.name, size_bytes: info.size, modified_ms: info.mtimeMs });
+    }
+    matches.sort((a, b) => b.modified_ms - a.modified_ms || a.filename.localeCompare(b.filename));
+    if (!matches.length) fail('FILE_NOT_FOUND', `Не найден XML для префикса ${prefix}`);
+    selected.set(matches[0].path, matches[0]);
+  }
+  const files = [...selected.values()];
+  if (!allow_multiple && files.length > 1) fail('MULTIPLE_FILES', 'Найдено несколько файлов, но allow_multiple=false');
+  for (const file of files) file.sha256 = hash(await readFile(file.path));
+  return files;
+}
+
+// Never overwrite an existing archive entry. Keep the original if it changed after upload.
+export async function archiveReport(file, destination, roots) {
+  const source = await checkedPath(file.path, roots);
+  const dir = await checkedPath(destination, roots, { directory: true });
+  const target = path.join(dir, path.basename(file.path));
+  if (source === target) fail('ARCHIVE_CONFLICT', 'Исходный файл уже находится в целевом каталоге');
+  if (hash(await readFile(source)) !== file.sha256) fail('SOURCE_CHANGED', 'Файл изменён после выбора; перемещение запрещено');
+  await copyFile(source, target, constants.COPYFILE_EXCL);
+  if (hash(await readFile(target)) !== file.sha256 || hash(await readFile(source)) !== file.sha256) {
+    fail('SOURCE_CHANGED', 'Контрольная сумма изменилась при архивировании; оригинал сохранён');
+  }
+  await unlink(source);
+  return target;
+}
+
+export async function executeSbisWorkflow(options) {
+  const { script, signal, onEvent = () => {}, allowedRoots = [], artifactDirectory, publicArtifactBasePath, jobId } = options;
+  const config = { ...(script.context || {}), ...(options.context || {}) };
+  if (!['preflight', 'validate_only', 'send'].includes(config.mode)) fail('MISSING_PARAMETER', 'mode: preflight, validate_only или send');
+  if (!/^\d{10}(\d{2})?$/.test(config.inn || '')) fail('MISSING_PARAMETER', 'Требуется ИНН организации');
+  if (!['FNS', 'SFR', 'ROSSTAT'].includes(config.authority)) fail('MISSING_PARAMETER', 'Неизвестное ведомство');
+  const probe = config.mode === 'preflight';
+  const ui = config.ui || {};
+  if (!probe) {
+    const required = ['organization_selector', 'report_scope_selector', 'validation_status_selector', 'protocol_selector', 'validation_success_text', 'validation_failure_text'];
+    if (config.mode === 'send' && config.submit_enabled === true) required.push('sent_status_selector');
+    const missing = required.filter((key) => !ui[key]);
+    for (const key of ['upload_steps', 'validate_steps', ...(config.mode === 'send' && config.submit_enabled === true ? ['reopen_steps', 'submit_steps'] : [])]) {
+      if (!Array.isArray(ui[key]) || !ui[key].length) missing.push(key);
+    }
+    if (!ui.authority_paths?.[config.authority]) missing.push('authority_paths.' + config.authority);
+    if (missing.length) fail('UI_BINDING_REQUIRED', 'Не настроены обязательные привязки интерфейса настоящего отчёта', { missing });
+  }
+  let browser;
+  let page;
+  let activeSignal = signal;
+  const reports = [];
+  const phases = [];
+  let organizationVerified = false;
+  let submissionStarted = false;
+  const artifacts = [];
+  const phase = (name, status, details = {}) => { phases.push({ name, status, ...details }); return details; };
+  const requireValue = (value, name) => { if (!value) fail('UI_BINDING_REQUIRED', `Не настроен ${name}; требуется запись интерфейса настоящего отчёта`); return value; };
+  const abort = () => { void browser?.close().catch(() => {}); };
+  signal?.addEventListener('abort', abort, { once: true });
+  const guard = () => { if (activeSignal?.aborted) throw activeSignal.reason; };
+  const artifact = async (filename, contents, mime = 'application/json') => {
+    await mkdir(artifactDirectory, { recursive: true });
+    const file = path.join(artifactDirectory, filename);
+    await writeFile(file, contents);
+    const descriptor = { artifact_id: `${jobId}_${filename}`, kind: 'sbis_protocol', filename, local_path: file,
+      public_url: `${publicArtifactBasePath}/${encodeURIComponent(filename)}`, mime_type: mime,
+      size_bytes: (await stat(file)).size, checksum_sha256: hash(await readFile(file)), created_at: new Date().toISOString() };
+    artifacts.push(descriptor);
+    return descriptor;
+  };
+  const snapshot = async (name) => {
+    if (!page || page.isClosed()) return;
+    try { await artifact(`${name}.png`, await page.screenshot({ fullPage: true }), 'image/png'); } catch { /* Keep original failure. */ }
+  };
+  const flow = async (steps, context = {}) => {
+    guard();
+    const recording = parse(resolveTemplates({ title: 'SBIS phase', timeout: 30000, steps }, { ...config, ...context }));
+    const runner = await createRunner(recording, new PuppeteerRunnerExtension(browser, page, { timeout: 30000 }));
+    const cancel = () => { runner.abort(); abort(); };
+    activeSignal?.addEventListener('abort', cancel, { once: true });
+    try { if (!await runner.run()) fail('CANCELLED', 'Браузерный этап отменён'); guard(); }
+    finally { activeSignal?.removeEventListener('abort', cancel); }
+  };
+  const clickText = (text) => ({ type: 'click', selectors: [[`text/${text}`]], offsetX: 10, offsetY: 10 });
+  const visibleText = async (selector) => {
+    const node = await page.waitForSelector(requireValue(selector, 'CSS-селектор результата'), { visible: true, timeout: 30000, signal: activeSignal });
+    try { return await node.evaluate((e) => e.innerText); } finally { await node.dispose(); }
+  };
+  const reportContext = (r) => ({ file_name: r.filename, file_path: r.path });
+  const requireReportIdentity = async (r) => {
+    const selector = resolveTemplates(requireValue(ui.report_scope_selector, 'ui.report_scope_selector'), { ...config, ...reportContext(r) });
+    const text = await visibleText(selector);
+    if (!text.includes(config.inn) || !text.includes(r.filename)) {
+      fail('REPORT_IDENTITY_MISMATCH', 'Карточка не подтверждает ИНН и имя текущего XML');
+    }
+    return selector;
+  };
+  const registry = new StepRegistry();
+  const register = (name, fn) => registry.register(name, async (input) => {
+    activeSignal = input.signal;
+    const cancel = () => abort();
+    activeSignal?.addEventListener('abort', cancel, { once: true });
+    try { guard(); const output = await fn(input); guard(); return output; }
+    finally { activeSignal?.removeEventListener('abort', cancel); }
+  });
+  register('check_ip', async () => {
+    await (options.checkIp || checkExternalIp)();
+    return phase('check_ip', 'verified', { ip_matches_expected: true });
+  });
+  register('launch_browser', async () => {
+    const executablePath = await resolveBrowserExecutablePath(options.executablePath);
+    browser = await puppeteer.launch({ executablePath, headless: options.headless ?? true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--window-size=1400,860'] });
+    page = await browser.newPage();
+    await page.evaluateOnNewDocument(() => { try { Object.defineProperty(Navigator.prototype, 'registerProtocolHandler', { configurable: true, value: () => {} }); } catch {} });
+    page.on('pageerror', () => {}); // Non-Error site exceptions must not crash the worker.
+    return phase('launch_browser', 'verified', { browser_launched: true });
+  });
+  const goTo = async (url) => {
+    // Retry navigation only; never repeat a submission or an upload automatically.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const response = await page.goto(url, { waitUntil: 'load', timeout: 30000 });
+        if (page.url().startsWith('chrome-error:')) fail('BROWSER_ERROR_PAGE', 'Браузер открыл страницу сетевой ошибки');
+        if (response && response.status() >= 400) fail('NAVIGATION_HTTP_ERROR', `Страница вернула HTTP ${response.status()}`);
+        break;
+      } catch (error) {
+        guard();
+        if (attempt >= 3 || !(error.code === 'BROWSER_ERROR_PAGE' || /ERR_CONNECTION_RESET|ERR_CONNECTION_CLOSED/.test(error.message))) throw error;
+        await abortableDelay(1000, activeSignal);
+      }
+    }
+    return page.url();
+  };
+  register('navigate', async ({ params }) => {
+    await goTo(params.url);
+    return phase('navigate', 'verified', { current_url: page.url() });
+  });
+  register('auth_ecp', async ({ params }) => {
+    await flow(requireValue(params.steps, 'auth_ecp.steps'));
+    await page.waitForFunction((url) => location.href.startsWith(url), { timeout: 30000, signal: activeSignal }, config.authenticated_url);
+    return phase('auth_ecp', 'verified', { authenticated: true });
+  });
+  register('select_authority', async () => {
+    const authorityPath = ui.authority_paths?.[config.authority];
+    if (authorityPath) await goTo(new URL(authorityPath, config.report_url).href);
+    else await flow([clickText({ FNS: 'Налоговая', SFR: 'СФР', ROSSTAT: 'Статистика' }[config.authority])]);
+    if (ui.authority_steps?.length) await flow(ui.authority_steps);
+    if (authorityPath) await page.waitForFunction((expected) => location.pathname === expected,
+      { timeout: 30000, signal: activeSignal }, authorityPath);
+    const authorityVerified = Boolean(authorityPath) && new URL(page.url()).pathname === authorityPath;
+    if (ui.organization_steps?.length) await flow(ui.organization_steps);
+    if (ui.organization_selector) {
+      const text = await visibleText(ui.organization_selector);
+      organizationVerified = text.includes(config.inn);
+    }
+    await snapshot('authority');
+    if (!organizationVerified && !probe) fail('ORGANIZATION_NOT_VERIFIED', 'Не подтверждена выбранная организация по ИНН');
+    return phase('select_authority', organizationVerified && authorityVerified ? 'verified' : 'partial', {
+      authority: config.authority, authority_selected: true, reports_section_verified: authorityVerified, organization_verified: organizationVerified,
+      ...(!organizationVerified ? { reason: 'Не настроена проверка выбранной организации по ИНН' } : {}) });
+  });
+  register('find_files', async () => {
+    const files = await findLatestReports(config, allowedRoots);
+    reports.push(...files.map((file) => ({ ...file, state: 'selected', validation_result: null, sbis_status: null })));
+    return phase('find_files', 'verified', { found_files: files.map((f) => f.path) });
+  });
+  register('upload_files', async () => {
+    if (probe) return phase('upload_files', 'skipped', { reason: 'preflight: реальная отчётная форма не передаётся' });
+    if (!organizationVerified) fail('ORGANIZATION_NOT_VERIFIED', 'Организация не подтверждена');
+    const uploadSteps = requireValue(ui.upload_steps?.length && ui.upload_steps, 'ui.upload_steps');
+    for (const r of reports) {
+      guard();
+      const actual = await checkedPath(r.path, allowedRoots);
+      if (hash(await readFile(actual)) !== r.sha256) fail('SOURCE_CHANGED', 'XML изменён после поиска');
+      await flow(uploadSteps, reportContext(r));
+      await requireReportIdentity(r);
+      r.load_datetime = new Date().toISOString();
+      r.state = 'uploaded';
+      // Each file is validated in its own card before another is opened.
+      await validateOne(r);
+    }
+    return phase('upload_files', 'verified', { uploaded_count: reports.length });
+  });
+  async function validateOne(r) {
+    const scope = await requireReportIdentity(r);
+    await flow(requireValue(ui.validate_steps?.length && ui.validate_steps, 'ui.validate_steps'), reportContext(r));
+    const statusSelector = requireValue(ui.validation_status_selector, 'ui.validation_status_selector');
+    const protocolSelector = requireValue(ui.protocol_selector, 'ui.protocol_selector');
+    const successText = requireValue(ui.validation_success_text, 'ui.validation_success_text');
+    const failureText = requireValue(ui.validation_failure_text, 'ui.validation_failure_text');
+    await page.waitForFunction((scope, selector, ok, bad) => {
+      const root = document.querySelector(scope); const el = root?.querySelector(selector);
+      const text = el?.innerText?.trim(); return text === ok || text === bad;
+    }, { timeout: config.validation_timeout_ms || 300000, signal: activeSignal }, scope, statusSelector, successText, failureText);
+    const status = (await visibleText(`${scope} ${statusSelector}`)).trim();
+    const protocol = await visibleText(`${scope} ${protocolSelector}`);
+    if (!protocol.trim()) fail('PROTOCOL_EMPTY', 'Пустой протокол проверки');
+    r.validation_result = status;
+    r.protocol = await artifact(`validation-${reports.indexOf(r) + 1}-${Date.now()}.txt`, protocol, 'text/plain');
+    r.state = status === successText ? 'validated' : 'validation_failed';
+  }
+  register('validate_report', async () => {
+    if (probe) return phase('validate_report', 'skipped', { reason: 'preflight' });
+    if (reports.some((r) => r.state !== 'validated')) {
+      // Continue only to collect a result; conditional_submit will not send any file.
+      return phase('validate_report', 'validation_failed', { validation_result: 'Есть ошибки проверки' });
+    }
+    return phase('validate_report', 'verified', { validation_result: 'Ошибок не обнаружено' });
+  });
+  register('conditional_submit', async () => {
+    if (probe || config.mode !== 'send' || config.submit_enabled !== true) return phase('conditional_submit', 'skipped', { reason: 'Отправка отключена' });
+    if (!reports.length || reports.some((r) => r.state !== 'validated' || !r.protocol)) {
+      return phase('conditional_submit', 'skipped', { reason: 'Не все файлы прошли проверку' });
+    }
+    const reopen = requireValue(ui.reopen_steps?.length && ui.reopen_steps, 'ui.reopen_steps');
+    const submit = requireValue(ui.submit_steps?.length && ui.submit_steps, 'ui.submit_steps');
+    const statusSelector = requireValue(ui.sent_status_selector, 'ui.sent_status_selector');
+    for (const r of reports) {
+      await flow(reopen, reportContext(r));
+      const scope = await requireReportIdentity(r);
+      // Revalidate the exact card immediately before submission, not a stale DOM result.
+      await validateOne(r);
+      if (r.state !== 'validated') fail('VALIDATION_ERROR', 'Проверка перед отправкой обнаружила ошибки');
+      submissionStarted = true;
+      r.state = 'submission_unknown';
+      await flow(submit, reportContext(r));
+      await page.waitForFunction((scope, selector) => document.querySelector(scope)?.querySelector(selector)?.innerText?.trim() === 'Отправлен',
+        { timeout: config.submit_timeout_ms || 300000, signal: activeSignal }, scope, statusSelector);
+      r.sbis_status = 'Отправлен';
+      r.state = 'sent';
+    }
+    return phase('conditional_submit', 'verified', { sent_count: reports.length });
+  });
+  register('move_files', async () => {
+    if (probe || !reports.length || reports.some((r) => r.state !== 'sent' || r.sbis_status !== 'Отправлен')) {
+      return phase('move_files', 'skipped', { reason: 'Нет подтверждения отправки всех файлов' });
+    }
+    const dir = await checkedPath(config.loaded_dir, allowedRoots, { directory: true });
+    for (const r of reports) {
+      // Copy evidence first and retain its API artifact; move the source only after that.
+      const protocolPath = path.join(dir, `${r.filename}.${jobId}.validation.txt`);
+      await copyFile(r.protocol.local_path, protocolPath, constants.COPYFILE_EXCL);
+      r.archived_path = await archiveReport(r, dir, allowedRoots);
+      r.archived_protocol = protocolPath;
+      r.state = 'archived';
+    }
+    return phase('move_files', 'verified', { moved_count: reports.length });
+  });
+  const resultFields = (state) => ({ state, inn: config.inn, authority: config.authority, mode: config.mode,
+    reports: reports.map((r) => ({ file_name: r.filename, sha256: r.sha256, state: r.state,
+      load_datetime: r.load_datetime || null, validation_result: r.validation_result,
+      validation_protocol: r.protocol?.public_url || null, sbis_status: r.sbis_status,
+      archived_path: r.archived_path || null })), phases });
+  register('return_result', async () => {
+    const state = probe ? 'preflight_completed' : reports.some((r) => r.state === 'validation_failed') ? 'validation_failed'
+      : reports.every((r) => r.state === 'archived') ? 'sent' : 'validated_not_sent';
+    phase('return_result', 'verified');
+    return { Rezult_1: resultFields(state) };
+  });
+  try {
+    const result = await executeScript({ script, registry, initialContext: config, signal, defaultStepTimeoutMs: 60000, onEvent });
+    await snapshot('sbis-final');
+    result.context.artifacts = artifacts;
+    if (result.context.Rezult_1.state === 'validation_failed') {
+      const error = new InterpreterError('VALIDATION_ERROR', 'СБИС обнаружил ошибки отчётности');
+      error.partial_context = result.context;
+      throw error;
+    }
+    return result;
+  } catch (error) {
+    await snapshot('sbis-error');
+    error.retryable = false; // A job-level retry could duplicate a previously submitted report.
+    error.partial_context = { ...(error.partial_context || {}), artifacts,
+      Rezult_1: resultFields(submissionStarted ? 'requires_reconciliation' : error.code === 'VALIDATION_ERROR' ? 'validation_failed' : 'failed') };
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', abort);
+    await browser?.close().catch(() => {});
+  }
+}

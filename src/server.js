@@ -1,3 +1,4 @@
+import { executeSbisWorkflow } from './sbis-workflow.js';
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { constants as fsConstants, statfsSync } from 'node:fs';
@@ -1355,7 +1356,7 @@ async function executeJob(job) {
     const simulatedDelay = Number.isFinite(script.simulate?.delay_ms) ? script.simulate.delay_ms : 250;
     const browserReplay = isPuppeteerReplayScript(script);
     logJob(job, 'debug', 'Сценарий подготовлен к выполнению', {
-      runtime: browserReplay ? 'puppeteer-replay' : 'json-steps',
+      runtime: script.format === 'sbis-report' ? 'sbis-report' : browserReplay ? 'puppeteer-replay' : 'json-steps',
       steps_total: steps.length,
       request_hash: job.request_hash
     });
@@ -1384,9 +1385,17 @@ async function executeJob(job) {
       );
     }
 
-    const interpreterResult = browserReplay
+    const interpreterResult = script.format === 'sbis-report'
+      ? await executeSbisWorkflow({
+        script, context: job.request.context || {}, signal: controller.signal,
+        allowedRoots: STEP_ALLOWED_ROOTS, artifactDirectory, publicArtifactBasePath, jobId: job.job_id,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, headless: process.env.BROWSER_HEADLESS !== 'false',
+        onEvent: (event) => applyInterpreterEvent(job, event)
+      })
+      : browserReplay
       ? await executeBrowserReplay({
         script,
+        allowedRoots: STEP_ALLOWED_ROOTS,
         context: runtimeContext,
         signal: controller.signal,
         timeoutMs: Math.min(job.timeout_ms, 30_000),
@@ -1461,7 +1470,7 @@ async function executeJob(job) {
       artifacts: Array.isArray(interpreterResult.context?.artifacts)
         ? exposeArtifacts(job.job_id, interpreterResult.context.artifacts)
         : [],
-      runtime: browserReplay ? 'puppeteer-replay' : 'json-steps',
+      runtime: script.format === 'sbis-report' ? 'sbis-report' : browserReplay ? 'puppeteer-replay' : 'json-steps',
       ...(!browserReplay ? { simulated_outcome: simulatedOutcome } : {})
     };
     job.finished_at = nowIso();
@@ -1544,7 +1553,7 @@ async function executeJob(job) {
           job.job_id,
           diagnosticArtifact ? [...partialArtifacts, diagnosticArtifact] : partialArtifacts
         ),
-        runtime: isPuppeteerReplayScript(job.request.script) ? 'puppeteer-replay' : 'json-steps'
+        runtime: job.request.script?.format === 'sbis-report' ? 'sbis-report' : isPuppeteerReplayScript(job.request.script) ? 'puppeteer-replay' : 'json-steps'
       };
     }
     if (partialContext) job.execution.context = partialContext;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -908,6 +908,85 @@ test('executes a local Puppeteer Replay mail fixture without external delivery',
   assert.ok(sentMessage);
   assert.equal(sentMessage.to, 'integration-recipient@example.test');
   assert.match(sentMessage.body, /Chrome Recorder JSON/);
+});
+
+test('keeps the worker alive when a page throws non-Error values and redacts page errors', async () => {
+  const secret = 'page-error-secret-123';
+  const html = `<html><body>Page error regression<script>
+    setTimeout(() => { throw undefined; }, 10);
+    setTimeout(() => { throw null; }, 20);
+    setTimeout(() => { throw '${secret}'; }, 30);
+    setTimeout(() => { throw new Error('${secret}'); }, 40);
+    setTimeout(() => { window.errorsFired = true; }, 100);
+  </script></body></html>`;
+  const response = await request('/api/v2/jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      timeout_ms: 30000,
+      retry_policy: { max_attempts: 1, backoff_ms: 0 },
+      context: { password: secret },
+      script: {
+        title: 'Non-Error page exceptions',
+        steps: [
+          { type: 'navigate', url: `data:text/html,${encodeURIComponent(html)}` },
+          { type: 'waitForExpression', expression: 'window.errorsFired === true' }
+        ]
+      }
+    })
+  });
+  assert.equal(response.status, 201);
+  const jobId = (await response.json()).job.job_id;
+  let job;
+  const deadline = Date.now() + 30000;
+  do {
+    job = (await (await request(`/api/v2/jobs/${jobId}`)).json()).job;
+    if (['success', 'failed', 'timeout', 'validation_failed'].includes(job.status)) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } while (Date.now() < deadline);
+  assert.equal(job.status, 'success', JSON.stringify(job.error));
+  const { logs } = await (await request(`/api/v2/jobs/${jobId}/logs`)).json();
+  const pageErrors = logs.filter((entry) => entry.message.startsWith('Browser page error:'));
+  assert.equal(pageErrors.length, 4);
+  assert.ok(pageErrors.some((entry) => entry.message.includes('••••••')));
+  assert.ok(!JSON.stringify(pageErrors).includes(secret));
+  assert.equal((await request('/health')).status, 200);
+});
+
+test('uploads actual file bytes to a hidden browser file input inside an iframe', async () => {
+  const file = path.join(dataDir, 'upload-test.xml');
+  const content = '<test>Тест загрузки</test>';
+  await writeFile(file, content);
+  const inner = `<input id="upload" type="file" style="display:none"><script>
+    document.querySelector('#upload').onchange = async (event) => {
+      const file = event.target.files[0];
+      parent.receivedUpload = { name: file.name, content: await file.text() };
+    };
+  </script>`;
+  const html = `<iframe srcdoc="${inner.replaceAll('&', '&amp;').replaceAll('"', '&quot;')}"></iframe>`;
+  const response = await request('/api/v2/jobs', {
+    method: 'POST',
+    body: JSON.stringify({
+      timeout_ms: 30000,
+      context: { files: [file] },
+      retry_policy: { max_attempts: 1, backoff_ms: 0 },
+      script: { title: 'Actual file upload', steps: [
+        { type: 'navigate', url: `data:text/html;charset=utf-8,${encodeURIComponent(html)}` },
+        { type: 'customStep', name: 'uploadFiles', frame: [0], parameters: { selector: '#upload', files: '{{files}}' } },
+        { type: 'waitForExpression', expression: `window.receivedUpload?.name === 'upload-test.xml' && window.receivedUpload.content === ${JSON.stringify(content)}` }
+      ] }
+    })
+  });
+  assert.equal(response.status, 201);
+  const jobId = (await response.json()).job.job_id;
+  let job;
+  const deadline = Date.now() + 30000;
+  do {
+    job = (await (await request(`/api/v2/jobs/${jobId}`)).json()).job;
+    if (['success', 'failed', 'timeout', 'validation_failed'].includes(job.status)) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } while (Date.now() < deadline);
+  assert.equal(job.status, 'success', JSON.stringify(job.error));
+  assert.deepEqual(job.execution.steps[1].output.uploaded_files, [{ filename: 'upload-test.xml', size_bytes: Buffer.byteLength(content) }]);
 });
 
 test('executes both multi-job queue demo cases with the expected scheduling semantics', async () => {

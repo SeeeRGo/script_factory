@@ -74,6 +74,15 @@ test('validates native Chrome Recorder flows without registering actions', () =>
   }]);
 });
 
+test('validates uploadFiles browser steps and array templates', () => {
+  const flow = (parameters) => ({ title: 'Upload', steps: [{ type: 'customStep', name: 'uploadFiles', parameters }] });
+  assert.deepEqual(validateScript(flow({ selector: 'input[type=file]', files: ['/work/report.xml'] })), []);
+  assert.deepEqual(validateScript(flow({ selector: '#files', files: '{{files}}' })), []);
+  for (const parameters of [{}, { selector: '#files', files: [] }, { selector: '#files', files: [null] }, { selector: '#files', files: '/work/report.xml' }]) {
+    assert.equal(validateScript(flow(parameters)).length, 1);
+  }
+});
+
 test('parameter templates preserve exact values and interpolate nested context', () => {
   const context = {
     root_dir: '/reports/incoming',

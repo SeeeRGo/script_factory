@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.6.6
+  version: 0.6.9
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
@@ -99,11 +99,11 @@ components:
     ReplayStep:
       type: object
       required: [type]
-      description: Стандартный шаг Chrome DevTools Recorder. Набор полей зависит от type и проверяется @puppeteer/replay.
+      description: Шаг Chrome DevTools Recorder; также поддерживается customStep с name=uploadFiles и parameters.selector/files для загрузки файлов из разрешённых каталогов УН.
       properties:
         type:
           type: string
-          enum: [setViewport, navigate, click, doubleClick, change, hover, scroll, keyDown, keyUp, waitForElement, waitForExpression, emulateNetworkConditions, close]
+          enum: [setViewport, navigate, click, doubleClick, change, hover, scroll, keyDown, keyUp, waitForElement, waitForExpression, emulateNetworkConditions, close, customStep]
         timeout:
           type: integer
           minimum: 1
@@ -130,10 +130,40 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ReplayStep'
+    SbisReportScript:
+      type: object
+      required: [format, steps]
+      description: Полный процесс СБИС с реальным браузером и файловыми операциями. preflight проверяет подготовку; validate_only исключает отправку; send требует submit_enabled=true и настроенные UI-привязки.
+      properties:
+        format:
+          type: string
+          enum: [sbis-report]
+        context:
+          type: object
+          additionalProperties: true
+          description: mode, inn, authority, prefixes, root_dir, loaded_dir и ui. Пример demo/sbis-report-full.json.
+        steps:
+          type: array
+          minItems: 12
+          maxItems: 12
+          items:
+            type: object
+            required: [action]
+            properties:
+              action:
+                type: string
+                enum: [check_ip, launch_browser, navigate, auth_ecp, select_authority, find_files, upload_files, validate_report, conditional_submit, move_files, return_result]
+              params:
+                type: object
+                additionalProperties: true
+              timeout_ms:
+                type: integer
+                minimum: 1
     AnyScript:
       oneOf:
         - $ref: '#/components/schemas/PuppeteerReplayScript'
         - $ref: '#/components/schemas/JsonScript'
+        - $ref: '#/components/schemas/SbisReportScript'
     CallbackConfig:
       type: object
       required: [url]

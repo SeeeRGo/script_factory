@@ -1,3 +1,4 @@
+import { validateSbisScript } from './sbis-schema.js';
 import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
@@ -638,15 +639,28 @@ export function validateScript(script, registry = createDefaultStepRegistry()) {
   if (!Array.isArray(script.steps)) {
     return [{ path: 'script.steps', message: 'steps должен быть массивом' }];
   }
+  if (script.format === 'sbis-report') return validateSbisScript(script);
   if (isPuppeteerReplayScript(script)) {
     try {
       const flow = parsePuppeteerReplay(script);
-      const customStepIndex = flow.steps.findIndex((step) => step.type === 'customStep');
-      if (customStepIndex >= 0) {
-        return [{
-          path: `script.steps[${customStepIndex}].type`,
-          message: 'customStep не является переносимым браузерным действием; используйте стандартный шаг Chrome Recorder'
-        }];
+      for (const [index, step] of flow.steps.entries()) {
+        if (step.type !== 'customStep') continue;
+        if (step.name !== 'uploadFiles') {
+          return [{
+            path: `script.steps[${index}].type`,
+            message: 'customStep не является переносимым браузерным действием; используйте стандартный шаг Chrome Recorder'
+          }];
+        }
+        const params = step.parameters;
+        if (!params || typeof params.selector !== 'string' || !params.selector.trim()) {
+          return [{ path: `script.steps[${index}].parameters.selector`, message: 'uploadFiles требует selector поля input[type=file]' }];
+        }
+        const files = params.files;
+        const template = typeof files === 'string' && /^\{\{\s*[\w.]+\s*\}\}$/.test(files);
+        if (!template && (!Array.isArray(files) || files.length === 0
+          || files.some((file) => typeof file !== 'string' || !file.trim()))) {
+          return [{ path: `script.steps[${index}].parameters.files`, message: 'uploadFiles требует непустой массив путей к файлам или шаблон массива' }];
+        }
       }
       return [];
     } catch (error) {

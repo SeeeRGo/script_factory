@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ScriptFactoryUploadProbe isTaxReport="false" testOnly="true">
+  <Purpose>File selection and rejection diagnostic only. Do not submit.</Purpose>
+</ScriptFactoryUploadProbe>

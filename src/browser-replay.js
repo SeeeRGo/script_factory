@@ -1,4 +1,4 @@
-import { access, mkdir, stat } from 'node:fs/promises';
+import { access, mkdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRunner, parse, PuppeteerRunnerExtension } from '@puppeteer/replay';
@@ -7,6 +7,43 @@ import { abortableDelay, InterpreterError, resolveTemplates } from './interprete
 
 const DEFAULT_REPLAY_TIMEOUT_MS = 10_000;
 const EXECUTABLE_CANDIDATES = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome-stable'];
+
+export async function resolveBrowserUploadFiles(files, allowedRoots = []) {
+  if (!Array.isArray(files) || files.length === 0
+    || files.some((file) => typeof file !== 'string' || !file.trim())) {
+    throw new InterpreterError('INVALID_UPLOAD_FILES', 'Укажите непустой массив путей для загрузки');
+  }
+  const inside = (file, root) => {
+    const relative = path.relative(root, file);
+    return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+  };
+  const roots = allowedRoots.map((root) => path.resolve(root));
+  const realRoots = await Promise.all(roots.map((root) => realpath(root).catch(() => root)));
+  return Promise.all(files.map(async (file) => {
+    const candidate = path.resolve(file);
+    const denied = () => new InterpreterError('FILESYSTEM_ACCESS_DENIED', 'Файл загрузки находится вне разрешённых каталогов', {
+      statusCode: 403, details: { path: candidate }
+    });
+    if (!roots.some((root) => inside(candidate, root))) throw denied();
+    let resolved;
+    let info;
+    try {
+      resolved = await realpath(candidate);
+      info = await stat(resolved);
+    } catch (cause) {
+      throw new InterpreterError('FILE_NOT_FOUND', 'Файл для загрузки недоступен', {
+        statusCode: 404, cause, details: { path: candidate }
+      });
+    }
+    if (!realRoots.some((root) => inside(resolved, root))) throw denied();
+    if (!info.isFile()) {
+      throw new InterpreterError('INVALID_UPLOAD_FILES', 'Для загрузки требуется файл, а не каталог', {
+        details: { path: candidate }
+      });
+    }
+    return { path: resolved, filename: path.basename(candidate), size_bytes: info.size };
+  }));
+}
 
 export function isYandexCaptchaUrl(value) {
   try {
@@ -165,6 +202,8 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
     this.captchaWaitMs = options.captchaWaitMs;
     this.headless = options.headless;
     this.onBrowserLog = options.onBrowserLog;
+    this.allowedRoots = options.allowedRoots;
+    this.stepOutput = null;
   }
 
   async beforeAllSteps(flow) {
@@ -182,6 +221,7 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
     if (this.signal?.aborted) throw this.signal.reason;
     this.currentIndex += 1;
     this.currentStep = step;
+    this.stepOutput = null;
     this.currentStepStartedAt = Date.now();
     await this.onEvent({
       type: 'step_started',
@@ -193,6 +233,33 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
     });
   }
 
+  async runStepInFrame(step, mainPage, targetPageOrFrame, localFrame, timeout) {
+    if (step.type !== 'customStep') {
+      return super.runStepInFrame(step, mainPage, targetPageOrFrame, localFrame, timeout);
+    }
+    if (step.name !== 'uploadFiles' || typeof step.parameters?.selector !== 'string'
+      || !step.parameters.selector.trim()) {
+      throw new InterpreterError('INVALID_SCRIPT', 'Неподдерживаемый пользовательский шаг браузера');
+    }
+    const files = await resolveBrowserUploadFiles(step.parameters.files, this.allowedRoots);
+    if (this.signal?.aborted) throw this.signal.reason;
+    const input = await localFrame.waitForSelector(step.parameters.selector, { timeout, signal: this.signal });
+    try {
+      const field = await input.evaluate((element) => ({
+        isFile: element.tagName === 'INPUT' && element.type === 'file',
+        multiple: Boolean(element.multiple)
+      }));
+      if (!field.isFile || (!field.multiple && files.length > 1)) {
+        throw new InterpreterError('INVALID_UPLOAD_TARGET', 'Поле должно быть input[type=file] и поддерживать выбранное количество файлов');
+      }
+      if (this.signal?.aborted) throw this.signal.reason;
+      await input.uploadFile(...files.map((file) => file.path));
+      this.stepOutput = { uploaded_files: files.map(({ filename, size_bytes }) => ({ filename, size_bytes })) };
+    } finally {
+      await input.dispose();
+    }
+  }
+
   async afterEachStep(step, flow) {
     if (step.type !== 'keyDown') await waitForYandexCaptcha({
       page: this.page,
@@ -201,7 +268,7 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
       waitMs: this.captchaWaitMs,
       onBrowserLog: this.onBrowserLog
     });
-    const output = await pageSnapshot(this.page);
+    const output = { ...await pageSnapshot(this.page), ...(this.stepOutput ?? {}) };
     this.completedSteps += 1;
     await this.onEvent({
       type: 'step_completed',
@@ -302,7 +369,8 @@ export async function executeBrowserReplay(options) {
     holdOpenMs = 0,
     captchaWaitMs = 0,
     windowWidth = 1400,
-    windowHeight = 860
+    windowHeight = 860,
+    allowedRoots = []
   } = options;
 
   const normalizedStepDelayMs = boundedNumber(stepDelayMs, 0, 5000);
@@ -360,7 +428,7 @@ export async function executeBrowserReplay(options) {
     });
   }
   page.on('console', (message) => onBrowserLog('debug', `Browser console: ${redactText(message.text(), context)}`));
-  page.on('pageerror', (error) => onBrowserLog('warn', `Browser page error: ${redactText(error.message, context)}`));
+  page.on('pageerror', (error) => onBrowserLog('warn', `Browser page error: ${redactText(error?.message ?? error ?? 'Unknown page error', context)}`));
 
   const extension = new ObservableReplayExtension(browser, page, {
     timeoutMs: Math.max(1, Math.min(timeoutMs, 30_000)),
@@ -369,7 +437,8 @@ export async function executeBrowserReplay(options) {
     stepDelayMs: normalizedStepDelayMs,
     captchaWaitMs: normalizedCaptchaWaitMs,
     headless,
-    onBrowserLog
+    onBrowserLog,
+    allowedRoots
   });
   const runner = await createRunner(flow, extension);
   const onAbort = () => {
