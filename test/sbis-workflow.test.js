@@ -44,7 +44,7 @@ test('find latest per prefix; archive rejects overwrite and source changes', asy
   await assert.rejects(findLatestReports({ root_dir: path.join(incoming, 'escape'), prefixes: ['NO_'] }, [incoming]), { code: 'FILESYSTEM_ACCESS_DENIED' });
 });
 
-for (const scenario of ['validate_only', 'send', 'invalid', 'wrong_org', 'preflight', 'unknown_send', 'hint_popup']) {
+for (const scenario of ['validate_only', 'send', 'invalid', 'wrong_org', 'preflight', 'unknown_send', 'hint_popup', 'organization_card', 'preflight_wrong_org', 'parsed_filename', 'parsed_wrong_path', 'key_identity', 'wrong_report_key', 'key_without_file_proof', 'already_imported', 'external_protocol', 'expand_identity', 'wide_toolbar', 'toolbar_overlay']) {
   test(`real browser workflow against local fixture: ${scenario}`, async (t) => {
     const { root, incoming, loaded } = await files(t);
     await writeFile(path.join(incoming, 'NO_test.xml'), '<TestReport/>');
@@ -54,13 +54,16 @@ for (const scenario of ['validate_only', 'send', 'invalid', 'wrong_org', 'prefli
       if (req.url === '/sent') { submissions++; res.end('ok'); return; }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end(`<html><body>${scenario === 'hint_popup' && req.url === '/report' ? '<div class="hint" style="position:fixed;inset:0;background:white;z-index:99">Добавить Saby Report в быстрый доступ?<button class="hint-close" onclick="this.parentElement.remove()">Закрыть</button></div>' : ''}<button id="login" onclick="location.href='/cabinet'">Войти</button>
-        <button>Налоговая</button><div id="org">${scenario === 'wrong_org' ? '000000000000' : '642265347300'}</div>
-        <button id="import" onclick="document.querySelector('#card').hidden=false">Импорт</button>
-        <div id="card" hidden>642265347300 NO_test.xml
-        <button id="validate" onclick="document.querySelector('#validation').textContent='${success}'">Проверить</button>
-        <div id="validation"></div><div id="protocol">Протокол локальной тестовой формы</div>
+        <button id="org-open" onclick="document.querySelector('#org-panel').hidden=false">Организация</button><div id="org-panel" ${scenario === 'organization_card' ? 'hidden' : ''}><button id="org-close" onclick="this.parentElement.hidden=true">Закрыть</button><div id="org">${['wrong_org', 'preflight_wrong_org'].includes(scenario) ? '000000000000' : '642265347300'}</div></div>
+        <button id="import" onclick="if(!document.querySelector('#org-panel').hidden && ${scenario === 'organization_card'})throw new Error('ORGANIZATION_CARD_NOT_CLOSED');document.querySelector('#card').hidden=false;${scenario === 'toolbar_overlay' ? "setTimeout(()=>document.querySelector('#blocking-overlay').remove(),700)" : ''}">Импорт</button>
+        <button title="Загрузить" onclick="document.querySelector('#picker').hidden=false">Загрузить</button>
+        <div id="picker" hidden><button>С компьютера</button><button>Загрузки</button>
+        <div class="FileBrowserComponent__Browser__columnName"><i data-minicard-name="NO_test.xml" data-minicard-path="${path.join(scenario === 'parsed_wrong_path' ? root : incoming, 'NO_test.xml')}"></i><div class="FileBrowserComponent__Browser__columnNameRow" title="NO_test.xml" ondblclick="${scenario === 'already_imported' ? "document.querySelector('#duplicate').hidden=false" : "document.querySelector('#card').hidden=false"};this.parentElement.hidden=true">Распознанное название отчёта</div></div></div>
+        <div id="duplicate" hidden>Отчет с такими файлами уже загружался ранее</div><div class="controls-Popup__lastItem"><div id="card" class="report-theme__contrastWrapper" hidden data-report-key="test-card-1">${scenario === 'expand_identity' ? '<button id="expand" onclick="document.querySelector(\'#inn-details\').hidden=false;this.remove()">Развернуть</button><span id="inn-details" hidden>642265347300</span>' : '642265347300'} ${['key_identity', 'wrong_report_key', 'key_without_file_proof'].includes(scenario) ? 'Название отчёта' : 'NO_test.xml'}
+        ${scenario === 'toolbar_overlay' ? '<div id="blocking-overlay" style="position:fixed;inset:0;background:white;z-index:100"></div>' : ''}<button id="validate" ${scenario === 'wide_toolbar' ? 'style="position:fixed;left:1100px;top:100px"' : ''} onclick="document.querySelector('#validation').textContent='${success}';${scenario === 'wrong_report_key' ? "document.querySelector('#card').dataset.reportKey='other-card'" : ''}">Проверить</button>
+        ${scenario === 'external_protocol' ? '' : '<div id="validation"></div><div id="protocol">Протокол локальной тестовой формы</div>'}
         <button id="send" onclick="fetch('/sent').then(()=>document.querySelector('#status').textContent='${scenario === 'unknown_send' ? 'Отправляется' : 'Отправлен'}')">К отправке</button>
-        <div id="status"></div></div><button id="reopen">Открыть</button></body></html>`);
+        <div id="status"></div></div></div>${scenario === 'external_protocol' ? '<div id="validation-panel"><div id="validation"></div><div id="protocol">Протокол внешней панели</div></div>' : ''}<button id="reopen">Открыть</button></body></html>`);
     });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
     t.after(() => new Promise((resolve) => server.close(resolve)));
@@ -68,18 +71,24 @@ for (const scenario of ['validate_only', 'send', 'invalid', 'wrong_org', 'prefli
     const script = structuredClone(template);
     script.steps[3].params.steps = [click('#login')];
     const ui = { dismissible_popups: [{ scope_selector: '.hint', text: 'Добавить Saby Report в быстрый доступ?', close_selector: '.hint-close' }], authority_steps: [], authority_paths: { FNS: '/report' }, organization_selector: '#org', upload_steps: [click('#import')], report_scope_selector: '#card',
-      validate_steps: [click('#validate')], validation_status_selector: '#validation', protocol_selector: '#protocol',
+      validate_steps: scenario === 'toolbar_overlay' ? template.context.ui.validate_steps : [click('#validate')], validation_status_selector: '#validation', protocol_selector: '#protocol',
       validation_success_text: 'Ошибок не обнаружено', validation_failure_text: 'Есть ошибки',
       reopen_steps: [click('#reopen')], submit_steps: [click('#send')], sent_status_selector: '#status' };
-    const context = { mode: ['invalid', 'wrong_org', 'unknown_send'].includes(scenario) ? 'send' : scenario === 'hint_popup' ? 'validate_only' : scenario, submit_enabled: true,
+    if (['parsed_filename', 'parsed_wrong_path', 'key_identity', 'wrong_report_key', 'already_imported'].includes(scenario)) ui.upload_steps = structuredClone(template.context.ui.upload_steps);
+    if (scenario === 'expand_identity') ui.report_identity_steps = structuredClone(template.context.ui.report_identity_steps);
+    if (scenario === 'external_protocol') ui.validation_scope_selector = '#validation-panel';
+    if (scenario === 'already_imported') ui.upload_duplicate_text = 'Отчет с такими файлами уже загружался ранее';
+    if (['key_identity', 'wrong_report_key', 'key_without_file_proof'].includes(scenario)) { ui.report_identity_mode = 'selected_file_and_key'; ui.report_key_expression = "document.querySelector('#card').dataset.reportKey"; }
+    if (scenario === 'organization_card') { ui.organization_steps = [click('#org-open')]; ui.organization_after_steps = [click('#org-close')]; }
+    const context = { mode: scenario === 'preflight_wrong_org' ? 'preflight' : ['invalid', 'wrong_org', 'unknown_send'].includes(scenario) ? 'send' : ['hint_popup', 'organization_card', 'parsed_filename', 'parsed_wrong_path', 'key_identity', 'wrong_report_key', 'key_without_file_proof', 'already_imported', 'external_protocol', 'expand_identity', 'wide_toolbar', 'toolbar_overlay'].includes(scenario) ? 'validate_only' : scenario, submit_enabled: true,
       inn: '642265347300', authority_prefixes: null, authority: 'FNS', prefixes: ['NO_'], root_dir: incoming, loaded_dir: loaded,
       login_url: base, authenticated_url: `${base}/cabinet`, report_url: `${base}/report`, submit_timeout_ms: 300, ui };
     let checks = 0;
     const opts = { script, context, checkIp: async () => { checks++; }, allowedRoots: [root],
       artifactDirectory: path.join(root, 'artifacts'), publicArtifactBasePath: '/artifacts/test', jobId: `test-${scenario}`, headless: true };
-    if (scenario === 'invalid' || scenario === 'wrong_org' || scenario === 'unknown_send') {
+    if (scenario === 'already_imported' || ['wrong_report_key', 'key_without_file_proof'].includes(scenario) || scenario === 'parsed_wrong_path' || scenario === 'invalid' || ['wrong_org', 'preflight_wrong_org'].includes(scenario) || scenario === 'unknown_send') {
       await assert.rejects(executeSbisWorkflow(opts), (error) => {
-        assert.equal(error.code, scenario === 'invalid' ? 'VALIDATION_ERROR' : scenario === 'wrong_org' ? 'ORGANIZATION_NOT_VERIFIED' : 'INTERNAL_ERROR');
+        assert.equal(error.code, scenario === 'already_imported' ? 'REPORT_ALREADY_IMPORTED' : ['wrong_report_key', 'key_without_file_proof'].includes(scenario) ? 'REPORT_IDENTITY_MISMATCH' : scenario === 'parsed_wrong_path' ? 'FILE_SELECTION_MISMATCH' : scenario === 'invalid' ? 'VALIDATION_ERROR' : ['wrong_org', 'preflight_wrong_org'].includes(scenario) ? 'ORGANIZATION_NOT_VERIFIED' : 'INTERNAL_ERROR');
         assert.equal(error.retryable, false);
         assert.ok(error.partial_context.Rezult_1);
         if (scenario === 'unknown_send') assert.equal(error.partial_context.Rezult_1.state, 'requires_reconciliation');
@@ -95,6 +104,7 @@ for (const scenario of ['validate_only', 'send', 'invalid', 'wrong_org', 'prefli
       assert.equal(data.state, scenario === 'send' ? 'sent' : scenario === 'preflight' ? 'preflight_completed' : 'validated_not_sent');
       assert.equal(submissions, scenario === 'send' ? 1 : 0);
       assert.ok(result.context.artifacts.length);
+      if (scenario === 'key_identity') { assert.equal(data.reports[0].file_selection_verified, true); assert.equal(data.reports[0].report_key_verified, true); assert.equal(JSON.stringify(data).includes('test-card-1'), false); }
       if (scenario === 'hint_popup') assert.ok(data.phases.some(p => p.name === 'dismiss_popup'));
       if (scenario === 'send') {
         assert.equal(await readFile(path.join(loaded, 'NO_test.xml'), 'utf8'), '<TestReport/>');
@@ -141,7 +151,7 @@ for (const scenario of ['preflight', 'send', 'invalid_second', 'unknown_second',
       const unknown = authority === 'SFR' && scenario === 'unknown_second';
       res.end(`<button id="login" onclick="location.href='/cabinet'">Войти</button>
         <div id="org">${authority === 'SFR' && scenario === 'wrong_second_org' ? '000000000000' : '642265347300'}</div>
-        <button id="import" onclick="fetch('/import?authority=${authority}');document.querySelector('#card').hidden=false">Импорт</button>
+        <button id="import" onclick="fetch('/import?authority=${authority}');document.querySelector('#card').hidden=false;${scenario === 'toolbar_overlay' ? "setTimeout(()=>document.querySelector('#blocking-overlay').remove(),700)" : ''}">Импорт</button>
         <div id="card" hidden>642265347300 ${authority}_test.xml
           <button id="validate" onclick="document.querySelector('#validation').textContent='${invalid ? 'Ошибка' : 'ОК'}'">Проверить</button>
           <div id="validation"></div><div id="protocol">Протокол ${authority}</div>
@@ -255,3 +265,43 @@ for (const scenario of ['first', 'second', 'missing', 'ambiguous', 'strict_auto'
     }
   });
 }
+
+test('multiple independent XML cards retain exact file and report-key identity', async (t) => {
+  const { root, incoming, loaded } = await files(t);
+  const names = ['ONE_test.xml', 'TWO_test.xml'];
+  for (const name of names) await writeFile(path.join(incoming, name), '<TestOnly/>');
+  const imports = [];
+  const server = createServer((req, res) => {
+    const url = new URL(req.url, 'http://fixture');
+    if (url.pathname === '/import') { imports.push(url.searchParams.get('file')); res.end('ok'); return; }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.end(`<button id="login" onclick="location.href='/cabinet'">Войти</button><div id="org">642265347300</div>
+      <button id="picker-open" onclick="document.querySelector('#picker').hidden=false">Загрузить</button>
+      <div id="picker" hidden>${names.map(name => `<div class="file-row" data-minicard-name="${name}" data-minicard-path="${path.join(incoming, name)}" ondblclick="document.querySelector('#card').dataset.reportKey=this.dataset.minicardName;document.querySelector('#card').hidden=false;this.parentElement.hidden=true;fetch('/import?file='+encodeURIComponent(this.dataset.minicardName))">Распознанный отчёт</div>`).join('')}</div>
+      <div id="card" hidden>642265347300
+        <button id="validate" onclick="document.querySelector('#validation').textContent='OK'">Проверить</button>
+        <div id="validation"></div><div id="protocol">Тестовый протокол</div>
+      </div>`);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const script = structuredClone(template);
+  script.steps[3].params.steps = [click('#login')];
+  const result = await executeSbisWorkflow({ script, context: { mode: 'validate_only', inn: '642265347300', authority_prefixes: null,
+    authority: 'FNS', prefixes: ['ONE_', 'TWO_'], allow_multiple: true, root_dir: incoming, loaded_dir: loaded,
+    login_url: base, authenticated_url: `${base}/cabinet`, report_url: `${base}/report`,
+    ui: { organization_selector: '#org', authority_paths: { FNS: '/report' }, authority_steps: [],
+      upload_steps: [click('#picker-open'), { type: 'doubleClick', selectors: [['[data-minicard-name="{{file_name}}"]']], offsetX: 5, offsetY: 5 }],
+      report_scope_selector: '#card', report_identity_mode: 'selected_file_and_key', report_key_expression: "document.querySelector('#card').dataset.reportKey",
+      validate_steps: [click('#validate')], validation_status_selector: '#validation', protocol_selector: '#protocol',
+      validation_success_text: 'OK', validation_failure_text: 'Error' } },
+    allowedRoots: [root], artifactDirectory: path.join(root, 'artifacts'), publicArtifactBasePath: '/artifacts/test', jobId: 'multi-key',
+    checkIp: async () => {}, headless: true });
+  assert.deepEqual(imports, names);
+  assert.equal(result.context.Rezult_1.state, 'validated_not_sent');
+  assert.equal(result.context.Rezult_1.reports.length, 2);
+  assert.ok(result.context.Rezult_1.reports.every(r => r.file_selection_verified && r.report_key_verified && r.state === 'validated'));
+  assert.deepEqual(await readdir(loaded), []);
+  assert.deepEqual((await readdir(incoming)).sort(), names);
+});

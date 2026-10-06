@@ -13,7 +13,13 @@
         "authority": "FNS",
         "prefixes": [
           "REPLACE_WITH_FNS_PREFIX"
-        ]
+        ],
+        "ui": {
+          "validation_scope_selector": ".journal-react__view.journal-react__background_pink",
+          "validation_status_selector": ".controls-Header__caption",
+          "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m",
+          "validation_failure_text": "Найденные ошибки"
+        }
       },
       {
         "authority": "SFR",
@@ -32,7 +38,7 @@
   "script": {
     "format": "sbis-report",
     "title": "СБИС: ФНС, СФР и Росстат в одном задании",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "default_step_timeout_ms": 60000,
     "context": {
       "mode": "validate_only",
@@ -49,8 +55,35 @@
       "validation_timeout_ms": 300000,
       "submit_timeout_ms": 300000,
       "ui": {
-        "organization_steps": [],
-        "organization_selector": null,
+        "organization_steps": [
+          {
+            "type": "navigate",
+            "url": "{{report_url}}page/access-and-roles",
+            "description": "Открывает профиль текущего пользователя для проверки связанной организации."
+          },
+          {
+            "type": "waitForElement",
+            "selectors": [
+              [
+                ".personProfile-header__depPath .o_n_aa"
+              ]
+            ],
+            "visible": true,
+            "description": "Ожидает ссылку на организацию в заголовке профиля."
+          },
+          {
+            "type": "click",
+            "selectors": [
+              [
+                ".personProfile-header__depPath .o_n_aa"
+              ]
+            ],
+            "offsetX": 30,
+            "offsetY": 8,
+            "description": "Открывает реквизиты организации текущего кабинета."
+          }
+        ],
+        "organization_selector": ".ourCompanies-Requisites__INNField",
         "upload_steps": [
           {
             "type": "click",
@@ -109,36 +142,43 @@
             "type": "waitForElement",
             "selectors": [
               [
-                "text/{{file_name}}"
+                ".FileBrowserComponent__Browser__columnName:has([data-minicard-name=\"{{file_name}}\"]) .FileBrowserComponent__Browser__columnNameRow"
               ]
             ],
             "visible": true,
-            "description": "Ожидает появления файла с именем file_name, подставленным для текущего найденного XML."
+            "description": "Ожидает ровно одну строку с исходным именем XML в атрибуте data-minicard-name. Настоящий XML может отображаться как название отчёта вместо имени файла.",
+            "count": 1,
+            "operator": "=="
           },
           {
             "type": "doubleClick",
             "selectors": [
               [
-                "text/{{file_name}}"
+                ".FileBrowserComponent__Browser__columnName:has([data-minicard-name=\"{{file_name}}\"]) .FileBrowserComponent__Browser__columnNameRow"
               ]
             ],
             "offsetX": 90,
             "offsetY": 10,
-            "description": "Выбирает текущий XML двойным щелчком. Успешный выбор файла сам по себе не подтверждает импорт отчётной формы."
+            "description": "Выбирает XML по точному data-minicard-name строки. Исполнитель до двойного клика дополнительно проверяет единственность строки и соответствие data-minicard-path полному пути выбранного файла; после импорта проверяется карточка."
           }
         ],
-        "report_scope_selector": null,
+        "report_scope_selector": ".report-theme__contrastWrapper",
         "validate_steps": [
+          {
+            "type": "waitForExpression",
+            "expression": "(() => { const visible = e => !!e && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'; const roots = [...document.querySelectorAll('.controls-Popup__lastItem')].filter(visible).filter(e => e.querySelector('.report-theme__contrastWrapper')); if (roots.length !== 1) return false; const labels = [...roots[0].querySelectorAll('*')].filter(e => visible(e) && e.children.length === 0 && e.textContent.trim() === 'Проверить'); if (labels.length !== 1) return false; const label = labels[0], button = label.closest('button,[role=button],.controls-BaseButton') || label; if (button.disabled || button.closest('[disabled],[aria-disabled=\"true\"]')) return false; label.scrollIntoView({block:'center',inline:'nearest'}); const box = label.getBoundingClientRect(), hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2); return !!hit && button.contains(hit); })()",
+            "description": "Ожидает единственную надпись «Проверить» в карточке, прокручивает её в область видимости и проверяет доступность и отсутствие перекрытия."
+          },
           {
             "type": "click",
             "selectors": [
               [
-                "text/Проверить"
+                ".controls-Popup__lastItem ::-p-text(Проверить)"
               ]
             ],
             "offsetX": 20,
             "offsetY": 10,
-            "description": "Нажимает «Проверить» в карточке отчёта. Кнопка взята из документации; привязку необходимо подтвердить на настоящем отчёте."
+            "description": "Один раз нажимает доступную кнопку «Проверить» обычным событием мыши браузера."
           }
         ],
         "validation_status_selector": null,
@@ -151,12 +191,12 @@
             "type": "click",
             "selectors": [
               [
-                "text/К отправке"
+                ".controls-Popup__lastItem ::-p-text(Отправить)"
               ]
             ],
             "offsetX": 20,
             "offsetY": 10,
-            "description": "Нажимает «К отправке». Это начальная запись из документации: необходимые подтверждения подписания и отправки нужно дополнить по интерфейсу настоящего отчёта."
+            "description": "Первая кнопка «Отправить» в новой карточке НДС подтверждена визуально. Полный диалог подписи, отправки и конечный статус не проверены; пустые обязательные reopen_steps и sent_status_selector блокируют send до запуска браузера."
           }
         ],
         "sent_status_selector": null,
@@ -181,12 +221,29 @@
             "text": "Добавить Saby Report в быстрый доступ?",
             "close_selector": ".controls-CloseButton__close"
           }
+        ],
+        "organization_after_steps": [],
+        "report_identity_mode": "selected_file_and_key",
+        "report_key_expression": "(()=>{const roots=[...document.querySelectorAll('.report-theme__contrastWrapper')].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden');if(roots.length!==1)return null;const p=roots[0];const k=Object.getOwnPropertyNames(p).find(k=>k.startsWith('__reactFiber'));for(let f=p[k],i=0;f&&i<70;f=f.return,i++){const store=f.memoizedProps?.controllerStore;if(store?._parentId)return String(store._parentId)}return null})()",
+        "upload_duplicate_text": "Отчет с такими файлами уже загружался ранее",
+        "report_identity_steps": [
+          {
+            "type": "waitForExpression",
+            "expression": "(()=>{const root=document.querySelector('.report-theme__contrastWrapper');if(!root)return false;if(new RegExp('(^|[^0-9]){{inn}}([^0-9]|$)').test(root.innerText))return true;const expand=[...root.querySelectorAll('*')].find(e=>!e.children.length&&e.getClientRects().length&&e.innerText?.trim()==='Развернуть');if(!expand)return false;expand.click();return true})()",
+            "description": "Раскрывает реквизиты новой карточки кнопкой «Развернуть», если полный ИНН ещё не отображается. Не изменяет поля отчёта. Исполнитель затем отдельно ждёт полного ИНН и сверяет ключ карточки."
+          }
         ]
       },
       "authority_prefixes": [
         {
           "authority": "FNS",
-          "prefixes": []
+          "prefixes": [],
+          "ui": {
+            "validation_scope_selector": ".journal-react__view.journal-react__background_pink",
+            "validation_status_selector": ".controls-Header__caption",
+            "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m",
+            "validation_failure_text": "Найденные ошибки"
+          }
         },
         {
           "authority": "SFR",
@@ -275,7 +332,7 @@
         "action": "upload_files",
         "title": "Загрузить и проверить каждый XML в отдельной карточке",
         "timeout_ms": 900000,
-        "description": "Для каждого XML проверяет неизменность файла, выполняет ui.upload_steps, подтверждает ИНН и имя файла в карточке, запускает проверку и сохраняет текст протокола. В preflight этап пропускается."
+        "description": "Для каждого XML проверяет неизменность файла, отсутствие ранее открытой карточки, выполняет ui.upload_steps и подтверждает исходное имя и полный путь XML в файловом диалоге. В новой карточке сверяет полный ИНН и фиксирует её ключ; при последующих проверках требует тот же ключ. Запускает проверку и сохраняет текст протокола. В preflight этап пропускается."
       },
       {
         "action": "validate_report",

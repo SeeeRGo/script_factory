@@ -6,7 +6,7 @@ import puppeteer from 'puppeteer';
 import { createRunner, parse, PuppeteerRunnerExtension } from '@puppeteer/replay';
 import { StepRegistry, executeScript, InterpreterError, resolveTemplates, abortableDelay } from './interpreter.js';
 import { resolveBrowserExecutablePath } from './browser-replay.js';
-import { containsInn, selectSbisCertificate } from './sbis-identity.js';
+import { containsInn, selectSbisCertificate, verifySelectedFile } from './sbis-identity.js';
 import { validateSbisScript } from './sbis-schema.js';
 import { checkExternalIp } from './system-checks.js';
 
@@ -104,6 +104,8 @@ export async function executeSbisWorkflow(options) {
     const ui = binding;
     const required = ['organization_selector', 'report_scope_selector', 'validation_status_selector', 'protocol_selector', 'validation_success_text', 'validation_failure_text'];
     if (config.mode === 'send' && config.submit_enabled === true) required.push('sent_status_selector');
+    if (ui.report_identity_mode === 'selected_file_and_key') required.push('report_key_expression');
+    else if (ui.report_identity_mode && ui.report_identity_mode !== 'filename') fail('MISSING_PARAMETER', 'Неизвестный report_identity_mode');
     const missing = required.filter((key) => !ui[key]);
     for (const key of ['upload_steps', 'validate_steps', ...(config.mode === 'send' && config.submit_enabled === true ? ['reopen_steps', 'submit_steps'] : [])]) {
       if (!Array.isArray(ui[key]) || !ui[key].length) missing.push(key);
@@ -165,15 +167,21 @@ export async function executeSbisWorkflow(options) {
       await super.beforeEachStep(step, recording);
       guard();
       await dismissHints();
+      if (step.type === 'doubleClick' && this.reportContext?.file_name
+        && step.selectors?.some(chain => chain.some(selector => selector.includes('data-minicard-name')))) {
+        this.fileProof = await verifySelectedFile(page, { filename: this.reportContext.file_name, filePath: this.reportContext.file_path });
+      }
     }
   }
   const flow = async (steps, context = {}) => {
     guard();
     const recording = parse(resolveTemplates({ title: 'SBIS phase', timeout: 30000, steps }, { ...config, ...context }));
-    const runner = await createRunner(recording, new SbisRunnerExtension(browser, page, { timeout: 30000 }));
+    const extension = new SbisRunnerExtension(browser, page, { timeout: 30000 });
+    extension.reportContext = context;
+    const runner = await createRunner(recording, extension);
     const cancel = () => { runner.abort(); abort(); };
     activeSignal?.addEventListener('abort', cancel, { once: true });
-    try { if (!await runner.run()) fail('CANCELLED', 'Браузерный этап отменён'); guard(); }
+    try { if (!await runner.run()) fail('CANCELLED', 'Браузерный этап отменён'); guard(); return extension.fileProof; }
     finally { activeSignal?.removeEventListener('abort', cancel); }
   };
   const clickText = (text) => ({ type: 'click', selectors: [[`text/${text}`]], offsetX: 10, offsetY: 10 });
@@ -182,11 +190,36 @@ export async function executeSbisWorkflow(options) {
     try { return await node.evaluate((e) => e.innerText); } finally { await node.dispose(); }
   };
   const reportContext = (r) => ({ file_name: r.filename, file_path: r.path });
-  const requireReportIdentity = async (r) => {
-    const selector = resolveTemplates(requireValue(ui.report_scope_selector, 'ui.report_scope_selector'), { ...config, ...reportContext(r) });
+  const reportSelector = (r) => resolveTemplates(requireValue(ui.report_scope_selector, 'ui.report_scope_selector'), { ...config, ...reportContext(r) });
+  const visibleCards = async (selector) => page.$$eval(selector, nodes => nodes.filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden').length);
+  const requireReportIdentity = async (r, { capture = false } = {}) => {
+    const selector = reportSelector(r);
+    await page.waitForFunction((selector, duplicate) => {
+      const cards = [...document.querySelectorAll(selector)].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+      return cards.length > 0 || (duplicate && document.body.innerText.includes(duplicate));
+    }, { timeout: 30000, signal: activeSignal }, selector, ui.upload_duplicate_text || null);
+    if (ui.upload_duplicate_text && await page.evaluate(text => document.body.innerText.includes(text), ui.upload_duplicate_text)) {
+      fail('REPORT_ALREADY_IMPORTED', 'СБИС сообщает, что отчёт с такими файлами уже загружен; автоматический повтор импорта запрещён');
+    }
+    if (await visibleCards(selector) !== 1) fail('REPORT_IDENTITY_MISMATCH', 'Не найдена единственная открытая карточка отчёта');
+    if (ui.report_identity_steps?.length) await flow(ui.report_identity_steps, reportContext(r));
+    await page.waitForFunction((selector, inn) => {
+      const root = [...document.querySelectorAll(selector)].find(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+      return root && new RegExp('(^|[^0-9])' + inn + '([^0-9]|$)').test(root.innerText);
+    }, { timeout: 30000, signal: activeSignal }, selector, config.inn).catch(error => {
+      if (activeSignal?.aborted) throw error;
+      fail('REPORT_IDENTITY_MISMATCH', 'Карточка не подтверждает полный ИНН организации');
+    });
     const text = await visibleText(selector);
-    if (!containsInn(text, config.inn) || !text.includes(r.filename)) {
-      fail('REPORT_IDENTITY_MISMATCH', 'Карточка не подтверждает ИНН и имя текущего XML');
+    if (!containsInn(text, config.inn)) fail('REPORT_IDENTITY_MISMATCH', 'Карточка не подтверждает полный ИНН организации');
+    if (ui.report_identity_mode === 'selected_file_and_key') {
+      if (!r.file_selection_verified) fail('REPORT_IDENTITY_MISMATCH', 'Не подтверждён исходный XML по имени и полному пути');
+      const key = await page.evaluate(resolveTemplates(requireValue(ui.report_key_expression, 'ui.report_key_expression'), { ...config, ...reportContext(r) }));
+      if (typeof key !== 'string' || !key.trim() || key.length > 256) fail('REPORT_IDENTITY_MISMATCH', 'Не подтверждён идентификатор карточки');
+      if (capture && !r.report_key) r.report_key = key;
+      else if (r.report_key !== key) fail('REPORT_IDENTITY_MISMATCH', 'Открыта другая карточка отчёта');
+    } else if (!text.includes(r.filename)) {
+      fail('REPORT_IDENTITY_MISMATCH', 'Карточка не подтверждает имя текущего XML');
     }
     return selector;
   };
@@ -204,12 +237,16 @@ export async function executeSbisWorkflow(options) {
   });
   register('launch_browser', async () => {
     const executablePath = await resolveBrowserExecutablePath(options.executablePath);
-    browser = await puppeteer.launch({ executablePath, headless: options.headless ?? true,
+    const headless = options.headless ?? true;
+    browser = await puppeteer.launch({ executablePath, headless,
+      defaultViewport: headless ? { width: 1400, height: 860 } : null,
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--window-size=1400,860'] });
-    page = await browser.newPage();
+    page = (await browser.pages())[0] || await browser.newPage();
+    await page.bringToFront();
     await page.evaluateOnNewDocument(() => { try { Object.defineProperty(Navigator.prototype, 'registerProtocolHandler', { configurable: true, value: () => {} }); } catch {} });
     page.on('pageerror', () => {}); // Non-Error site exceptions must not crash the worker.
-    return phase('launch_browser', 'verified', { browser_launched: true });
+    const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+    return phase('launch_browser', 'verified', { browser_launched: true, viewport_width: viewport.width, viewport_height: viewport.height });
   });
   const goTo = async (url) => {
     // Retry navigation only; never repeat a submission or an upload automatically.
@@ -297,15 +334,22 @@ export async function executeSbisWorkflow(options) {
     if (ui.authority_steps?.length) await flow(ui.authority_steps);
     if (authorityPath) await page.waitForFunction((expected) => location.pathname === expected,
       { timeout: 30000, signal: activeSignal }, authorityPath);
-    const authorityVerified = Boolean(authorityPath) && new URL(page.url()).pathname === authorityPath;
     if (ui.organization_steps?.length) await flow(ui.organization_steps);
     if (ui.organization_selector) {
       const text = await visibleText(ui.organization_selector);
       organizationVerified = containsInn(text, config.inn);
+      phase('organization_identity', organizationVerified ? 'verified' : 'failed', {
+        authority: config.authority, organization_verified: organizationVerified });
     }
+    if (ui.organization_after_steps?.length) await flow(ui.organization_after_steps);
+    if (ui.organization_steps?.length && authorityPath) {
+      await goTo(new URL(authorityPath, config.report_url).href);
+      if (ui.authority_steps?.length) await flow(ui.authority_steps);
+    }
+    const authorityVerified = Boolean(authorityPath) && new URL(page.url()).pathname === authorityPath;
     await dismissHints();
     await snapshot(`authority-${config.authority}`);
-    if (!organizationVerified && !probe) fail('ORGANIZATION_NOT_VERIFIED', 'Не подтверждена выбранная организация по ИНН');
+    if (!organizationVerified && (!probe || ui.organization_selector)) fail('ORGANIZATION_NOT_VERIFIED', 'Не подтверждена выбранная организация по ИНН');
     return phase('select_authority', organizationVerified && authorityVerified ? 'verified' : 'partial', {
       authority: config.authority, current_url: page.url(), authority_selected: true, reports_section_verified: authorityVerified, organization_verified: organizationVerified,
       ...(!organizationVerified ? { reason: 'Не настроена проверка выбранной организации по ИНН' } : {}) });
@@ -334,12 +378,21 @@ export async function executeSbisWorkflow(options) {
     if (probe) return phase('upload_files', 'skipped', { reason: 'preflight: реальная отчётная форма не передаётся' });
     if (!organizationVerified) fail('ORGANIZATION_NOT_VERIFIED', 'Организация не подтверждена');
     const uploadSteps = requireValue(ui.upload_steps?.length && ui.upload_steps, 'ui.upload_steps');
-    for (const r of reports) {
+    for (const [index, r] of reports.entries()) {
       guard();
+      if (index > 0 && ui.report_identity_mode === 'selected_file_and_key') {
+        // Close only the previously verified card before starting the next import.
+        await requireReportIdentity(reports[index - 1]);
+        await goTo(new URL(ui.authority_paths[config.authority], config.report_url).href);
+        if (ui.authority_steps?.length) await flow(ui.authority_steps);
+      }
       const actual = await checkedPath(r.path, allowedRoots);
       if (hash(await readFile(actual)) !== r.sha256) fail('SOURCE_CHANGED', 'XML изменён после поиска');
-      await flow(uploadSteps, reportContext(r));
-      await requireReportIdentity(r);
+      if (ui.report_identity_mode === 'selected_file_and_key' && await visibleCards(reportSelector(r))) {
+        fail('REPORT_IDENTITY_MISMATCH', 'Перед импортом уже открыта карточка: невозможно подтвердить результат нового импорта');
+      }
+      r.file_selection_verified = Boolean(await flow(uploadSteps, reportContext(r)));
+      await requireReportIdentity(r, { capture: true });
       r.load_datetime = new Date().toISOString();
       r.state = 'uploaded';
       // Each file is validated in its own card before another is opened.
@@ -348,19 +401,29 @@ export async function executeSbisWorkflow(options) {
     return phase('upload_files', 'verified', { uploaded_count: reports.length });
   });
   async function validateOne(r) {
-    const scope = await requireReportIdentity(r);
+    const cardScope = await requireReportIdentity(r);
+    const scope = resolveTemplates(ui.validation_scope_selector || cardScope, { ...config, ...reportContext(r) });
     await flow(requireValue(ui.validate_steps?.length && ui.validate_steps, 'ui.validate_steps'), reportContext(r));
     const statusSelector = requireValue(ui.validation_status_selector, 'ui.validation_status_selector');
     const protocolSelector = requireValue(ui.protocol_selector, 'ui.protocol_selector');
     const successText = requireValue(ui.validation_success_text, 'ui.validation_success_text');
     const failureText = requireValue(ui.validation_failure_text, 'ui.validation_failure_text');
     await page.waitForFunction((scope, selector, ok, bad) => {
-      const root = document.querySelector(scope); const el = root?.querySelector(selector);
-      const text = el?.innerText?.trim(); return text === ok || text === bad;
+      const roots = [...document.querySelectorAll(scope)].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+      if (roots.length !== 1) return false;
+      const matches = [...roots[0].querySelectorAll(selector)].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' && [ok, bad].includes(e.innerText?.trim()));
+      return matches.length === 1;
     }, { timeout: config.validation_timeout_ms || 300000, signal: activeSignal }, scope, statusSelector, successText, failureText);
-    const status = (await visibleText(`${scope} ${statusSelector}`)).trim();
+    const status = await page.evaluate((scope, selector, ok, bad) => {
+      const roots = [...document.querySelectorAll(scope)].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');
+      if (roots.length !== 1) return null;
+      const matches = [...roots[0].querySelectorAll(selector)].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden' && [ok, bad].includes(e.innerText?.trim()));
+      return matches.length === 1 ? matches[0].innerText.trim() : null;
+    }, scope, statusSelector, successText, failureText);
+    if (!status) fail('VALIDATION_RESULT_AMBIGUOUS', 'Не подтверждён единственный результат проверки');
     const protocol = await visibleText(`${scope} ${protocolSelector}`);
     if (!protocol.trim()) fail('PROTOCOL_EMPTY', 'Пустой протокол проверки');
+    await requireReportIdentity(r);
     r.validation_result = status;
     r.protocol = await artifact(`validation-${r.authority}-${allReports.indexOf(r) + 1}-${Date.now()}.txt`, protocol, 'text/plain');
     r.state = status === successText ? 'validated' : 'validation_failed';
@@ -421,6 +484,7 @@ export async function executeSbisWorkflow(options) {
       report_count: allReports.filter((r) => r.authority === p.authority).length })),
     reports: allReports.map((r) => ({ authority: r.authority, file_name: r.filename, sha256: r.sha256, state: r.state,
       load_datetime: r.load_datetime || null, validation_result: r.validation_result,
+      file_selection_verified: Boolean(r.file_selection_verified), report_key_verified: Boolean(r.report_key),
       validation_protocol: r.protocol?.public_url || null, sbis_status: r.sbis_status,
       archived_path: r.archived_path || null })), phases });
   register('return_result', async () => {
