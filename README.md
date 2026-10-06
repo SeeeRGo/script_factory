@@ -302,3 +302,5 @@ npm run demo:all
 ### JSON workflows
 
 From version 0.6.14, `format: "json-workflow"` runs loops, conditions, reusable routines, browser actions and file operations entirely from JSON. Site-specific behavior is part of the submitted script. There is no SBIS executor or `select_authority` runtime action. See [the generic format](demo/json-workflow.md) and [the SBIS scenario](demo/sbis-report-full.md). Native Puppeteer Replay and legacy demo JSON Steps remain supported. Old `sbis-report` scripts must be replaced with the new template.
+
+Подробная инструкция по переносу Chrome Recorder JSON в универсальный сценарий: [docs/recorder-to-json-workflow.md](docs/recorder-to-json-workflow.md).

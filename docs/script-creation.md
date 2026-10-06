@@ -1,5 +1,7 @@
 # Создание браузерных сценариев этапа 3
 
+Подробное сравнение Recorder и `json-workflow`, пошаговый перенос и примеры API: [из Recorder в универсальный JSON](recorder-to-json-workflow.md).
+
 ## Базовый принцип
 
 Основной формат этапа 3 — JSON, экспортированный из **Chrome DevTools Recorder**. Сервис

@@ -1,0 +1,33 @@
+{
+  "title": "Recorder: проверка результата",
+  "timeout": 10000,
+  "steps": [
+    {
+      "type": "navigate",
+      "url": "data:text/html,<html><body><button id='run' onclick=\"document.querySelector('%23result').textContent='ready'\">Run</button><div id='result'></div></body></html>"
+    },
+    {
+      "type": "waitForElement",
+      "selectors": [
+        [
+          "#run"
+        ]
+      ],
+      "visible": true
+    },
+    {
+      "type": "click",
+      "selectors": [
+        [
+          "#run"
+        ]
+      ],
+      "offsetX": 10,
+      "offsetY": 10
+    },
+    {
+      "type": "waitForExpression",
+      "expression": "document.querySelector('#result')?.textContent === 'ready'"
+    }
+  ]
+}

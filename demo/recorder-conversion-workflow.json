@@ -1,0 +1,67 @@
+{
+  "format": "json-workflow",
+  "title": "Recorder: проверка результата",
+  "default_step_timeout_ms": 30000,
+  "context": {},
+  "steps": [
+    {
+      "action": "browser_launch",
+      "title": "Запустить браузер"
+    },
+    {
+      "action": "browser_steps",
+      "title": "Выполнить запись Recorder",
+      "description": "Исходные браузерные шаги сохранены без изменений.",
+      "params": {
+        "timeout_ms": 10000,
+        "steps": [
+          {
+            "type": "navigate",
+            "url": "data:text/html,<html><body><button id='run' onclick=\"document.querySelector('%23result').textContent='ready'\">Run</button><div id='result'></div></body></html>"
+          },
+          {
+            "type": "waitForElement",
+            "selectors": [
+              [
+                "#run"
+              ]
+            ],
+            "visible": true
+          },
+          {
+            "type": "click",
+            "selectors": [
+              [
+                "#run"
+              ]
+            ],
+            "offsetX": 10,
+            "offsetY": 10
+          },
+          {
+            "type": "waitForExpression",
+            "expression": "document.querySelector('#result')?.textContent === 'ready'"
+          }
+        ]
+      }
+    },
+    {
+      "action": "browser_eval",
+      "title": "Прочитать результат",
+      "params": {
+        "expression": "document.querySelector('#result').textContent"
+      },
+      "save_as": "result_text"
+    },
+    {
+      "action": "compute",
+      "params": {
+        "expression": "({state:'completed',text:context.result_text})"
+      },
+      "save_as": "answer"
+    }
+  ],
+  "output": {
+    "Rezult_1": "{{answer}}"
+  }
+}
