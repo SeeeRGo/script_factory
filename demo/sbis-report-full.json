@@ -1,7 +1,7 @@
 {
   "format": "json-workflow",
   "title": "СБИС: ФНС, СФР и Росстат из JSON",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "default_step_timeout_ms": 60000,
   "context": {
     "mode": "validate_only",
@@ -843,6 +843,20 @@
           "private": true
         },
         {
+          "action": "browser_wait",
+          "title": "Подтвердить адрес выбранного ведомства",
+          "description": "Сравнивает origin и pathname с authority_url; не допускает перенаправления в другой раздел перед импортом.",
+          "params": {
+            "expression": "location.origin === new URL(context.authority_url).origin && location.pathname === new URL(context.authority_url).pathname",
+            "timeout_ms": 30000,
+            "error_code": "AUTHORITY_NOT_VERIFIED",
+            "message": "Не подтверждён адрес выбранного ведомства"
+          },
+          "save_as": "reports_section_verified",
+          "timeout_ms": 35000,
+          "private": true
+        },
+        {
           "action": "call",
           "title": "Открыть реквизиты организации",
           "description": "Открыть реквизиты организации",
@@ -891,6 +905,20 @@
           "private": true
         },
         {
+          "action": "browser_wait",
+          "title": "Подтвердить адрес выбранного ведомства",
+          "description": "Сравнивает origin и pathname с authority_url; не допускает перенаправления в другой раздел перед импортом.",
+          "params": {
+            "expression": "location.origin === new URL(context.authority_url).origin && location.pathname === new URL(context.authority_url).pathname",
+            "timeout_ms": 30000,
+            "error_code": "AUTHORITY_NOT_VERIFIED",
+            "message": "Не подтверждён адрес выбранного ведомства"
+          },
+          "save_as": "reports_section_verified",
+          "timeout_ms": 35000,
+          "private": true
+        },
+        {
           "action": "call",
           "title": "Зафиксировать ведомство и организацию",
           "description": "Зафиксировать ведомство и организацию",
@@ -900,7 +928,7 @@
               "status": "verified",
               "authority": "{{plan.authority}}",
               "organization_verified": true,
-              "reports_section_verified": true
+              "reports_section_verified": "{{reports_section_verified}}"
             }
           },
           "routine": "phase",
@@ -976,6 +1004,20 @@
                     "flow_steps": "{{ui.authority_steps}}"
                   },
                   "routine": "browser",
+                  "private": true
+                },
+                {
+                  "action": "browser_wait",
+                  "title": "Подтвердить адрес выбранного ведомства",
+                  "description": "Сравнивает origin и pathname с authority_url; не допускает перенаправления в другой раздел перед импортом.",
+                  "params": {
+                    "expression": "location.origin === new URL(context.authority_url).origin && location.pathname === new URL(context.authority_url).pathname",
+                    "timeout_ms": 30000,
+                    "error_code": "AUTHORITY_NOT_VERIFIED",
+                    "message": "Не подтверждён адрес выбранного ведомства"
+                  },
+                  "save_as": "reports_section_verified",
+                  "timeout_ms": 35000,
                   "private": true
                 },
                 {

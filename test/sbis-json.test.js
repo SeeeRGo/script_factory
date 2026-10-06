@@ -15,7 +15,7 @@ test('SBIS JSON contains generic operations only, with no server-side site actio
   const visit = steps => { for (const step of steps) { assert.notEqual(step.action, 'select_authority'); assert.notEqual(step.action, 'auth_ecp'); for (const key of ['steps', 'then', 'else']) if (step[key]) visit(step[key]); } };
   visit(template.steps); Object.values(template.routines).forEach(visit);
 });
-for (const scenario of ['validate_only', 'send', 'invalid', 'preflight_three', 'wrong_org', 'wrong_file_path', 'wrong_card', 'ambiguous_certificate', 'expired_only', 'account_setup', 'duplicate', 'multiple_files', 'file_conflict', 'same_card_key', 'unknown_send']) {
+for (const scenario of ['validate_only', 'send', 'invalid', 'preflight_three', 'wrong_org', 'wrong_authority', 'wrong_file_path', 'wrong_card', 'ambiguous_certificate', 'expired_only', 'account_setup', 'duplicate', 'multiple_files', 'file_conflict', 'same_card_key', 'unknown_send']) {
   test(`SBIS JSON on real browser fixture: ${scenario}`, async t => {
     const root = await mkdtemp(path.join(tmpdir(), 'sbis-json-'));
     t.after(() => rm(root, { recursive: true, force: true }));
@@ -25,6 +25,7 @@ for (const scenario of ['validate_only', 'send', 'invalid', 'preflight_three', '
     for (const name of names) await writeFile(path.join(incoming, name), '<TestOnly/>');
     let imported = 0, submitted = 0, checked = 0;
     const server = createServer((req, res) => {
+      if (scenario === 'wrong_authority' && req.url === '/report/fns') { res.writeHead(302, { Location: '/report/sfr' }); res.end(); return; }
       if (req.url === '/imported') { imported++; res.end('ok'); return; }
       if (req.url === '/submitted') { submitted++; res.end('ok'); return; }
       if (req.url === '/checked') { checked++; res.end('ok'); return; }
@@ -70,7 +71,7 @@ for (const scenario of ['validate_only', 'send', 'invalid', 'preflight_three', '
       submit_enabled: ['send', 'unknown_send'].includes(scenario), inn, certificate_inn: inn, certificate_selection_required: true,
       login_url: `${origin}/login`, report_url: `${origin}/report`, authenticated_url: `${origin}/cabinet`, root_dir: incoming, loaded_dir: loaded, authority_prefixes, ui },
       allowedRoots: [root], artifactDirectory: path.join(root, 'artifacts'), publicArtifactBasePath: '/artifacts/test', jobId: `job-${scenario}`, checkIp: async () => ({ ip_matches_expected: true }) };
-    const codes = { invalid: 'VALIDATION_ERROR', wrong_org: 'ORGANIZATION_NOT_VERIFIED', wrong_file_path: 'FILE_SELECTION_MISMATCH', wrong_card: 'REPORT_IDENTITY_MISMATCH', ambiguous_certificate: 'CERTIFICATE_AMBIGUOUS', expired_only: 'CERTIFICATE_NOT_FOUND', account_setup: 'AUTH_ACCOUNT_SETUP_REQUIRED', duplicate: 'REPORT_ALREADY_IMPORTED', file_conflict: 'AUTHORITY_FILE_CONFLICT', same_card_key: 'REPORT_BUNDLE_REQUIRED', unknown_send: 'WORKFLOW_ERROR' };
+    const codes = { invalid: 'VALIDATION_ERROR', wrong_org: 'ORGANIZATION_NOT_VERIFIED', wrong_authority: 'AUTHORITY_NOT_VERIFIED', wrong_file_path: 'FILE_SELECTION_MISMATCH', wrong_card: 'REPORT_IDENTITY_MISMATCH', ambiguous_certificate: 'CERTIFICATE_AMBIGUOUS', expired_only: 'CERTIFICATE_NOT_FOUND', account_setup: 'AUTH_ACCOUNT_SETUP_REQUIRED', duplicate: 'REPORT_ALREADY_IMPORTED', file_conflict: 'AUTHORITY_FILE_CONFLICT', same_card_key: 'REPORT_BUNDLE_REQUIRED', unknown_send: 'WORKFLOW_ERROR' };
     if (codes[scenario]) {
       await assert.rejects(executeJsonWorkflow(opts), e => {
         assert.equal(e.code, codes[scenario]);
