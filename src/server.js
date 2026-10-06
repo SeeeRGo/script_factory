@@ -1,4 +1,5 @@
-import { executeSbisWorkflow } from './sbis-workflow.js';
+import { executeJsonWorkflow } from './json-workflow.js';
+import { WORKFLOW_ACTIONS } from './workflow-schema.js';
 import http from 'node:http';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { constants as fsConstants, statfsSync } from 'node:fs';
@@ -497,7 +498,7 @@ function restoreExecution(execution, script) {
   return {
     ...expected,
     ...execution,
-    steps: (script?.format === 'sbis-report' ? execution.steps : expected.steps).map((step, index) => ({ ...step, ...(execution.steps[index] ?? {}) }))
+    steps: (script?.format === 'json-workflow' || execution.steps.length !== expected.steps.length ? execution.steps : expected.steps).map((step, index) => ({ ...step, ...(execution.steps[index] ?? {}) }))
   };
 }
 
@@ -1242,6 +1243,14 @@ function applyInterpreterEvent(job, event) {
     return;
   }
 
+  if (event.type === 'step_added') {
+    const added = createExecution({ steps: [event.step] }).steps[0];
+    execution.steps[event.step_index] = { ...added, index: event.step_index, id: event.step.id || `step_${event.step_index + 1}` };
+    execution.total_steps = execution.steps.length;
+    execution.percent = Math.round(execution.completed_steps / execution.total_steps * 100);
+    return;
+  }
+
   if (event.type.startsWith('step_')) {
     const step = execution.steps[event.step_index];
     if (!step) return;
@@ -1356,8 +1365,9 @@ async function executeJob(job) {
     const simulatedOutcome = script.simulate?.outcome || 'success';
     const simulatedDelay = Number.isFinite(script.simulate?.delay_ms) ? script.simulate.delay_ms : 250;
     const browserReplay = isPuppeteerReplayScript(script);
+    const jsonWorkflow = script.format === 'json-workflow';
     logJob(job, 'debug', 'Сценарий подготовлен к выполнению', {
-      runtime: script.format === 'sbis-report' ? 'sbis-report' : browserReplay ? 'puppeteer-replay' : 'json-steps',
+      runtime: script.format === 'json-workflow' ? 'json-workflow' : browserReplay ? 'puppeteer-replay' : 'json-steps',
       steps_total: steps.length,
       request_hash: job.request_hash
     });
@@ -1386,8 +1396,8 @@ async function executeJob(job) {
       );
     }
 
-    const interpreterResult = script.format === 'sbis-report'
-      ? await executeSbisWorkflow({
+    const interpreterResult = jsonWorkflow
+      ? await executeJsonWorkflow({
         script, context: job.request.context || {}, signal: controller.signal,
         allowedRoots: STEP_ALLOWED_ROOTS, artifactDirectory, publicArtifactBasePath, jobId: job.job_id,
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, headless: process.env.BROWSER_HEADLESS !== 'false',
@@ -1445,7 +1455,7 @@ async function executeJob(job) {
         onEvent: (event) => applyInterpreterEvent(job, event)
       });
 
-    if (!browserReplay) {
+    if (!browserReplay && !jsonWorkflow) {
       if (steps.length === 0 && simulatedDelay > 0) await abortableDelay(simulatedDelay, controller.signal);
 
       if (simulatedOutcome === 'validation_failed') {
@@ -1471,8 +1481,8 @@ async function executeJob(job) {
       artifacts: Array.isArray(interpreterResult.context?.artifacts)
         ? exposeArtifacts(job.job_id, interpreterResult.context.artifacts)
         : [],
-      runtime: script.format === 'sbis-report' ? 'sbis-report' : browserReplay ? 'puppeteer-replay' : 'json-steps',
-      ...(!browserReplay ? { simulated_outcome: simulatedOutcome } : {})
+      runtime: script.format === 'json-workflow' ? 'json-workflow' : browserReplay ? 'puppeteer-replay' : 'json-steps',
+      ...(!browserReplay && !jsonWorkflow ? { simulated_outcome: simulatedOutcome } : {})
     };
     job.finished_at = nowIso();
     logJob(job, 'debug', 'Итоговые данные задания сформированы', {
@@ -1554,7 +1564,7 @@ async function executeJob(job) {
           job.job_id,
           diagnosticArtifact ? [...partialArtifacts, diagnosticArtifact] : partialArtifacts
         ),
-        runtime: job.request.script?.format === 'sbis-report' ? 'sbis-report' : isPuppeteerReplayScript(job.request.script) ? 'puppeteer-replay' : 'json-steps'
+        runtime: job.request.script?.format === 'json-workflow' ? 'json-workflow' : isPuppeteerReplayScript(job.request.script) ? 'puppeteer-replay' : 'json-steps'
       };
     }
     if (partialContext) job.execution.context = partialContext;
@@ -2105,7 +2115,7 @@ const server = http.createServer(async (req, res) => {
     requireApiKey(req);
 
     if (method === 'GET' && resourcePath === '/interpreter/actions') {
-      sendJson(res, 200, { actions: stepRegistry.actions() });
+      sendJson(res, 200, { actions: [...new Set([...stepRegistry.actions(), ...WORKFLOW_ACTIONS])], formats: { 'json-workflow': WORKFLOW_ACTIONS, 'json-steps': stepRegistry.actions() } });
       return;
     }
 

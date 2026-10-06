@@ -1102,3 +1102,31 @@ test('returns 404 when deleting an unknown job', async () => {
   assert.equal(response.status, 404);
   assert.equal((await response.json()).error.code, 'JOB_NOT_FOUND');
 });
+
+test('executes generic workflow from script_text with dynamic nested progress and 1C result', async () => {
+  const script = { format: 'json-workflow', context: { values: [3, 4, 5] }, routines: {
+    add: [{ action: 'compute', params: { expression: 'context.sum + context.amount' }, save_as: 'sum' }]
+  }, steps: [
+    { action: 'set', params: { sum: 0 } },
+    { action: 'for_each', as: 'item', params: { items: '{{values}}' }, steps: [{ action: 'call', routine: 'add', params: { amount: '{{item}}' } }] },
+    { action: 'compute', params: { expression: '({sum:context.sum})' }, save_as: 'answer' }
+  ], output: { Rezult_1: '{{answer}}' } };
+  const response = await request('/api/v2/jobs', { method: 'POST', body: JSON.stringify({ script_text: JSON.stringify(script), retry_policy: { max_attempts: 1 }, timeout_ms: 5000 }) });
+  assert.equal(response.status, 201);
+  const id = (await response.json()).job.job_id;
+  let job;
+  const deadline = Date.now() + 5000;
+  do {
+    job = (await (await request(`/api/v2/jobs/${id}`)).json()).job;
+    if (['success', 'failed', 'timeout'].includes(job.status)) break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  } while (Date.now() < deadline);
+  assert.equal(job.status, 'success');
+  assert.equal(job.execution.steps.length, 9);
+  assert.equal(job.execution.completed_steps, 9);
+  assert.equal(job.execution.percent, 100);
+  assert.deepEqual(job.result.Rezult_1, { sum: 12 });
+  assert.ok(job.execution.steps.every(step => step.status === 'success'));
+  const invalid = await request('/api/v2/jobs', { method: 'POST', body: JSON.stringify({ script: { format: 'sbis-report', steps: [] } }) });
+  assert.equal(invalid.status, 400);
+});

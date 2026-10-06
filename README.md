@@ -109,7 +109,7 @@ The interpreter validates scripts before they enter the queue. Each step support
 - `timeout_ms`: optional per-step timeout;
 - `duration_ms`: mock adapter duration for Stage 2 demonstrations and tests.
 
-Registered actions are `noop`, `wait`, `check_ip`, `launch_browser`, `navigate`, `auth_ecp`, `find_files`, `upload_files`, `download_files`, `validate_report`, `submit_if_valid`, `move_files`, `copy_files`, `read_text_file`, `write_text_file`, `open_file`, and `delete_files`. `GET /api/v2/interpreter/actions` returns the runtime registry.
+Legacy `json-steps` actions are `noop`, `wait`, `check_ip`, `launch_browser`, `navigate`, `auth_ecp`, `find_files`, `upload_files`, `download_files`, `validate_report`, `submit_if_valid`, `move_files`, `copy_files`, `read_text_file`, `write_text_file`, `open_file`, and `delete_files`. `GET /api/v2/interpreter/actions` returns the runtime registry.
 
 Exact context expressions preserve their JSON type, so `"{{found_files}}"` resolves to an array rather than a string. Step outputs are merged into the context for subsequent steps. The execution result returns the final context.
 
@@ -298,3 +298,7 @@ npm run demo:all
 - `GET /api/v2/system/resources`
 - `GET /api/v2/system/config`
 - `PUT /api/v2/system/config`
+
+### JSON workflows
+
+From version 0.6.14, `format: "json-workflow"` runs loops, conditions, reusable routines, browser actions and file operations entirely from JSON. Site-specific behavior is part of the submitted script. There is no SBIS executor or `select_authority` runtime action. See [the generic format](demo/json-workflow.md) and [the SBIS scenario](demo/sbis-report-full.md). Native Puppeteer Replay and legacy demo JSON Steps remain supported. Old `sbis-report` scripts must be replaced with the new template.

@@ -1,18 +1,20 @@
 {
-  "timeout_ms": 1800000,
+  "timeout_ms": 900000,
   "retry_policy": {
     "max_attempts": 1,
     "backoff_ms": 0
   },
   "context": {
-    "inn": "REPLACE_WITH_INN",
-    "root_dir": "REPLACE_WITH_REPORT_DIRECTORY",
-    "loaded_dir": "REPLACE_WITH_ARCHIVE_DIRECTORY",
+    "mode": "validate_only",
+    "submit_enabled": false,
+    "inn": "ВАШ_ИНН",
+    "root_dir": "C:/Reports",
+    "loaded_dir": "C:/Reports/loaded",
     "authority_prefixes": [
       {
         "authority": "FNS",
         "prefixes": [
-          "REPLACE_WITH_FNS_PREFIX"
+          "NO_NDS_"
         ],
         "ui": {
           "validation_scope_selector": ".journal-react__view.journal-react__background_pink",
@@ -20,25 +22,13 @@
           "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m",
           "validation_failure_text": "Найденные ошибки"
         }
-      },
-      {
-        "authority": "SFR",
-        "prefixes": [
-          "REPLACE_WITH_SFR_PREFIX"
-        ]
-      },
-      {
-        "authority": "ROSSTAT",
-        "prefixes": [
-          "REPLACE_WITH_ROSSTAT_PREFIX"
-        ]
       }
     ]
   },
   "script": {
-    "format": "sbis-report",
-    "title": "СБИС: ФНС, СФР и Росстат в одном задании",
-    "version": "1.3.0",
+    "format": "json-workflow",
+    "title": "СБИС: ФНС, СФР и Росстат из JSON",
+    "version": "2.0.0",
     "default_step_timeout_ms": 60000,
     "context": {
       "mode": "validate_only",
@@ -72,15 +62,9 @@
             "description": "Ожидает ссылку на организацию в заголовке профиля."
           },
           {
-            "type": "click",
-            "selectors": [
-              [
-                ".personProfile-header__depPath .o_n_aa"
-              ]
-            ],
-            "offsetX": 30,
-            "offsetY": 8,
-            "description": "Открывает реквизиты организации текущего кабинета."
+            "type": "waitForExpression",
+            "expression": "(() => { const visible=e=>e.getClientRects().length && getComputedStyle(e).visibility!=='hidden'; const roots=[...document.querySelectorAll('.personProfile-header__depPath .o_n_aa')].filter(visible); if(roots.length!==1)return false; const root=roots[0]; const link=root.querySelector('a,[role=link]'); const leaves=[...root.querySelectorAll('*')].filter(e=>visible(e)&&e.children.length===0&&e.textContent.trim()); const target=link||leaves[0]||root; target.click(); return true; })()",
+            "description": "Дожидается единственной ссылки организации и активирует её видимый текстовый элемент. Не зависит от записанного смещения клика внутри широкого блока профиля."
           }
         ],
         "organization_selector": ".ourCompanies-Requisites__INNField",
@@ -232,7 +216,9 @@
             "expression": "(()=>{const root=document.querySelector('.report-theme__contrastWrapper');if(!root)return false;if(new RegExp('(^|[^0-9]){{inn}}([^0-9]|$)').test(root.innerText))return true;const expand=[...root.querySelectorAll('*')].find(e=>!e.children.length&&e.getClientRects().length&&e.innerText?.trim()==='Развернуть');if(!expand)return false;expand.click();return true})()",
             "description": "Раскрывает реквизиты новой карточки кнопкой «Развернуть», если полный ИНН ещё не отображается. Не изменяет поля отчёта. Исполнитель затем отдельно ждёт полного ИНН и сверяет ключ карточки."
           }
-        ]
+        ],
+        "sent_status_text": "Отправлен",
+        "sent_scope_selector": null
       },
       "authority_prefixes": [
         {
@@ -256,105 +242,1261 @@
       ],
       "certificate_inn": null,
       "certificate_selection_required": false,
-      "skip_security_setup": true
+      "skip_security_setup": true,
+      "upload_directory_steps": [],
+      "submission_started": false,
+      "auth_steps": [
+        {
+          "type": "waitForElement",
+          "selectors": [
+            [
+              "text/По ключу подписи"
+            ]
+          ],
+          "visible": true,
+          "description": "Ожидает видимости способа входа «По ключу подписи» на странице авторизации."
+        },
+        {
+          "type": "click",
+          "selectors": [
+            [
+              "text/По ключу подписи"
+            ]
+          ],
+          "offsetX": 85,
+          "offsetY": 15,
+          "description": "Открывает список доступных подписей либо запускает автоматический вход, если Saby предлагает единственную подпись. "
+        }
+      ]
+    },
+    "routines": {
+      "browser": [
+        {
+          "action": "browser_eval",
+          "title": "Закрыть только явно перечисленные необязательные подсказки",
+          "description": "Закрыть только явно перечисленные необязательные подсказки",
+          "params": {
+            "expression": "(() => { for (const hint of context.ui?.dismissible_popups || []) { for (const root of document.querySelectorAll(hint.scope_selector)) { if (root.getClientRects().length && root.innerText.replace(/\\s+/g,' ').includes(hint.text)) { const button=root.querySelector(hint.close_selector); if (!button) throw Object.assign(new Error('Не найдена кнопка известной подсказки'),{code:'UI_BINDING_REQUIRED'}); button.click(); } } } return true; })()"
+          },
+          "private": true
+        },
+        {
+          "action": "browser_steps",
+          "title": "Исполнить браузерные шаги из JSON",
+          "description": "Исполнить браузерные шаги из JSON",
+          "params": {
+            "steps": "{{flow_steps}}",
+            "timeout_ms": 30000
+          },
+          "private": true
+        }
+      ],
+      "phase": [
+        {
+          "action": "compute",
+          "title": "Сохранить диагностический этап",
+          "description": "Сохранить диагностический этап",
+          "params": {
+            "expression": "[...(context.phases||[]), context.phase_data]"
+          },
+          "save_as": "phases",
+          "private": true
+        }
+      ],
+      "store_report": [
+        {
+          "action": "compute",
+          "title": "Обновить состояние текущего отчёта",
+          "description": "Обновить состояние текущего отчёта",
+          "params": {
+            "expression": "context.reports.map(r=>r.path===context.report.path?context.report:r)"
+          },
+          "save_as": "reports",
+          "private": true
+        }
+      ],
+      "identity": [
+        {
+          "action": "browser_wait",
+          "title": "Дождаться карточки либо сообщения о повторном импорте",
+          "description": "Дождаться карточки либо сообщения о повторном импорте",
+          "params": {
+            "expression": "(() => { const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'; return [...document.querySelectorAll(context.ui.report_scope_selector)].some(visible) || (context.ui.upload_duplicate_text && document.body.innerText.includes(context.ui.upload_duplicate_text)); })()",
+            "timeout_ms": 30000
+          },
+          "timeout_ms": 35000,
+          "private": true
+        },
+        {
+          "action": "browser_eval",
+          "title": "Запретить повторный импорт",
+          "description": "Запретить повторный импорт",
+          "params": {
+            "expression": "(() => { if(context.ui.upload_duplicate_text&&document.body.innerText.includes(context.ui.upload_duplicate_text))throw Object.assign(new Error('Отчёт уже загружен'),{code:'REPORT_ALREADY_IMPORTED'}); return true; })()"
+          },
+          "private": true
+        },
+        {
+          "action": "call",
+          "title": "Раскрыть реквизиты карточки",
+          "description": "Раскрыть реквизиты карточки",
+          "params": {
+            "flow_steps": "{{ui.report_identity_steps}}"
+          },
+          "routine": "browser",
+          "private": true
+        },
+        {
+          "action": "browser_wait",
+          "title": "Подтвердить полный ИНН в единственной карточке",
+          "description": "Подтвердить полный ИНН в единственной карточке",
+          "params": {
+            "expression": "(() => {const cards=[...document.querySelectorAll(context.ui.report_scope_selector)].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');return cards.length===1&&new RegExp('(^|[^0-9])'+context.inn+'([^0-9]|$)').test(cards[0].innerText);})()",
+            "timeout_ms": 30000,
+            "error_code": "REPORT_IDENTITY_MISMATCH",
+            "message": "Подтвердить полный ИНН в единственной карточке"
+          },
+          "timeout_ms": 35000,
+          "private": true
+        },
+        {
+          "action": "browser_eval",
+          "title": "Прочитать ключ карточки выражением из JSON",
+          "description": "Исполняет report_key_expression непосредственно в браузере.",
+          "params": {
+            "expression": "{{ui.report_key_expression}}"
+          },
+          "save_as": "candidate_identity_key",
+          "private": true
+        },
+        {
+          "action": "browser_eval",
+          "title": "Сверить ключ открытой карточки",
+          "description": "Сверить ключ открытой карточки",
+          "params": {
+            "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';\n if(context.ui.upload_duplicate_text&&document.body.innerText.includes(context.ui.upload_duplicate_text))throw Object.assign(new Error('Отчёт уже загружен; повтор запрещён'),{code:'REPORT_ALREADY_IMPORTED'});\n const cards=[...document.querySelectorAll(context.ui.report_scope_selector)].filter(visible);\n if(cards.length!==1||!new RegExp('(^|[^0-9])'+context.inn+'([^0-9]|$)').test(cards[0].innerText))throw Object.assign(new Error('Карточка не подтверждает полный ИНН'),{code:'REPORT_IDENTITY_MISMATCH'});\n const key=context.candidate_identity_key;\n if(typeof key!=='string'||!key.trim()||key.length>256||!context.report.file_selection_verified)throw Object.assign(new Error('Не подтверждены файл и ключ карточки'),{code:'REPORT_IDENTITY_MISMATCH'});\n if(!context.capture_key&&key!==context.report.report_key)throw Object.assign(new Error('Открыта другая карточка'),{code:'REPORT_IDENTITY_MISMATCH'});\n return key;\n})()"
+          },
+          "save_as": "identity_key",
+          "private": true
+        },
+        {
+          "action": "if",
+          "title": "Выполнить условную ветку",
+          "description": "Выполнить условную ветку",
+          "params": {
+            "condition": "{{capture_key}}"
+          },
+          "then": [
+            {
+              "action": "compute",
+              "title": "Зафиксировать новый уникальный ключ карточки",
+              "description": "Зафиксировать новый уникальный ключ карточки",
+              "params": {
+                "expression": "(() => {if(context.reports.some(r=>r.path!==context.report.path&&r.report_key===context.identity_key))throw Object.assign(new Error('Связанные XML указывают на одну карточку; требуется загрузка комплекта'),{code:'REPORT_BUNDLE_REQUIRED'});return {...context.report,report_key:context.identity_key};})()"
+              },
+              "save_as": "report",
+              "private": true
+            },
+            {
+              "action": "call",
+              "title": "store_report",
+              "description": "store_report",
+              "params": {},
+              "routine": "store_report",
+              "private": true
+            }
+          ],
+          "else": []
+        }
+      ],
+      "validate": [
+        {
+          "action": "call",
+          "title": "Проверить карточку перед проверкой",
+          "description": "Проверить карточку перед проверкой",
+          "params": {
+            "capture_key": false
+          },
+          "routine": "identity",
+          "private": true
+        },
+        {
+          "action": "call",
+          "title": "Запустить проверку текущего отчёта",
+          "description": "Запустить проверку текущего отчёта",
+          "params": {
+            "flow_steps": "{{ui.validate_steps}}"
+          },
+          "routine": "browser",
+          "private": true
+        },
+        {
+          "action": "browser_wait",
+          "title": "Дождаться единственного результата и непустого текста проверки",
+          "description": "Дождаться единственного результата и непустого текста проверки",
+          "params": {
+            "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden', roots=[...document.querySelectorAll(context.ui.validation_scope_selector||context.ui.report_scope_selector)].filter(visible);\n if(roots.length!==1)return false;\n const matches=[...roots[0].querySelectorAll(context.ui.validation_status_selector)].filter(e=>visible(e)&&[context.ui.validation_success_text,context.ui.validation_failure_text].includes(e.innerText.trim()));\n if(matches.length!==1)return false;\n const protocols=[...roots[0].querySelectorAll(context.ui.protocol_selector)].filter(visible);\n if(protocols.length!==1||!protocols[0].innerText.trim())return false;\n return {status:matches[0].innerText.trim(),protocol:protocols[0].innerText};\n})()",
+            "timeout_ms": "{{validation_timeout_ms}}"
+          },
+          "save_as": "validation_data",
+          "timeout_ms": "{{validation_step_timeout_ms}}",
+          "private": true
+        },
+        {
+          "action": "call",
+          "title": "Перепроверить карточку перед сохранением результата",
+          "description": "Перепроверить карточку перед сохранением результата",
+          "params": {
+            "capture_key": false
+          },
+          "routine": "identity",
+          "private": true
+        },
+        {
+          "action": "compute",
+          "title": "Сформировать имя артефакта",
+          "description": "Сформировать имя артефакта",
+          "params": {
+            "expression": "'validation-'+context.plan.authority+'-'+context.report_index+'-'+Date.now()+'.txt'"
+          },
+          "save_as": "protocol_filename",
+          "private": true
+        },
+        {
+          "action": "artifact_write",
+          "title": "Сохранить текст проверки на УН",
+          "description": "Сохранить текст проверки на УН",
+          "params": {
+            "filename": "{{protocol_filename}}",
+            "text": "{{validation_data.protocol}}",
+            "mime_type": "text/plain"
+          },
+          "save_as": "protocol_artifact",
+          "private": true
+        },
+        {
+          "action": "compute",
+          "title": "Сохранить результат проверки",
+          "description": "Сохранить результат проверки",
+          "params": {
+            "expression": "({...context.report,validation_result:context.validation_data.status,protocol:context.protocol_artifact,state:context.validation_data.status===context.ui.validation_success_text?'validated':'validation_failed'})"
+          },
+          "save_as": "report",
+          "private": true
+        },
+        {
+          "action": "call",
+          "title": "store_report",
+          "description": "store_report",
+          "params": {},
+          "routine": "store_report",
+          "private": true
+        }
+      ],
+      "result": [
+        {
+          "action": "compute",
+          "title": "Сформировать результат для 1С",
+          "description": "Сформировать результат для 1С",
+          "params": {
+            "expression": "(() => {\n const reports=context.reports||[],plans=context.plans||[];\n const state=context.result_state || (context.mode==='preflight'?'preflight_completed':reports.some(r=>r.state==='validation_failed')?'validation_failed':reports.length&&reports.every(r=>r.state==='archived')?'sent':'validated_not_sent');\n return {state,inn:context.inn,authority:plans.length===1?plans[0].authority:null,mode:context.mode,\n authorities:plans.map(p=>{const items=reports.filter(r=>r.authority===p.authority);return {authority:p.authority,prefixes:p.prefixes,state:context.mode==='preflight'&& !context.result_state?'preflight_completed':items.some(r=>r.state==='validation_failed')?'validation_failed':items.length&&items.every(r=>r.state==='archived')?'sent':context.result_state||'validated_not_sent',report_count:items.length};}),\n reports:reports.map(r=>({authority:r.authority,file_name:r.filename,sha256:r.sha256,state:r.state,load_datetime:r.load_datetime||null,validation_result:r.validation_result,file_selection_verified:!!r.file_selection_verified,report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,sbis_status:r.sbis_status,archived_path:r.archived_path||null})),phases:context.phases||[]};\n})()"
+          },
+          "save_as": "Rezult_1",
+          "private": true
+        }
+      ]
     },
     "steps": [
       {
-        "action": "check_ip",
-        "title": "Сверить внешний IP с настройкой УН",
-        "description": "Получает внешний IP через ipify и сравнивает его с ip_adress из настроек IP-монитора УН. При несовпадении или ошибке проверки прекращает выполнение."
-      },
-      {
-        "action": "launch_browser",
-        "title": "Запустить браузер",
-        "description": "Запускает браузер, настроенный на УН, и создаёт одну сессию для всех последующих браузерных этапов."
-      },
-      {
-        "action": "navigate",
-        "title": "Открыть страницу входа",
-        "timeout_ms": 100000,
+        "action": "set",
+        "title": "Обновить переменные сценария",
+        "description": "Обновить переменные сценария",
         "params": {
-          "url": "{{login_url}}"
+          "reports": [],
+          "phases": [],
+          "submission_started": false,
+          "result_state": null
         },
-        "description": "Открывает login_url и проверяет, что браузер не показал страницу сетевой ошибки. Допускает до трёх попыток перехода при сбросе соединения."
+        "private": true
       },
       {
-        "action": "auth_ecp",
-        "title": "Войти по ЭЦП",
-        "timeout_ms": 120000,
+        "action": "compute",
+        "title": "Проверить параметры и UI-привязки всех ведомств до запуска",
+        "description": "Проверить параметры и UI-привязки всех ведомств до запуска",
         "params": {
-          "steps": [
+          "expression": "(() => {\n const bad = message => { throw Object.assign(new Error(message),{code:'MISSING_PARAMETER'}); };\n if (!['preflight','validate_only','send'].includes(context.mode)) bad('Некорректный mode');\n if (!/^\\d{10}(\\d{2})?$/.test(context.inn||'')) bad('Требуется полный ИНН организации');\n if (context.certificate_inn != null && !/^\\d{10}(\\d{2})?$/.test(context.certificate_inn)) bad('Некорректный certificate_inn');\n const plans=context.authority_prefixes == null ? [{authority:context.authority,prefixes:context.prefixes}] : context.authority_prefixes;\n if (!Array.isArray(plans) || !plans.length || plans.length>3) bad('Требуется от одного до трёх ведомств');\n const seen=new Set();\n return plans.map(plan=>{\n  if (!['FNS','SFR','ROSSTAT'].includes(plan.authority) || seen.has(plan.authority)) bad('Неизвестное или повторное ведомство');\n  seen.add(plan.authority);\n  if (!Array.isArray(plan.prefixes) || !plan.prefixes.length || plan.prefixes.some(p=>typeof p!=='string'||!p.trim())) bad('Не заданы префиксы файлов');\n  const ui={...context.ui,...(plan.ui||{})};\n  const required=['organization_selector','report_scope_selector','report_key_expression','validation_status_selector','protocol_selector','validation_success_text','validation_failure_text'];\n  if(context.mode==='send'&&context.submit_enabled===true)required.push('sent_status_selector');\n  const missing=context.mode==='preflight'?[]:required.filter(k=>!ui[k]);\n  if(context.mode!=='preflight')for(const k of ['upload_steps','validate_steps',...(context.mode==='send'&&context.submit_enabled===true?['reopen_steps','submit_steps']:[])])if(!Array.isArray(ui[k])||!ui[k].length)missing.push(k);\n  if(!ui.authority_paths?.[plan.authority])missing.push('authority_paths');\n  if(missing.length)throw Object.assign(new Error('Не настроены UI-привязки: '+missing.join(', ')),{code:'UI_BINDING_REQUIRED'});\n  return {...plan,ui};\n });\n})()"
+        },
+        "save_as": "plans",
+        "private": true
+      },
+      {
+        "action": "compute",
+        "title": "Вычислить тайм-аут submit",
+        "description": "Добавить запас к ожиданию, заданному индивидуальным параметром.",
+        "params": {
+          "expression": "(() => {const t=context.submit_timeout_ms;if(!Number.isInteger(t)||t<1||t>900000)throw Object.assign(new Error('Некорректный тайм-аут'),{code:'MISSING_PARAMETER'});return t+5000;})()"
+        },
+        "save_as": "submit_step_timeout_ms",
+        "private": true
+      },
+      {
+        "action": "compute",
+        "title": "Вычислить тайм-аут validation",
+        "description": "Добавить запас к ожиданию, заданному индивидуальным параметром.",
+        "params": {
+          "expression": "(() => {const t=context.validation_timeout_ms;if(!Number.isInteger(t)||t<1||t>900000)throw Object.assign(new Error('Некорректный тайм-аут'),{code:'MISSING_PARAMETER'});return t+5000;})()"
+        },
+        "save_as": "validation_step_timeout_ms",
+        "private": true
+      },
+      {
+        "action": "system_ip_check",
+        "title": "Проверить внешний IP по настройкам УН",
+        "description": "Проверить внешний IP по настройкам УН",
+        "params": {},
+        "save_as": "ip_check"
+      },
+      {
+        "action": "files_list",
+        "title": "Получить файлы каталога с контрольными суммами",
+        "description": "Получить файлы каталога с контрольными суммами",
+        "params": {
+          "directory": "{{root_dir}}"
+        },
+        "save_as": "directory_files",
+        "private": true
+      },
+      {
+        "action": "compute",
+        "title": "Выбрать последний XML для каждого префикса всех ведомств",
+        "description": "Выбрать последний XML для каждого префикса всех ведомств",
+        "params": {
+          "expression": "(() => {\n const selected=new Set(),reports=[];\n for(const plan of context.plans){const current=new Map();for(const prefix of plan.prefixes){\n  const files=context.directory_files.filter(f=>f.filename.toLowerCase().endsWith('.xml')&&f.filename.startsWith(prefix)).sort((a,b)=>b.modified_ms-a.modified_ms||a.filename.localeCompare(b.filename));\n  if(!files.length)throw Object.assign(new Error('Не найден XML для заданного префикса'),{code:'FILE_NOT_FOUND'});\n  current.set(files[0].path,files[0]);\n }\n if(context.allow_multiple===false&&current.size>1)throw Object.assign(new Error('Несколько файлов при allow_multiple=false'),{code:'MULTIPLE_FILES'});\n for(const file of current.values()){\n  const key=/^[a-z]:[\\\\/]/i.test(file.path)?file.path.toLowerCase():file.path;\n  if(selected.has(key))throw Object.assign(new Error('Один XML выбран для разных ведомств'),{code:'AUTHORITY_FILE_CONFLICT'});\n  selected.add(key);reports.push({...file,authority:plan.authority,state:'selected',validation_result:null,sbis_status:null});\n }}return reports;\n})()"
+        },
+        "save_as": "reports",
+        "private": true
+      },
+      {
+        "action": "browser_launch",
+        "title": "Создать общую сессию браузера",
+        "description": "Создать общую сессию браузера",
+        "params": {
+          "init_scripts": [
+            "(() => { try { Object.defineProperty(Navigator.prototype, 'registerProtocolHandler', {configurable:true,value:()=>{}}); } catch {} })()"
+          ]
+        }
+      },
+      {
+        "action": "call",
+        "title": "Открыть страницу входа",
+        "description": "Открыть страницу входа",
+        "params": {
+          "flow_steps": [
             {
-              "type": "waitForElement",
-              "selectors": [
-                [
-                  "text/По ключу подписи"
-                ]
-              ],
-              "visible": true,
-              "description": "Ожидает видимости способа входа «По ключу подписи» на странице авторизации."
-            },
-            {
-              "type": "click",
-              "selectors": [
-                [
-                  "text/По ключу подписи"
-                ]
-              ],
-              "offsetX": 85,
-              "offsetY": 15,
-              "description": "Открывает список доступных подписей либо запускает автоматический вход, если Saby предлагает единственную подпись. Выбор из списка выполняет обработчик auth_ecp по certificate_inn (по умолчанию inn)."
+              "type": "navigate",
+              "url": "{{login_url}}"
             }
           ]
         },
-        "description": "Открывает способ входа по ЭЦП. При появлении списка выбирает ровно одну пригодную подпись с certificate_inn (по умолчанию inn), исключая группу непригодных подписей. При отсутствии или неоднозначности совпадений останавливается. certificate_selection_required=true запрещает неподтверждённый автоматический вход. Затем выполняет certificate_after_steps и ждёт authenticated_url. При skip_security_setup=true пропускает необязательное создание логина/пароля. Первичная регистрация кабинета требует ручного завершения и возвращает AUTH_ACCOUNT_SETUP_REQUIRED."
+        "routine": "browser",
+        "private": true
       },
       {
-        "action": "navigate",
-        "title": "Открыть отчётность",
-        "timeout_ms": 100000,
+        "action": "call",
+        "title": "Открыть вход по ключу подписи",
+        "description": "Открыть вход по ключу подписи",
         "params": {
-          "url": "{{report_url}}"
+          "flow_steps": "{{auth_steps}}"
         },
-        "description": "Открывает report_url в той же авторизованной сессии и проверяет результат сетевого перехода."
+        "routine": "browser",
+        "private": true
       },
       {
-        "action": "select_authority",
-        "title": "Выбрать ведомство и подтвердить ИНН",
-        "description": "Для каждого элемента authority_prefixes открывает ведомство и выполняет этапы выбора файлов, загрузки, проверки, отправки и архивирования в одной авторизованной сессии. Сверяет организацию по ИНН заново при каждом переходе. В preflight отсутствие проверки ИНН отмечается partial; в рабочих режимах блокирует продолжение."
+        "action": "browser_wait",
+        "title": "Дождаться списка подписей либо завершения автоматического входа",
+        "description": "Дождаться списка подписей либо завершения автоматического входа",
+        "params": {
+          "expression": "document.body !== null && document.readyState !== 'loading' && ((() => {const rows=[...document.querySelectorAll(context.ui.certificate_rows_selector||'nosuchselector')].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');const login=[...document.querySelectorAll('*')].some(e=>e.children.length===0&&e.getClientRects().length&&e.innerText?.trim()==='По ключу подписи');return rows.length>0||(location.href.startsWith(context.authenticated_url)&&!login);})())",
+          "timeout_ms": 30000
+        },
+        "save_as": "auth_choice_ready",
+        "timeout_ms": 35000,
+        "private": true
       },
       {
-        "action": "find_files",
-        "title": "Найти последние XML по каждому префиксу",
-        "description": "До первой загрузки выбирает последний XML по каждому префиксу всех ведомств. Останавливается, если префикс не найден или один XML назначен нескольким ведомствам. В текущем блоке обрабатывает только файлы своего ведомства; учитывает allow_multiple отдельно для каждого ведомства."
+        "action": "browser_eval",
+        "title": "Проверить наличие списка подписей",
+        "description": "Проверить наличие списка подписей",
+        "params": {
+          "expression": "[...document.querySelectorAll(context.ui.certificate_rows_selector||'nosuchselector')].some(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')"
+        },
+        "save_as": "has_certificate_rows",
+        "private": true
       },
       {
-        "action": "upload_files",
-        "title": "Загрузить и проверить каждый XML в отдельной карточке",
-        "timeout_ms": 900000,
-        "description": "Для каждого XML проверяет неизменность файла, отсутствие ранее открытой карточки, выполняет ui.upload_steps и подтверждает исходное имя и полный путь XML в файловом диалоге. В новой карточке сверяет полный ИНН и фиксирует её ключ; при последующих проверках требует тот же ключ. Запускает проверку и сохраняет текст протокола. В preflight этап пропускается."
+        "action": "if",
+        "title": "Выполнить условную ветку",
+        "description": "Выполнить условную ветку",
+        "params": {
+          "condition": "{{has_certificate_rows}}"
+        },
+        "then": [
+          {
+            "action": "browser_eval",
+            "title": "Выбрать ровно одну пригодную ЭЦП по полному ИНН",
+            "description": "Выбрать ровно одну пригодную ЭЦП по полному ИНН",
+            "params": {
+              "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden', inn=context.certificate_inn||context.inn;\n const rows=[...document.querySelectorAll(context.ui.certificate_rows_selector)].filter(e=>visible(e)&&!e.closest(context.ui.certificate_unusable_selector||'.controls-SpoilerView,[aria-disabled=true],[disabled]')&&!e.querySelector('[aria-disabled=true],[disabled]'));\n const matches=rows.filter(e=>new RegExp('(^|[^0-9])'+inn+'([^0-9]|$)').test(e.innerText));\n if(matches.length!==1)throw Object.assign(new Error(matches.length?'Несколько пригодных подписей с нужным ИНН':'Нет пригодной подписи с нужным ИНН'),{code:matches.length?'CERTIFICATE_AMBIGUOUS':'CERTIFICATE_NOT_FOUND'});\n matches[0].click();return {certificate_selected:true,certificate_inn:inn,eligible_certificate_count:rows.length};\n})()"
+            },
+            "save_as": "certificate",
+            "private": true
+          }
+        ],
+        "else": [
+          {
+            "action": "compute",
+            "title": "Проверить разрешение автоматического входа",
+            "description": "Проверить разрешение автоматического входа",
+            "params": {
+              "expression": "context.certificate_selection_required !== true"
+            },
+            "save_as": "automatic_login_allowed",
+            "private": true
+          },
+          {
+            "action": "assert",
+            "title": "Требуется явный выбор сертификата",
+            "description": "Требуется явный выбор сертификата",
+            "params": {
+              "condition": "{{automatic_login_allowed}}",
+              "error_code": "CERTIFICATE_NOT_VERIFIED",
+              "message": "Требуется явный выбор сертификата"
+            }
+          }
+        ]
       },
       {
-        "action": "validate_report",
-        "title": "Проверить результаты и наличие протоколов",
-        "description": "Проверяет совокупный результат индивидуальных проверок отчётов: каждый файл должен иметь состояние validated и сохранённый протокол, полученные на предыдущем этапе. При ошибках отмечает validation_failed и не разрешает отправку; в preflight пропускается."
+        "action": "browser_wait",
+        "title": "Дождаться входа или первичной настройки кабинета",
+        "description": "Дождаться входа или первичной настройки кабинета",
+        "params": {
+          "expression": "document.body !== null && document.readyState !== 'loading' && (location.href.startsWith(context.authenticated_url)||((document.body?.innerText||'').includes('Настройка безопасности'))||((document.body?.innerText||'').includes('Регистрация ИП'))||((document.body?.innerText||'').includes('Регистрация организации')))",
+          "timeout_ms": 30000
+        },
+        "timeout_ms": 35000,
+        "private": true
       },
       {
-        "action": "conditional_submit",
-        "title": "Отправить только проверенные отчёты",
-        "timeout_ms": 900000,
-        "description": "В режиме send при submit_enabled=true и успешной проверке всех файлов текущего ведомства повторно открывает и проверяет каждую карточку, выполняет шаги отправки и ждёт точного статуса «Отправлен». При неопределённом исходе требуется сверка с СБИС; автоматический повтор задания запрещён."
+        "action": "call",
+        "title": "Выполнить дополнительные шаги после выбора ЭЦП",
+        "description": "Выполнить дополнительные шаги после выбора ЭЦП",
+        "params": {
+          "flow_steps": "{{ui.certificate_after_steps}}"
+        },
+        "routine": "browser",
+        "private": true
       },
       {
-        "action": "move_files",
-        "title": "Архивировать только подтверждённо отправленные файлы",
-        "description": "Только после подтверждения отправки всех файлов текущего ведомства копирует протоколы в loaded_dir и переносит исходные XML, повторно проверяя SHA-256. Существующие файлы архива не перезаписывает. Без подтверждения отправки этап пропускается."
+        "action": "browser_eval",
+        "title": "Определить необходимость первичной настройки",
+        "description": "Определить необходимость первичной настройки",
+        "params": {
+          "expression": "({security:(document.body?.innerText||'').includes('Настройка безопасности')&&!location.href.startsWith(context.authenticated_url),registration:((document.body?.innerText||'').includes('Регистрация ИП')||(document.body?.innerText||'').includes('Регистрация организации'))&&!location.href.startsWith(context.authenticated_url)})"
+        },
+        "save_as": "setup",
+        "private": true
       },
       {
-        "action": "return_result",
-        "title": "Сформировать результат для 1С",
-        "description": "Формирует общий Rezult_1 с ИНН, режимом, состояниями ведомств в authorities, файлами и этапами с полем authority. Сохраняет частичные результаты при ошибке; последующие ведомства остаются pending, если выполнение прервано."
+        "action": "if",
+        "title": "Выполнить условную ветку",
+        "description": "Выполнить условную ветку",
+        "params": {
+          "condition": "{{setup.security}}"
+        },
+        "then": [
+          {
+            "action": "assert",
+            "title": "Пропуск настройки безопасности не разрешён",
+            "description": "Пропуск настройки безопасности не разрешён",
+            "params": {
+              "condition": "{{skip_security_setup}}",
+              "error_code": "AUTH_SECURITY_SETUP_REQUIRED",
+              "message": "Пропуск настройки безопасности не разрешён"
+            }
+          },
+          {
+            "action": "call",
+            "title": "Пропустить необязательное создание логина и пароля",
+            "description": "Пропустить необязательное создание логина и пароля",
+            "params": {
+              "flow_steps": [
+                {
+                  "type": "waitForElement",
+                  "selectors": [
+                    [
+                      "text/Пропустить"
+                    ]
+                  ],
+                  "visible": true
+                },
+                {
+                  "type": "click",
+                  "selectors": [
+                    [
+                      "text/Пропустить"
+                    ]
+                  ],
+                  "offsetX": 55,
+                  "offsetY": 20
+                }
+              ]
+            },
+            "routine": "browser",
+            "private": true
+          }
+        ],
+        "else": []
+      },
+      {
+        "action": "browser_wait",
+        "title": "Дождаться кабинета после настройки",
+        "description": "Дождаться кабинета после настройки",
+        "params": {
+          "expression": "document.body !== null && document.readyState !== 'loading' && (location.href.startsWith(context.authenticated_url)||(document.body?.innerText||'').includes('Регистрация ИП')||(document.body?.innerText||'').includes('Регистрация организации'))",
+          "timeout_ms": 30000
+        },
+        "timeout_ms": 35000,
+        "private": true
+      },
+      {
+        "action": "browser_eval",
+        "title": "Проверить завершение регистрации кабинета",
+        "description": "Проверить завершение регистрации кабинета",
+        "params": {
+          "expression": "!((document.body?.innerText||'').includes('Регистрация ИП')||(document.body?.innerText||'').includes('Регистрация организации'))||location.href.startsWith(context.authenticated_url)"
+        },
+        "save_as": "account_ready",
+        "private": true
+      },
+      {
+        "action": "assert",
+        "title": "Требуется ручная первичная регистрация кабинета",
+        "description": "Требуется ручная первичная регистрация кабинета",
+        "params": {
+          "condition": "{{account_ready}}",
+          "error_code": "AUTH_ACCOUNT_SETUP_REQUIRED",
+          "message": "Требуется ручная первичная регистрация кабинета"
+        }
+      },
+      {
+        "action": "call",
+        "title": "Зафиксировать вход",
+        "description": "Зафиксировать вход",
+        "params": {
+          "phase_data": {
+            "name": "auth_ecp",
+            "status": "verified"
+          }
+        },
+        "routine": "phase",
+        "private": true
+      },
+      {
+        "action": "call",
+        "title": "Открыть отчётность",
+        "description": "Открыть отчётность",
+        "params": {
+          "flow_steps": [
+            {
+              "type": "navigate",
+              "url": "{{report_url}}"
+            }
+          ]
+        },
+        "routine": "browser",
+        "private": true
+      },
+      {
+        "action": "for_each",
+        "title": "Обойти ведомства в общей авторизованной сессии",
+        "description": "Обойти ведомства в общей авторизованной сессии",
+        "params": {
+          "items": "{{plans}}"
+        },
+        "as": "plan",
+        "steps": [
+          {
+            "action": "set",
+            "title": "Обновить переменные сценария",
+            "description": "Обновить переменные сценария",
+            "params": {
+              "ui": "{{plan.ui}}"
+            },
+            "private": true
+          },
+          {
+            "action": "compute",
+            "title": "Сформировать адрес ведомства",
+            "description": "Сформировать адрес ведомства",
+            "params": {
+              "expression": "context.report_url.replace(/\\/$/,'')+context.ui.authority_paths[context.plan.authority]"
+            },
+            "save_as": "authority_url",
+            "private": true
+          },
+          {
+            "action": "call",
+            "title": "Открыть выбранное ведомство",
+            "description": "Открыть выбранное ведомство",
+            "params": {
+              "flow_steps": [
+                {
+                  "type": "navigate",
+                  "url": "{{authority_url}}"
+                }
+              ]
+            },
+            "routine": "browser",
+            "private": true
+          },
+          {
+            "action": "call",
+            "title": "Дождаться раздела ведомства",
+            "description": "Дождаться раздела ведомства",
+            "params": {
+              "flow_steps": "{{ui.authority_steps}}"
+            },
+            "routine": "browser",
+            "private": true
+          },
+          {
+            "action": "call",
+            "title": "Открыть реквизиты организации",
+            "description": "Открыть реквизиты организации",
+            "params": {
+              "flow_steps": "{{ui.organization_steps}}"
+            },
+            "routine": "browser",
+            "private": true
+          },
+          {
+            "action": "browser_wait",
+            "title": "Сверить полный ИНН организации",
+            "description": "Сверить полный ИНН организации",
+            "params": {
+              "expression": "(() => {const roots=[...document.querySelectorAll(context.ui.organization_selector)].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');return roots.length===1&&new RegExp('(^|[^0-9])'+context.inn+'([^0-9]|$)').test(roots[0].innerText);})()",
+              "timeout_ms": 30000,
+              "error_code": "ORGANIZATION_NOT_VERIFIED",
+              "message": "Сверить полный ИНН организации"
+            },
+            "timeout_ms": 35000,
+            "private": true
+          },
+          {
+            "action": "call",
+            "title": "Вернуться в ведомство после проверки организации",
+            "description": "Вернуться в ведомство после проверки организации",
+            "params": {
+              "flow_steps": [
+                {
+                  "type": "navigate",
+                  "url": "{{authority_url}}"
+                }
+              ]
+            },
+            "routine": "browser",
+            "private": true
+          },
+          {
+            "action": "call",
+            "title": "Дождаться раздела отчётности",
+            "description": "Дождаться раздела отчётности",
+            "params": {
+              "flow_steps": "{{ui.authority_steps}}"
+            },
+            "routine": "browser",
+            "private": true
+          },
+          {
+            "action": "call",
+            "title": "Зафиксировать ведомство и организацию",
+            "description": "Зафиксировать ведомство и организацию",
+            "params": {
+              "phase_data": {
+                "name": "select_authority",
+                "status": "verified",
+                "authority": "{{plan.authority}}",
+                "organization_verified": true,
+                "reports_section_verified": true
+              }
+            },
+            "routine": "phase",
+            "private": true
+          },
+          {
+            "action": "compute",
+            "title": "Проверить рабочий режим",
+            "description": "Проверить рабочий режим",
+            "params": {
+              "expression": "context.mode !== 'preflight'"
+            },
+            "save_as": "work_mode",
+            "private": true
+          },
+          {
+            "action": "if",
+            "title": "Выполнить импорт и проверку только вне preflight",
+            "description": "Выполнить импорт и проверку только вне preflight",
+            "params": {
+              "condition": "{{work_mode}}"
+            },
+            "then": [
+              {
+                "action": "compute",
+                "title": "Получить выбранные XML текущего ведомства",
+                "description": "Получить выбранные XML текущего ведомства",
+                "params": {
+                  "expression": "context.reports.filter(r=>r.authority===context.plan.authority)"
+                },
+                "save_as": "current_reports",
+                "private": true
+              },
+              {
+                "action": "for_each",
+                "title": "Загрузить и проверить каждый самостоятельный XML",
+                "description": "Загрузить и проверить каждый самостоятельный XML",
+                "params": {
+                  "items": "{{current_reports}}"
+                },
+                "as": "report",
+                "steps": [
+                  {
+                    "action": "set",
+                    "title": "Обновить переменные сценария",
+                    "description": "Обновить переменные сценария",
+                    "params": {
+                      "file_name": "{{report.filename}}",
+                      "file_path": "{{report.path}}"
+                    },
+                    "private": true
+                  },
+                  {
+                    "action": "call",
+                    "title": "Открыть раздел перед каждым самостоятельным XML",
+                    "description": "Открыть раздел перед каждым самостоятельным XML",
+                    "params": {
+                      "flow_steps": [
+                        {
+                          "type": "navigate",
+                          "url": "{{authority_url}}"
+                        }
+                      ]
+                    },
+                    "routine": "browser",
+                    "private": true
+                  },
+                  {
+                    "action": "call",
+                    "title": "Дождаться раздела перед импортом",
+                    "description": "Дождаться раздела перед импортом",
+                    "params": {
+                      "flow_steps": "{{ui.authority_steps}}"
+                    },
+                    "routine": "browser",
+                    "private": true
+                  },
+                  {
+                    "action": "browser_eval",
+                    "title": "Проверить отсутствие открытой карточки",
+                    "description": "Проверить отсутствие открытой карточки",
+                    "params": {
+                      "expression": "![...document.querySelectorAll(context.ui.report_scope_selector)].some(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')"
+                    },
+                    "save_as": "no_open_card",
+                    "private": true
+                  },
+                  {
+                    "action": "assert",
+                    "title": "Перед импортом не должно быть открытой карточки",
+                    "description": "Перед импортом не должно быть открытой карточки",
+                    "params": {
+                      "condition": "{{no_open_card}}",
+                      "error_code": "REPORT_IDENTITY_MISMATCH",
+                      "message": "Перед импортом не должно быть открытой карточки"
+                    }
+                  },
+                  {
+                    "action": "file_verify",
+                    "title": "Проверить неизменность выбранного XML",
+                    "description": "Проверить неизменность выбранного XML",
+                    "params": {
+                      "file": "{{report}}"
+                    },
+                    "private": true
+                  },
+                  {
+                    "action": "compute",
+                    "title": "Подготовить шаги открытия файлового диалога",
+                    "description": "Подготовить шаги открытия файлового диалога",
+                    "params": {
+                      "expression": "context.ui.upload_steps.slice(0,-2)"
+                    },
+                    "save_as": "picker_steps",
+                    "private": true
+                  },
+                  {
+                    "action": "call",
+                    "title": "Открыть папку загрузки",
+                    "description": "Открыть папку загрузки",
+                    "params": {
+                      "flow_steps": "{{picker_steps}}"
+                    },
+                    "routine": "browser",
+                    "private": true
+                  },
+                  {
+                    "action": "call",
+                    "title": "Перейти в заданный подкаталог файлового диалога",
+                    "description": "Перейти в заданный подкаталог файлового диалога",
+                    "params": {
+                      "flow_steps": "{{upload_directory_steps}}"
+                    },
+                    "routine": "browser",
+                    "private": true
+                  },
+                  {
+                    "action": "compute",
+                    "title": "Подготовить ожидание строки XML",
+                    "description": "Подготовить ожидание строки XML",
+                    "params": {
+                      "expression": "context.ui.upload_steps.slice(-2,-1)"
+                    },
+                    "save_as": "file_row_wait_steps",
+                    "private": true
+                  },
+                  {
+                    "action": "call",
+                    "title": "Дождаться выбранного XML в текущей папке",
+                    "description": "Дождаться выбранного XML в текущей папке",
+                    "params": {
+                      "flow_steps": "{{file_row_wait_steps}}"
+                    },
+                    "routine": "browser",
+                    "private": true
+                  },
+                  {
+                    "action": "browser_eval",
+                    "title": "Сверить единственный XML по имени и полному пути",
+                    "description": "Сверить единственный XML по имени и полному пути",
+                    "params": {
+                      "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';\n const rows=[...document.querySelectorAll('[data-minicard-name]')].filter(e=>visible(e)&&e.getAttribute('data-minicard-name')===context.report.filename);\n const normalize=value=>{let r=String(value||'').replace(/\\\\/g,'/');if(r.startsWith('file:///')){try{r=decodeURIComponent(r.slice(7));}catch{return null;}}if(/^\\/[a-z]:\\//i.test(r))r=r.slice(1);return /^[a-z]:\\//i.test(r)?r.toLowerCase():r;};\n if(rows.length!==1||!rows[0].getAttribute('data-minicard-path')||normalize(rows[0].getAttribute('data-minicard-path'))!==normalize(context.report.path))throw Object.assign(new Error('Не подтверждён единственный файл по имени и полному пути'),{code:'FILE_SELECTION_MISMATCH'});\n return true;\n})()"
+                    },
+                    "save_as": "file_verified",
+                    "private": true
+                  },
+                  {
+                    "action": "compute",
+                    "title": "Зафиксировать подтверждение файла",
+                    "description": "Зафиксировать подтверждение файла",
+                    "params": {
+                      "expression": "({...context.report,file_selection_verified:context.file_verified})"
+                    },
+                    "save_as": "report",
+                    "private": true
+                  },
+                  {
+                    "action": "call",
+                    "title": "store_report",
+                    "description": "store_report",
+                    "params": {},
+                    "routine": "store_report",
+                    "private": true
+                  },
+                  {
+                    "action": "compute",
+                    "title": "Подготовить однократный выбор XML",
+                    "description": "Подготовить однократный выбор XML",
+                    "params": {
+                      "expression": "context.ui.upload_steps.slice(-1)"
+                    },
+                    "save_as": "select_file_steps",
+                    "private": true
+                  },
+                  {
+                    "action": "call",
+                    "title": "Импортировать выбранный XML один раз",
+                    "description": "Импортировать выбранный XML один раз",
+                    "params": {
+                      "flow_steps": "{{select_file_steps}}"
+                    },
+                    "routine": "browser",
+                    "private": true
+                  },
+                  {
+                    "action": "call",
+                    "title": "Подтвердить новую карточку по ИНН и ключу",
+                    "description": "Подтвердить новую карточку по ИНН и ключу",
+                    "params": {
+                      "capture_key": true
+                    },
+                    "routine": "identity",
+                    "private": true
+                  },
+                  {
+                    "action": "compute",
+                    "title": "Зафиксировать импорт",
+                    "description": "Зафиксировать импорт",
+                    "params": {
+                      "expression": "({...context.report,state:'uploaded',load_datetime:new Date().toISOString()})"
+                    },
+                    "save_as": "report",
+                    "private": true
+                  },
+                  {
+                    "action": "call",
+                    "title": "store_report",
+                    "description": "store_report",
+                    "params": {},
+                    "routine": "store_report",
+                    "private": true
+                  },
+                  {
+                    "action": "call",
+                    "title": "Проверить отчёт и сохранить текст результата",
+                    "description": "Проверить отчёт и сохранить текст результата",
+                    "params": {},
+                    "routine": "validate",
+                    "private": true
+                  }
+                ],
+                "index_as": "report_index",
+                "private": true
+              },
+              {
+                "action": "compute",
+                "title": "Разрешить отправку только после успешной проверки всех XML",
+                "description": "Разрешить отправку только после успешной проверки всех XML",
+                "params": {
+                  "expression": "context.mode==='send'&&context.submit_enabled===true&&context.reports.filter(r=>r.authority===context.plan.authority).every(r=>r.state==='validated'&&r.protocol)"
+                },
+                "save_as": "can_submit",
+                "private": true
+              },
+              {
+                "action": "if",
+                "title": "Выполнить отправку и архивирование только при всех подтверждениях",
+                "description": "Выполнить отправку и архивирование только при всех подтверждениях",
+                "params": {
+                  "condition": "{{can_submit}}"
+                },
+                "then": [
+                  {
+                    "action": "compute",
+                    "title": "Получить проверенные отчёты",
+                    "description": "Получить проверенные отчёты",
+                    "params": {
+                      "expression": "context.reports.filter(r=>r.authority===context.plan.authority)"
+                    },
+                    "save_as": "current_reports",
+                    "private": true
+                  },
+                  {
+                    "action": "for_each",
+                    "title": "Отправить каждую повторно проверенную карточку",
+                    "description": "Отправить каждую повторно проверенную карточку",
+                    "params": {
+                      "items": "{{current_reports}}"
+                    },
+                    "as": "report",
+                    "steps": [
+                      {
+                        "action": "set",
+                        "title": "Обновить переменные сценария",
+                        "description": "Обновить переменные сценария",
+                        "params": {
+                          "file_name": "{{report.filename}}",
+                          "file_path": "{{report.path}}"
+                        },
+                        "private": true
+                      },
+                      {
+                        "action": "call",
+                        "title": "Повторно открыть нужную карточку",
+                        "description": "Повторно открыть нужную карточку",
+                        "params": {
+                          "flow_steps": "{{ui.reopen_steps}}"
+                        },
+                        "routine": "browser",
+                        "private": true
+                      },
+                      {
+                        "action": "call",
+                        "title": "Повторно проверить точную карточку перед отправкой",
+                        "description": "Повторно проверить точную карточку перед отправкой",
+                        "params": {},
+                        "routine": "validate",
+                        "private": true
+                      },
+                      {
+                        "action": "compute",
+                        "title": "Проверить результат перед отправкой",
+                        "description": "Проверить результат перед отправкой",
+                        "params": {
+                          "expression": "context.report.state==='validated'"
+                        },
+                        "save_as": "valid_before_submit",
+                        "private": true
+                      },
+                      {
+                        "action": "assert",
+                        "title": "Проверка перед отправкой должна быть успешной",
+                        "description": "Проверка перед отправкой должна быть успешной",
+                        "params": {
+                          "condition": "{{valid_before_submit}}",
+                          "error_code": "VALIDATION_ERROR",
+                          "message": "Проверка перед отправкой должна быть успешной"
+                        }
+                      },
+                      {
+                        "action": "set",
+                        "title": "Обновить переменные сценария",
+                        "description": "Обновить переменные сценария",
+                        "params": {
+                          "submission_started": true
+                        },
+                        "private": true
+                      },
+                      {
+                        "action": "compute",
+                        "title": "Отметить начало необратимой отправки",
+                        "description": "Отметить начало необратимой отправки",
+                        "params": {
+                          "expression": "({...context.report,state:'submission_unknown'})"
+                        },
+                        "save_as": "report",
+                        "private": true
+                      },
+                      {
+                        "action": "call",
+                        "title": "store_report",
+                        "description": "store_report",
+                        "params": {},
+                        "routine": "store_report",
+                        "private": true
+                      },
+                      {
+                        "action": "call",
+                        "title": "Подписать и отправить по явно заданным шагам",
+                        "description": "Подписать и отправить по явно заданным шагам",
+                        "params": {
+                          "flow_steps": "{{ui.submit_steps}}"
+                        },
+                        "routine": "browser",
+                        "private": true
+                      },
+                      {
+                        "action": "browser_wait",
+                        "title": "Дождаться точного подтверждённого статуса отправки",
+                        "description": "Дождаться точного подтверждённого статуса отправки",
+                        "params": {
+                          "expression": "(() => {const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');return roots.length===1&&roots[0].querySelector(context.ui.sent_status_selector)?.innerText.trim()===context.ui.sent_status_text;})()",
+                          "timeout_ms": "{{submit_timeout_ms}}"
+                        },
+                        "timeout_ms": "{{submit_step_timeout_ms}}",
+                        "private": true
+                      },
+                      {
+                        "action": "compute",
+                        "title": "Зафиксировать подтверждённую отправку",
+                        "description": "Зафиксировать подтверждённую отправку",
+                        "params": {
+                          "expression": "({...context.report,state:'sent',sbis_status:context.ui.sent_status_text})"
+                        },
+                        "save_as": "report",
+                        "private": true
+                      },
+                      {
+                        "action": "call",
+                        "title": "store_report",
+                        "description": "store_report",
+                        "params": {},
+                        "routine": "store_report",
+                        "private": true
+                      }
+                    ],
+                    "index_as": "report_index",
+                    "private": true
+                  },
+                  {
+                    "action": "compute",
+                    "title": "Проверить отправку всех файлов ведомства",
+                    "description": "Проверить отправку всех файлов ведомства",
+                    "params": {
+                      "expression": "context.reports.filter(r=>r.authority===context.plan.authority).every(r=>r.state==='sent')"
+                    },
+                    "save_as": "all_sent",
+                    "private": true
+                  },
+                  {
+                    "action": "if",
+                    "title": "Выполнить условную ветку",
+                    "description": "Выполнить условную ветку",
+                    "params": {
+                      "condition": "{{all_sent}}"
+                    },
+                    "then": [
+                      {
+                        "action": "compute",
+                        "title": "compute",
+                        "description": "compute",
+                        "params": {
+                          "expression": "context.reports.filter(r=>r.authority===context.plan.authority)"
+                        },
+                        "save_as": "current_reports",
+                        "private": true
+                      },
+                      {
+                        "action": "for_each",
+                        "title": "Архивировать только подтверждённые отправки",
+                        "description": "Архивировать только подтверждённые отправки",
+                        "params": {
+                          "items": "{{current_reports}}"
+                        },
+                        "as": "report",
+                        "steps": [
+                          {
+                            "action": "compute",
+                            "title": "Сформировать путь архивного протокола",
+                            "description": "Сформировать путь архивного протокола",
+                            "params": {
+                              "expression": "context.loaded_dir+'/'+context.report.filename+'.'+context.job_id+'.validation.txt'"
+                            },
+                            "save_as": "archive_protocol_path",
+                            "private": true
+                          },
+                          {
+                            "action": "file_copy",
+                            "title": "Скопировать протокол без перезаписи",
+                            "description": "Скопировать протокол без перезаписи",
+                            "params": {
+                              "source": "{{report.protocol.local_path}}",
+                              "destination": "{{archive_protocol_path}}"
+                            },
+                            "private": true
+                          },
+                          {
+                            "action": "file_archive",
+                            "title": "Переместить неизменённый отправленный XML без перезаписи",
+                            "description": "Переместить неизменённый отправленный XML без перезаписи",
+                            "params": {
+                              "file": "{{report}}",
+                              "directory": "{{loaded_dir}}"
+                            },
+                            "save_as": "archive_path",
+                            "private": true
+                          },
+                          {
+                            "action": "compute",
+                            "title": "Зафиксировать архивирование",
+                            "description": "Зафиксировать архивирование",
+                            "params": {
+                              "expression": "({...context.report,state:'archived',archived_path:context.archive_path})"
+                            },
+                            "save_as": "report",
+                            "private": true
+                          },
+                          {
+                            "action": "call",
+                            "title": "store_report",
+                            "description": "store_report",
+                            "params": {},
+                            "routine": "store_report",
+                            "private": true
+                          }
+                        ],
+                        "private": true
+                      }
+                    ],
+                    "else": []
+                  }
+                ],
+                "else": []
+              }
+            ],
+            "else": []
+          }
+        ],
+        "private": true
+      },
+      {
+        "action": "call",
+        "title": "Сформировать итоговый результат для 1С",
+        "description": "Сформировать итоговый результат для 1С",
+        "params": {},
+        "routine": "result",
+        "private": true
+      },
+      {
+        "action": "browser_screenshot",
+        "title": "Сохранить итоговый диагностический снимок",
+        "description": "Сохранить итоговый диагностический снимок",
+        "params": {
+          "filename": "workflow-final.png"
+        }
+      },
+      {
+        "action": "compute",
+        "title": "Проверить наличие ошибок отчётности",
+        "description": "Проверить наличие ошибок отчётности",
+        "params": {
+          "expression": "context.Rezult_1.state==='validation_failed'"
+        },
+        "save_as": "validation_failed",
+        "private": true
+      },
+      {
+        "action": "if",
+        "title": "Выполнить условную ветку",
+        "description": "Выполнить условную ветку",
+        "params": {
+          "condition": "{{validation_failed}}"
+        },
+        "then": [
+          {
+            "action": "fail",
+            "title": "Вернуть ошибки проверки без отправки",
+            "description": "Вернуть ошибки проверки без отправки",
+            "params": {
+              "error_code": "VALIDATION_ERROR",
+              "message": "СБИС обнаружил ошибки отчётности"
+            }
+          }
+        ],
+        "else": []
       }
-    ]
+    ],
+    "on_error": [
+      {
+        "action": "compute",
+        "title": "Определить итог при ошибке",
+        "description": "Определить итог при ошибке",
+        "params": {
+          "expression": "context.error.code==='VALIDATION_ERROR'?'validation_failed':context.submission_started?'requires_reconciliation':'failed'"
+        },
+        "save_as": "result_state",
+        "private": true
+      },
+      {
+        "action": "call",
+        "title": "Сохранить подтверждённый частичный результат",
+        "description": "Сохранить подтверждённый частичный результат",
+        "params": {},
+        "routine": "result",
+        "private": true
+      }
+    ],
+    "output": {
+      "Rezult_1": "{{Rezult_1}}"
+    }
   }
 }

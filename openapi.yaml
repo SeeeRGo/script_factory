@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.6.13
+  version: 0.6.14
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
@@ -75,9 +75,12 @@ components:
           example: 250
     JsonScript:
       type: object
-      description: Обратно совместимый сценарий внутренних JSON Steps этапа 2.
+      description: Обратно совместимый сценарий внутренних JSON Steps этапа 2; демонстрационные действия не используются исполнителем json-workflow.
       required: [steps]
       properties:
+        format:
+          type: string
+          enum: [json-steps]
         context:
           type: object
           additionalProperties: true
@@ -130,40 +133,92 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ReplayStep'
-    SbisReportScript:
+    WorkflowStep:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [set, compute, assert, fail, if, for_each, call, wait, system_ip_check, files_list, file_verify, file_archive, file_copy, artifact_write, browser_launch, browser_steps, browser_eval, browser_wait, browser_screenshot]
+        title:
+          type: string
+        description:
+          type: string
+        params:
+          type: object
+          additionalProperties: true
+          description: Параметры универсальной операции; шаблоны {{variable}} берутся из context.
+        save_as:
+          type: string
+          description: Имя переменной для результата операции.
+        private:
+          type: boolean
+          description: Скрывает параметры и результат шага в журнале выполнения.
+        timeout_ms:
+          oneOf:
+            - type: integer
+              minimum: 1
+            - type: string
+              pattern: '^\{\{\s*[\w.]+\s*\}\}$'
+        as:
+          type: string
+          description: Переменная элемента for_each.
+        index_as:
+          type: string
+        routine:
+          type: string
+          description: Имя подпрограммы из routines для call.
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowStep'
+        then:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowStep'
+        else:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowStep'
+    JsonWorkflowScript:
       type: object
       required: [format, steps]
-      description: Полный процесс СБИС с реальным браузером и файловыми операциями. preflight проверяет подготовку; validate_only исключает отправку; send требует submit_enabled=true и настроенные UI-привязки.
+      description: Универсальный сценарий. Циклы, условия, проверки, выражения и браузерные шаги определены в JSON; обработчиков отдельных сайтов нет. Пример demo/sbis-report-full.json.
       properties:
         format:
           type: string
-          enum: [sbis-report]
+          enum: [json-workflow]
+        title:
+          type: string
         context:
           type: object
           additionalProperties: true
-          description: mode, inn, certificate_inn (по умолчанию inn), certificate_selection_required, authority_prefixes (массив объектов authority + prefixes + необязательный ui), root_dir, loaded_dir и ui. При authority_prefixes=null используются одиночные authority/prefixes. Шаблон из 12 этапов разворачивается в 24 шага для трёх ведомств. Пример demo/sbis-report-full.json.
+        default_step_timeout_ms:
+          type: integer
+          minimum: 1
+        routines:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              $ref: '#/components/schemas/WorkflowStep'
         steps:
           type: array
-          minItems: 12
-          maxItems: 12
           items:
-            type: object
-            required: [action]
-            properties:
-              action:
-                type: string
-                enum: [check_ip, launch_browser, navigate, auth_ecp, select_authority, find_files, upload_files, validate_report, conditional_submit, move_files, return_result]
-              params:
-                type: object
-                additionalProperties: true
-              timeout_ms:
-                type: integer
-                minimum: 1
+            $ref: '#/components/schemas/WorkflowStep'
+        on_error:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowStep'
+        output:
+          type: object
+          additionalProperties: true
+          description: Проекция итогового контекста, например Rezult_1; внутренние переменные не возвращаются.
     AnyScript:
       oneOf:
         - $ref: '#/components/schemas/PuppeteerReplayScript'
         - $ref: '#/components/schemas/JsonScript'
-        - $ref: '#/components/schemas/SbisReportScript'
+        - $ref: '#/components/schemas/JsonWorkflowScript'
     CallbackConfig:
       type: object
       required: [url]
@@ -719,6 +774,13 @@ paths:
                     type: array
                     items:
                       type: string
+                  formats:
+                    type: object
+                    description: Операции по форматам json-workflow и json-steps.
+                    additionalProperties:
+                      type: array
+                      items:
+                        type: string
   /jobs:
     get:
       tags: [Задания]

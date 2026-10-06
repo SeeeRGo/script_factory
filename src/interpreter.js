@@ -1,4 +1,4 @@
-import { validateSbisScript } from './sbis-schema.js';
+import { validateWorkflow } from './workflow-schema.js';
 import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
@@ -639,7 +639,8 @@ export function validateScript(script, registry = createDefaultStepRegistry()) {
   if (!Array.isArray(script.steps)) {
     return [{ path: 'script.steps', message: 'steps должен быть массивом' }];
   }
-  if (script.format === 'sbis-report') return validateSbisScript(script);
+  if (script.format === 'json-workflow') return validateWorkflow(script);
+  if (script.format && script.format !== 'puppeteer-replay' && script.format !== 'json-steps') return [{ path: 'script.format', message: 'Неподдерживаемый формат; используйте json-workflow, puppeteer-replay или json-steps' }];
   if (isPuppeteerReplayScript(script)) {
     try {
       const flow = parsePuppeteerReplay(script);
@@ -712,6 +713,7 @@ export function validateScript(script, registry = createDefaultStepRegistry()) {
 export function isPuppeteerReplayScript(script) {
   if (!script || typeof script !== 'object' || Array.isArray(script) || !Array.isArray(script.steps)) return false;
   if (script.format === 'puppeteer-replay') return true;
+  if (script.format) return false;
   return typeof script.title === 'string'
     && (script.steps.length === 0 || script.steps.some((step) => typeof step?.type === 'string'));
 }
