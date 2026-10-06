@@ -497,7 +497,7 @@ function restoreExecution(execution, script) {
   return {
     ...expected,
     ...execution,
-    steps: expected.steps.map((step, index) => ({ ...step, ...(execution.steps[index] ?? {}) }))
+    steps: (script?.format === 'sbis-report' ? execution.steps : expected.steps).map((step, index) => ({ ...step, ...(execution.steps[index] ?? {}) }))
   };
 }
 
@@ -1220,6 +1220,7 @@ function scheduleResultCallback(job, delayMs = 0) {
 function applyInterpreterEvent(job, event) {
   const execution = job.execution;
   if (event.type === 'script_started') {
+    if (event.execution_steps) Object.assign(execution, createExecution({ steps: event.execution_steps }));
     execution.status = 'running';
     execution.started_at = event.ts;
     execution.finished_at = null;

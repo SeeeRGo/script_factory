@@ -6,6 +6,8 @@ import puppeteer from 'puppeteer';
 import { createRunner, parse, PuppeteerRunnerExtension } from '@puppeteer/replay';
 import { StepRegistry, executeScript, InterpreterError, resolveTemplates, abortableDelay } from './interpreter.js';
 import { resolveBrowserExecutablePath } from './browser-replay.js';
+import { containsInn, selectSbisCertificate } from './sbis-identity.js';
+import { validateSbisScript } from './sbis-schema.js';
 import { checkExternalIp } from './system-checks.js';
 
 const fail = (code, message, details) => { throw new InterpreterError(code, message, { details }); };
@@ -62,33 +64,65 @@ export async function archiveReport(file, destination, roots) {
   return target;
 }
 
+// The twelve public stages are a template: stages 6–11 run once per authority.
+export function sbisAuthorityPlans(config) {
+  const plans = config.authority_prefixes == null
+    ? [{ authority: config.authority, prefixes: config.prefixes }]
+    : config.authority_prefixes;
+  if (!Array.isArray(plans) || !plans.length || plans.length > 3) {
+    fail('MISSING_PARAMETER', 'authority_prefixes: от одного до трёх ведомств');
+  }
+  const seen = new Set();
+  for (const plan of plans) {
+    if (!plan || !['FNS', 'SFR', 'ROSSTAT'].includes(plan.authority) || seen.has(plan.authority)) {
+      fail('MISSING_PARAMETER', 'Неизвестное или повторное ведомство в authority_prefixes');
+    }
+    if (!Array.isArray(plan.prefixes) || !plan.prefixes.length || plan.prefixes.some((p) => typeof p !== 'string' || !p.trim())) {
+      fail('MISSING_PARAMETER', `Не заданы префиксы XML для ${plan.authority}`);
+    }
+    seen.add(plan.authority);
+  }
+  return plans;
+}
+
 export async function executeSbisWorkflow(options) {
   const { script, signal, onEvent = () => {}, allowedRoots = [], artifactDirectory, publicArtifactBasePath, jobId } = options;
-  const config = { ...(script.context || {}), ...(options.context || {}) };
+  const schemaErrors = validateSbisScript(script);
+  if (schemaErrors.length) fail('INVALID_SCRIPT', 'Некорректный шаблон СБИС', { errors: schemaErrors });
+  const baseConfig = { ...(script.context || {}), ...(options.context || {}) };
+  const plans = sbisAuthorityPlans(baseConfig);
+  let config = { ...baseConfig, authority: plans[0].authority, prefixes: plans[0].prefixes };
   if (!['preflight', 'validate_only', 'send'].includes(config.mode)) fail('MISSING_PARAMETER', 'mode: preflight, validate_only или send');
   if (!/^\d{10}(\d{2})?$/.test(config.inn || '')) fail('MISSING_PARAMETER', 'Требуется ИНН организации');
+  if (config.certificate_inn != null && !/^\d{10}(\d{2})?$/.test(config.certificate_inn)) fail('MISSING_PARAMETER', 'Некорректный certificate_inn');
   if (!['FNS', 'SFR', 'ROSSTAT'].includes(config.authority)) fail('MISSING_PARAMETER', 'Неизвестное ведомство');
   const probe = config.mode === 'preflight';
-  const ui = config.ui || {};
-  if (!probe) {
+  let ui = config.ui || {};
+  for (const plan of plans) {
+    const binding = { ...(baseConfig.ui || {}), ...(plan.ui || {}) };
+    if (probe) continue;
+    const ui = binding;
     const required = ['organization_selector', 'report_scope_selector', 'validation_status_selector', 'protocol_selector', 'validation_success_text', 'validation_failure_text'];
     if (config.mode === 'send' && config.submit_enabled === true) required.push('sent_status_selector');
     const missing = required.filter((key) => !ui[key]);
     for (const key of ['upload_steps', 'validate_steps', ...(config.mode === 'send' && config.submit_enabled === true ? ['reopen_steps', 'submit_steps'] : [])]) {
       if (!Array.isArray(ui[key]) || !ui[key].length) missing.push(key);
     }
-    if (!ui.authority_paths?.[config.authority]) missing.push('authority_paths.' + config.authority);
-    if (missing.length) fail('UI_BINDING_REQUIRED', 'Не настроены обязательные привязки интерфейса настоящего отчёта', { missing });
+    if (!ui.authority_paths?.[plan.authority]) missing.push('authority_paths.' + plan.authority);
+    if (missing.length) fail('UI_BINDING_REQUIRED', 'Не настроены обязательные привязки интерфейса настоящего отчёта', { authority: plan.authority, missing });
   }
   let browser;
   let page;
   let activeSignal = signal;
-  const reports = [];
+  const allReports = [];
+  let reports = [];
+  let filesPrepared = false;
+  const authorityStates = new Map(plans.map((p) => [p.authority, 'pending']));
   const phases = [];
   let organizationVerified = false;
   let submissionStarted = false;
   const artifacts = [];
-  const phase = (name, status, details = {}) => { phases.push({ name, status, ...details }); return details; };
+  const phase = (name, status, details = {}) => { phases.push({ name, status, ...(['select_authority', 'find_files', 'upload_files', 'validate_report', 'conditional_submit', 'move_files'].includes(name) ? { authority: config.authority } : {}), ...details }); return details; };
   const requireValue = (value, name) => { if (!value) fail('UI_BINDING_REQUIRED', `Не настроен ${name}; требуется запись интерфейса настоящего отчёта`); return value; };
   const abort = () => { void browser?.close().catch(() => {}); };
   signal?.addEventListener('abort', abort, { once: true });
@@ -107,10 +141,36 @@ export async function executeSbisWorkflow(options) {
     if (!page || page.isClosed()) return;
     try { await artifact(`${name}.png`, await page.screenshot({ fullPage: true }), 'image/png'); } catch { /* Keep original failure. */ }
   };
+  const dismissHints = async () => {
+    for (const hint of ui.dismissible_popups || []) {
+      const scopes = await page.$$(hint.scope_selector);
+      try {
+        for (const scope of scopes) {
+          const matches = await scope.evaluate((e, text) => e.getClientRects().length > 0
+            && e.innerText.replace(/\s+/g, ' ').includes(text), hint.text);
+          if (!matches) continue;
+          const close = await scope.$(hint.close_selector);
+          if (!close) fail('UI_BINDING_REQUIRED', 'Не найдена кнопка закрытия настроенной подсказки');
+          try { await close.click(); } finally { await close.dispose(); }
+          await page.waitForFunction((selector, text) => ![...document.querySelectorAll(selector)].some(e =>
+            e.getClientRects().length > 0 && e.innerText.replace(/\s+/g, ' ').includes(text)),
+          { timeout: 5000, signal: activeSignal }, hint.scope_selector, hint.text);
+          phase('dismiss_popup', 'verified', { title: hint.text });
+        }
+      } finally { await Promise.all(scopes.map(scope => scope.dispose())); }
+    }
+  };
+  class SbisRunnerExtension extends PuppeteerRunnerExtension {
+    async beforeEachStep(step, recording) {
+      await super.beforeEachStep(step, recording);
+      guard();
+      await dismissHints();
+    }
+  }
   const flow = async (steps, context = {}) => {
     guard();
     const recording = parse(resolveTemplates({ title: 'SBIS phase', timeout: 30000, steps }, { ...config, ...context }));
-    const runner = await createRunner(recording, new PuppeteerRunnerExtension(browser, page, { timeout: 30000 }));
+    const runner = await createRunner(recording, new SbisRunnerExtension(browser, page, { timeout: 30000 }));
     const cancel = () => { runner.abort(); abort(); };
     activeSignal?.addEventListener('abort', cancel, { once: true });
     try { if (!await runner.run()) fail('CANCELLED', 'Браузерный этап отменён'); guard(); }
@@ -125,7 +185,7 @@ export async function executeSbisWorkflow(options) {
   const requireReportIdentity = async (r) => {
     const selector = resolveTemplates(requireValue(ui.report_scope_selector, 'ui.report_scope_selector'), { ...config, ...reportContext(r) });
     const text = await visibleText(selector);
-    if (!text.includes(config.inn) || !text.includes(r.filename)) {
+    if (!containsInn(text, config.inn) || !text.includes(r.filename)) {
       fail('REPORT_IDENTITY_MISMATCH', 'Карточка не подтверждает ИНН и имя текущего XML');
     }
     return selector;
@@ -173,10 +233,64 @@ export async function executeSbisWorkflow(options) {
   });
   register('auth_ecp', async ({ params }) => {
     await flow(requireValue(params.steps, 'auth_ecp.steps'));
+    let certificate = { certificate_selected: false };
+    if (ui.certificate_rows_selector) {
+      await page.waitForFunction((url, selector) => location.href.startsWith(url)
+        || [...document.querySelectorAll(selector)].some(e => e.getClientRects().length > 0),
+      { timeout: 30000, signal: activeSignal }, config.authenticated_url, ui.certificate_rows_selector);
+      if (!page.url().startsWith(config.authenticated_url)) {
+        try {
+          certificate = await selectSbisCertificate(page, { inn: config.certificate_inn || config.inn,
+            selector: ui.certificate_rows_selector, unusableSelector: ui.certificate_unusable_selector, signal: activeSignal });
+        } catch (error) {
+          if (['CERTIFICATE_NOT_FOUND', 'CERTIFICATE_AMBIGUOUS'].includes(error.code)) fail(error.code, error.message);
+          throw error;
+        }
+        phase('select_certificate', 'verified', certificate);
+      } else if (config.certificate_selection_required === true) {
+        fail('CERTIFICATE_NOT_VERIFIED', 'СБИС выполнил вход без явного выбора подписи; сертификат не подтверждён');
+      }
+    } else if (config.certificate_selection_required === true) fail('UI_BINDING_REQUIRED', 'Не настроен ui.certificate_rows_selector');
+    if (ui.certificate_after_steps?.length) await flow(ui.certificate_after_steps);
+    const waitForLoginOrSetup = () => page.waitForFunction((url) => location.href.startsWith(url)
+      || (document.body?.innerText || '').includes('Настройка безопасности')
+      || (document.body?.innerText || '').includes('Регистрация ИП')
+      || (document.body?.innerText || '').includes('Регистрация организации'),
+    { timeout: 30000, signal: activeSignal }, config.authenticated_url);
+    await waitForLoginOrSetup();
+    const setupState = () => page.evaluate(() => ({
+      security: (document.body?.innerText || '').includes('Настройка безопасности'),
+      registration: (document.body?.innerText || '').includes('Регистрация ИП') || (document.body?.innerText || '').includes('Регистрация организации'),
+    }));
+    let setup = await setupState();
+    if (setup.security && !page.url().startsWith(config.authenticated_url)) {
+      if (config.skip_security_setup !== true) {
+        phase('auth_ecp', 'partial', { authenticated: false, ...certificate, reason: 'security_setup_required' });
+        fail('AUTH_SECURITY_SETUP_REQUIRED', 'СБИС требует настройку безопасности; пропуск не разрешён параметром skip_security_setup');
+      }
+      await flow([{ type: 'waitForElement', selectors: [['text/Пропустить']], visible: true },
+        { type: 'click', selectors: [['text/Пропустить']], offsetX: 55, offsetY: 20 }]);
+      certificate.security_setup_skipped = true;
+      await page.waitForFunction((url) => location.href.startsWith(url)
+        || (document.body?.innerText || '').includes('Регистрация ИП') || (document.body?.innerText || '').includes('Регистрация организации'),
+      { timeout: 30000, signal: activeSignal }, config.authenticated_url);
+      setup = await setupState();
+    }
+    if (setup.registration && !page.url().startsWith(config.authenticated_url)) {
+      phase('auth_ecp', 'partial', { authenticated: false, ...certificate, reason: 'account_setup_required' });
+      fail('AUTH_ACCOUNT_SETUP_REQUIRED', 'Для выбранной подписи СБИС требует первичную регистрацию кабинета (телефон или почту)');
+    }
     await page.waitForFunction((url) => location.href.startsWith(url), { timeout: 30000, signal: activeSignal }, config.authenticated_url);
-    return phase('auth_ecp', 'verified', { authenticated: true });
+    return phase('auth_ecp', 'verified', { authenticated: true, ...certificate });
   });
-  register('select_authority', async () => {
+  register('select_authority', async ({ params }) => {
+    const plan = plans.find((p) => p.authority === params.authority);
+    config = { ...baseConfig, authority: plan.authority, prefixes: plan.prefixes };
+    ui = { ...(baseConfig.ui || {}), ...(plan.ui || {}) };
+    config.ui = ui;
+    reports = allReports.filter((r) => r.authority === config.authority);
+    organizationVerified = false;
+    authorityStates.set(config.authority, 'running');
     const authorityPath = ui.authority_paths?.[config.authority];
     if (authorityPath) await goTo(new URL(authorityPath, config.report_url).href);
     else await flow([clickText({ FNS: 'Налоговая', SFR: 'СФР', ROSSTAT: 'Статистика' }[config.authority])]);
@@ -187,18 +301,34 @@ export async function executeSbisWorkflow(options) {
     if (ui.organization_steps?.length) await flow(ui.organization_steps);
     if (ui.organization_selector) {
       const text = await visibleText(ui.organization_selector);
-      organizationVerified = text.includes(config.inn);
+      organizationVerified = containsInn(text, config.inn);
     }
-    await snapshot('authority');
+    await dismissHints();
+    await snapshot(`authority-${config.authority}`);
     if (!organizationVerified && !probe) fail('ORGANIZATION_NOT_VERIFIED', 'Не подтверждена выбранная организация по ИНН');
     return phase('select_authority', organizationVerified && authorityVerified ? 'verified' : 'partial', {
-      authority: config.authority, authority_selected: true, reports_section_verified: authorityVerified, organization_verified: organizationVerified,
+      authority: config.authority, current_url: page.url(), authority_selected: true, reports_section_verified: authorityVerified, organization_verified: organizationVerified,
       ...(!organizationVerified ? { reason: 'Не настроена проверка выбранной организации по ИНН' } : {}) });
   });
   register('find_files', async () => {
-    const files = await findLatestReports(config, allowedRoots);
-    reports.push(...files.map((file) => ({ ...file, state: 'selected', validation_result: null, sbis_status: null })));
-    return phase('find_files', 'verified', { found_files: files.map((f) => f.path) });
+    if (!filesPrepared) {
+      // Resolve every prefix before the first upload; reject cross-authority overlap.
+      const selected = new Set();
+      const prepared = [];
+      for (const plan of plans) {
+        const files = await findLatestReports({ ...baseConfig, prefixes: plan.prefixes }, allowedRoots);
+        for (const file of files) {
+          const key = process.platform === 'win32' ? file.path.toLowerCase() : file.path;
+          if (selected.has(key)) fail('AUTHORITY_FILE_CONFLICT', 'Один XML выбран для нескольких ведомств', { filename: file.filename });
+          selected.add(key);
+          prepared.push({ ...file, authority: plan.authority, state: 'selected', validation_result: null, sbis_status: null });
+        }
+      }
+      allReports.push(...prepared);
+      filesPrepared = true;
+    }
+    reports = allReports.filter((r) => r.authority === config.authority);
+    return phase('find_files', 'verified', { found_files: reports.map((f) => f.path) });
   });
   register('upload_files', async () => {
     if (probe) return phase('upload_files', 'skipped', { reason: 'preflight: реальная отчётная форма не передаётся' });
@@ -232,7 +362,7 @@ export async function executeSbisWorkflow(options) {
     const protocol = await visibleText(`${scope} ${protocolSelector}`);
     if (!protocol.trim()) fail('PROTOCOL_EMPTY', 'Пустой протокол проверки');
     r.validation_result = status;
-    r.protocol = await artifact(`validation-${reports.indexOf(r) + 1}-${Date.now()}.txt`, protocol, 'text/plain');
+    r.protocol = await artifact(`validation-${r.authority}-${allReports.indexOf(r) + 1}-${Date.now()}.txt`, protocol, 'text/plain');
     r.state = status === successText ? 'validated' : 'validation_failed';
   }
   register('validate_report', async () => {
@@ -267,8 +397,11 @@ export async function executeSbisWorkflow(options) {
     }
     return phase('conditional_submit', 'verified', { sent_count: reports.length });
   });
+  const completedState = (items) => probe ? 'preflight_completed' : items.some((r) => r.state === 'validation_failed') ? 'validation_failed'
+    : items.length && items.every((r) => r.state === 'archived') ? 'sent' : 'validated_not_sent';
   register('move_files', async () => {
     if (probe || !reports.length || reports.some((r) => r.state !== 'sent' || r.sbis_status !== 'Отправлен')) {
+      authorityStates.set(config.authority, completedState(reports));
       return phase('move_files', 'skipped', { reason: 'Нет подтверждения отправки всех файлов' });
     }
     const dir = await checkedPath(config.loaded_dir, allowedRoots, { directory: true });
@@ -280,21 +413,33 @@ export async function executeSbisWorkflow(options) {
       r.archived_protocol = protocolPath;
       r.state = 'archived';
     }
+    authorityStates.set(config.authority, completedState(reports));
     return phase('move_files', 'verified', { moved_count: reports.length });
   });
-  const resultFields = (state) => ({ state, inn: config.inn, authority: config.authority, mode: config.mode,
-    reports: reports.map((r) => ({ file_name: r.filename, sha256: r.sha256, state: r.state,
+  const resultFields = (state) => ({ state, inn: config.inn, authority: plans.length === 1 ? plans[0].authority : null, mode: config.mode,
+    authorities: plans.map((p) => ({ authority: p.authority, prefixes: p.prefixes, state: authorityStates.get(p.authority),
+      report_count: allReports.filter((r) => r.authority === p.authority).length })),
+    reports: allReports.map((r) => ({ authority: r.authority, file_name: r.filename, sha256: r.sha256, state: r.state,
       load_datetime: r.load_datetime || null, validation_result: r.validation_result,
       validation_protocol: r.protocol?.public_url || null, sbis_status: r.sbis_status,
       archived_path: r.archived_path || null })), phases });
   register('return_result', async () => {
-    const state = probe ? 'preflight_completed' : reports.some((r) => r.state === 'validation_failed') ? 'validation_failed'
-      : reports.every((r) => r.state === 'archived') ? 'sent' : 'validated_not_sent';
+    const state = completedState(allReports);
     phase('return_result', 'verified');
     return { Rezult_1: resultFields(state) };
   });
+  // Execute the expanded plan with the regular registry after validating the public template.
+  const executionScript = { ...script, format: undefined, steps: [
+    ...script.steps.slice(0, 5),
+    ...plans.flatMap((plan) => script.steps.slice(5, 11).map((step) => ({ ...step,
+      id: `${plan.authority}_${step.action}`, title: `${plan.authority}: ${step.title || step.action}`,
+      params: { ...(step.params || {}), authority: plan.authority },
+    }))),
+    script.steps[11]
+  ] };
   try {
-    const result = await executeScript({ script, registry, initialContext: config, signal, defaultStepTimeoutMs: 60000, onEvent });
+    const result = await executeScript({ script: executionScript, registry, initialContext: baseConfig, signal, defaultStepTimeoutMs: 60000,
+      onEvent: (event) => onEvent(event.type === 'script_started' ? { ...event, execution_steps: executionScript.steps } : event) });
     await snapshot('sbis-final');
     result.context.artifacts = artifacts;
     if (result.context.Rezult_1.state === 'validation_failed') {
@@ -305,6 +450,7 @@ export async function executeSbisWorkflow(options) {
     return result;
   } catch (error) {
     await snapshot('sbis-error');
+    if (authorityStates.get(config.authority) === 'running') authorityStates.set(config.authority, submissionStarted ? 'requires_reconciliation' : 'failed');
     error.retryable = false; // A job-level retry could duplicate a previously submitted report.
     error.partial_context = { ...(error.partial_context || {}), artifacts,
       Rezult_1: resultFields(submissionStarted ? 'requires_reconciliation' : error.code === 'VALIDATION_ERROR' ? 'validation_failed' : 'failed') };
