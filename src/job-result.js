@@ -7,7 +7,9 @@ export function serializeJobResult(result) {
     REZULT_KEY_PATTERN.test(key) && value !== null && typeof value === 'object' && !Array.isArray(value)
   ));
   const artifacts = (Array.isArray(result.artifacts) ? result.artifacts : [])
-    .map((artifact) => typeof artifact === 'string' ? artifact : artifact?.api_url)
-    .filter((artifact) => typeof artifact === 'string');
+    .map((artifact) => typeof artifact === 'string'
+      ? { filename: null, api_url: artifact }
+      : { filename: artifact?.filename ?? null, api_url: artifact?.api_url })
+    .filter((artifact) => typeof artifact.api_url === 'string');
   return { artifacts, ...Object.fromEntries(rezultEntries) };
 }

@@ -98,7 +98,7 @@ test('uses bounded Windows registry and macOS metadata probes without launching 
   }), '25.8.1.100');
 });
 
-test('IP helpers and authenticated endpoints use fresh settings and never expose addresses', async (t) => {
+test('IP helpers and authenticated endpoints return the actual IP only after successful verification', async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), 'system-checks-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const settingsPath = path.join(directory, 'settings.ini');
@@ -123,7 +123,7 @@ test('IP helpers and authenticated endpoints use fresh settings and never expose
     lookup.close();
   });
   const url = `http://127.0.0.1:${lookup.address().port}`;
-  assert.deepEqual(await checkExternalIp({ settingsPath, url }), { status: 'success' });
+  assert.deepEqual(await checkExternalIp({ settingsPath, url }), { status: 'success', ip: expectedIp });
   for (const [lookupMode, code] of [
     ['mismatch', 'IP_MISMATCH'], ['invalid', 'IP_LOOKUP_INVALID'], ['oversize', 'IP_LOOKUP_INVALID'],
     ['failure', 'IP_LOOKUP_FAILED'], ['timeout', 'IP_CHECK_TIMEOUT'], ['body-timeout', 'IP_CHECK_TIMEOUT']
@@ -166,13 +166,13 @@ test('IP helpers and authenticated endpoints use fresh settings and never expose
     assert.equal(response.status, status);
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const body = await response.json();
-    if (!code) assert.deepEqual(body, { status: 'success' });
+    if (!code) assert.deepEqual(body, { status: 'success', ip: expectedIp });
     else {
       assert.deepEqual(Object.keys(body), ['error']);
       assert.deepEqual(Object.keys(body.error), ['code', 'message']);
       assert.equal(body.error.code, code);
     }
-    assert.ok(!JSON.stringify(body).includes(expectedIp));
+    if (code) assert.ok(!JSON.stringify(body).includes(expectedIp));
     assert.ok(!JSON.stringify(body).includes(otherIp));
   };
   const beforeUnauthorized = calls;

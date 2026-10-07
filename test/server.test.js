@@ -595,9 +595,11 @@ test('executes a script through the API and exposes visual step state and logs',
   assert.ok(job.execution.steps.every((step) => step.status === 'success'));
   assert.deepEqual(job.execution.context.uploaded_files, ['FNS.xml']);
   assert.deepEqual(job.result.artifacts, [
-    `/api/v2/jobs/${jobId}/artifacts/receipt_1`
+    { filename: 'receipt.pdf', api_url: `/api/v2/jobs/${jobId}/artifacts/receipt_1` }
   ]);
   assert.deepEqual(Object.keys(job.result).filter((key) => key !== 'artifacts'), []);
+  const listing = await (await request('/api/v2/jobs')).json();
+  assert.deepEqual(listing.items.find(item => item.job_id === jobId).result.artifacts, job.result.artifacts);
 
   const logResponse = await request(`/api/v2/jobs/${jobId}/logs`);
   const logBody = await logResponse.json();
@@ -788,14 +790,14 @@ test('downloads, saves, verifies and opens the Stage 4 demo file', async () => {
   assert.match(job.execution.context.file_content, /Файл сохранён и открыт/);
   assert.match(job.execution.context.opened_url, /^file:/);
   assert.equal(job.result.artifacts.length, 2);
-  assert.ok(job.result.artifacts.every((item) => typeof item === 'string' && item.startsWith('/api/v2/jobs/')));
+  assert.ok(job.result.artifacts.every((item) => typeof item.filename === 'string' && item.api_url.startsWith('/api/v2/jobs/')));
 
-  for (const apiUrl of job.result.artifacts) {
+  for (const { api_url: apiUrl } of job.result.artifacts) {
     const artifactResponse = await request(apiUrl);
     assert.equal(artifactResponse.status, 200, apiUrl);
     assert.ok((await artifactResponse.arrayBuffer()).byteLength > 1000, apiUrl);
   }
-  const downloadedApiUrl = job.result.artifacts[0];
+  const downloadedApiUrl = job.result.artifacts[0].api_url;
   const downloadedResponse = await webRequest(`/artifacts/${jobId}/stage4-demo-document.html`);
   assert.equal(downloadedResponse.status, 200);
   assert.match(await downloadedResponse.text(), /DOWNLOAD → SAVE → VERIFY → OPEN/);
@@ -832,12 +834,12 @@ test('keeps partial artifacts and diagnostic logs after a controlled file-flow f
   assert.equal(job.error.code, 'VALIDATION_ERROR');
   assert.match(job.error.message, /download-save-open2/);
   assert.equal(job.result.artifacts.length, 2);
-  assert.ok(job.result.artifacts.every((item) => typeof item === 'string' && item.startsWith('/api/v2/jobs/')));
+  assert.ok(job.result.artifacts.every((item) => typeof item.filename === 'string' && item.api_url.startsWith('/api/v2/jobs/')));
 
   const callbackEvents = await request('/api/v2/demo/callback-events').then((eventResponse) => eventResponse.json());
   const callbackEvent = callbackEvents.items.find((event) => event.job.uid === uid);
   assert.equal(callbackEvent.job.error.code, 'VALIDATION_ERROR');
-  assert.equal(callbackEvent.job.result.artifacts.length, 2);
+  assert.deepEqual(callbackEvent.job.result.artifacts, job.result.artifacts);
 
   const errorLogs = await request(`/api/v2/jobs/${jobId}/logs?min_level=error`).then((logResponse) => logResponse.json());
   assert.ok(errorLogs.logs.length >= 1);
@@ -887,7 +889,7 @@ test('executes a local Puppeteer Replay mail fixture without external delivery',
   assert.equal(passwordStep.params.value, '••••••');
   assert.doesNotMatch(JSON.stringify(job), new RegExp(DEMO_MAIL_PASSWORD));
 
-  const screenshotApiUrl = job.result.artifacts[0];
+  const screenshotApiUrl = job.result.artifacts[0].api_url;
   assert.ok(typeof screenshotApiUrl === 'string' && screenshotApiUrl.startsWith('/api/v2/jobs/'), JSON.stringify(job.result));
   const screenshotResponse = await request(screenshotApiUrl);
   assert.equal(screenshotResponse.status, 200);
@@ -1042,7 +1044,7 @@ test('deletes a finished job together with its artifact files', async () => {
   assert.equal(job.status, 'success', JSON.stringify(job.error));
   assert.equal(job.result.artifacts.length, 1);
 
-  const artifactApiUrl = job.result.artifacts[0];
+  const artifactApiUrl = job.result.artifacts[0].api_url;
   const artifactResponse = await request(artifactApiUrl);
   assert.equal(artifactResponse.status, 200);
 

@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.6.16
+  version: 0.6.17
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
@@ -435,16 +435,25 @@ components:
       type: object
       nullable: true
       description: >-
-        Итог выполнения. artifacts содержит пути (api_url) всех сохранённых файлов
+        Итог выполнения. artifacts содержит объекты filename и api_url всех сохранённых файлов
         без привязки к результатам; Rezult_N — произвольные по составу поля
         для результата N, набор и количество зависят от сценария.
       required: [artifacts]
       properties:
         artifacts:
           type: array
-          description: Пути всех скачанных файлов; пустой массив, если сценарий не скачивает файлы.
+          description: Имена и API-ссылки всех сохранённых файлов; пустой массив, если артефактов нет.
           items:
-            type: string
+            type: object
+            required: [filename, api_url]
+            properties:
+              filename:
+                type: string
+                nullable: true
+                description: Имя с расширением; null только для старых результатов, сохранивших одну ссылку.
+              api_url:
+                type: string
+                description: Относительная ссылка скачивания с X-API-Key.
       additionalProperties:
         type: object
         description: Значение Rezult_N — произвольный JSON-объект результата N.
@@ -1177,7 +1186,7 @@ paths:
       summary: Проверить соответствие внешнего IP УН адресу из settings.ini
       description: >-
         Читает C:\_external ip monitor\settings.ini ([main] ip_adress), определяет
-        внешний адрес через сервис ipify и возвращает только статус проверки без значений IP.
+        внешний адрес через сервис ipify и возвращает статус проверки и полученный внешний IP.
       responses:
         "200":
           description: Проверка пройдена
@@ -1185,11 +1194,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [status]
+                required: [status, ip]
                 properties:
                   status:
                     type: string
                     enum: [success]
+                  ip:
+                    type: string
+                    description: Фактический внешний IP, полученный от ipify.
         "503":
           description: Проверка не пройдена
           content:

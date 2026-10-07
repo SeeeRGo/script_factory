@@ -87,7 +87,7 @@ export async function checkExternalIp({
       throw checkError('IP_LOOKUP_FAILED', 'Сервис определения внешнего IP недоступен');
     }
     if (actual !== expected) throw checkError('IP_MISMATCH', 'Внешний IP не совпадает с настройками IP-монитора');
-    return { status: 'success' };
+    return { status: 'success', ip: actual.replace(/^\[|\]$/g, '') };
   } catch (error) {
     if (controller.signal.aborted) throw checkError('IP_CHECK_TIMEOUT', 'Превышено время ожидания проверки IP');
     throw error;

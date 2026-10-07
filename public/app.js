@@ -212,19 +212,21 @@ function renderExecution(job = null, previewSteps = null) {
 
 function renderArtifacts(job) {
   const artifacts = (Array.isArray(job?.result?.artifacts) ? job.result.artifacts : [])
-    .filter((item) => typeof item === 'string');
+    .map((item) => typeof item === 'string' ? { api_url: item } : item)
+    .filter((item) => typeof item?.api_url === 'string');
   elements['artifact-section'].hidden = artifacts.length === 0;
   if (artifacts.length === 0) {
     elements.artifacts.replaceChildren();
     return;
   }
-  elements.artifacts.replaceChildren(...artifacts.map((apiUrl) => {
+  elements.artifacts.replaceChildren(...artifacts.map((artifact) => {
+    const apiUrl = artifact.api_url;
     const link = document.createElement('a');
     link.className = 'artifact-card';
     link.href = apiUrl;
     link.target = '_blank';
     link.rel = 'noreferrer';
-    const filename = decodeURIComponent(apiUrl.split('/').pop() || 'artifact');
+    const filename = artifact.filename || decodeURIComponent(apiUrl.split('/').pop() || 'artifact');
     const caption = document.createElement('span');
     const name = document.createElement('strong');
     name.textContent = filename;
