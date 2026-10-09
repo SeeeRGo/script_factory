@@ -1,0 +1,26 @@
+{
+  "format": "json-workflow",
+  "title": "Безопасная проверка API и имени артефакта",
+  "context": {
+    "message": "Script Factory: проверка API"
+  },
+  "steps": [
+    {
+      "action": "artifact_write",
+      "params": {
+        "filename": "smoke-result.txt",
+        "text": "{{message}}"
+      }
+    },
+    {
+      "action": "compute",
+      "params": {
+        "expression": "({state:'completed',message:context.message})"
+      },
+      "save_as": "answer"
+    }
+  ],
+  "output": {
+    "Rezult_1": "{{answer}}"
+  }
+}

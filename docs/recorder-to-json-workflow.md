@@ -396,7 +396,7 @@ JS
 { "Rezult_1": "{{answer}}" }
 ```
 
-В ответе `GET /api/v2/jobs/{job_id}` это будет `result.context.Rezult_1`. Имя `Rezult_1` — договорённость сценария, а не обязательное поле движка. Если `output` не указан, исполнитель возвращает весь контекст, поэтому лучше задавать проекцию явно.
+В ответе `GET /api/v2/jobs/{job_id}` это будет `result.Rezult_1`. Имя `Rezult_1` — договорённость сценария, а не обязательное поле движка. Если `output` не указан, исполнитель формирует весь внутренний контекст. Публичный API оставляет только артефакты и объектные `Rezult_N`, поэтому для 1С задавайте `output` с такими полями явно.
 
 Чтобы сохранить текст или снимок:
 
@@ -527,7 +527,7 @@ JS
 
 ## 15. Готовые примеры и справочники
 
-- [Исходная запись](../demo/recorder-conversion-source.json) и [перенесённый workflow](../demo/recorder-conversion-workflow.json): локальная HTML-страница в `data:` URL, без кабинета и внешних запросов. Ожидаемый результат — `result.context.Rezult_1 = {"state":"completed","text":"ready"}`.
+- [Исходная запись](../demo/recorder-conversion-source.json) и [перенесённый workflow](../demo/recorder-conversion-workflow.json): локальная HTML-страница в `data:` URL, без кабинета и внешних запросов. Ожидаемый результат — `result.Rezult_1 = {"state":"completed","text":"ready"}`.
 - [Каталог универсальных операций](../demo/json-workflow.md).
 - [Полный JSON СБИС](../demo/sbis-report-full.json) и [его параметры и ограничения](../demo/sbis-report-full.md).
 - [Исходная инструкция по Recorder](script-creation.md).

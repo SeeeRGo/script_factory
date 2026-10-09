@@ -1,0 +1,24 @@
+{
+  "mode": "preflight",
+  "submit_enabled": false,
+  "inn": "ЗАМЕНИТЬ_НА_ИНН",
+  "root_dir": "C:/Reports",
+  "loaded_dir": "C:/Reports/loaded",
+  "allow_multiple": true,
+  "certificate_selection_required": true,
+  "authority_prefixes": [
+    {
+      "authority": "FNS",
+      "prefixes": [
+        "NO_BOUPR",
+        "NO_NDFL3"
+      ]
+    },
+    {
+      "authority": "SFR",
+      "prefixes": [
+        "POVD"
+      ]
+    }
+  ]
+}

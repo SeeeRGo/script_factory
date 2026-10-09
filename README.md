@@ -9,6 +9,7 @@ callbacks for 1C. The Stage 2 JSON-steps interpreter remains backward compatible
 
 Документация этапа 4 и предыдущих демонстраций:
 
+- [практические инструкции: создание JSON-сценариев, схема проекта, установка и ручное обновление УН](docs/project-guide/README.md);
 - [контракт интеграции с 1С, Windows-УН, задержка, callback и нагрузочное демо](docs/stage-4-1c-integration.md);
 - [ответы по готовности УН, идентификаторам, дубликатам, callback и файловому циклу](docs/answers-1c-integration.md);
 - [массовое развёртывание и откат Windows-УН через Ansible](ansible/README.md);
