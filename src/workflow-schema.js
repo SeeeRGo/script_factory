@@ -35,6 +35,10 @@ export function validateWorkflow(script) {
       }
       if (step.action === 'call' && (!identifier(step.routine) || !Object.hasOwn(routines, step.routine))) add(`${at}.routine`, 'Неизвестная подпрограмма JSON');
       if (['compute', 'browser_eval', 'browser_wait'].includes(step.action) && typeof step.params?.expression !== 'string') add(`${at}.params.expression`, 'Укажите строку выражения');
+      if (step.action === 'browser_launch' && step.params?.ignore_default_args !== undefined
+        && typeof step.params.ignore_default_args !== 'boolean' && !timeoutTemplate(step.params.ignore_default_args)) {
+        add(`${at}.params.ignore_default_args`, 'Требуется boolean или шаблон переменной');
+      }
     });
   };
   visit(script.steps, 'script.steps');

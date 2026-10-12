@@ -17,10 +17,11 @@
           "NO_NDS_"
         ],
         "ui": {
-          "validation_scope_selector": ".journal-react__view.journal-react__background_pink",
+          "validation_scope_selector": ".journal-react__view:is(.journal-react__background_green,.journal-react__background_pink)",
           "validation_status_selector": ".controls-Header__caption",
-          "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m",
-          "validation_failure_text": "Найденные ошибки"
+          "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m, .journal-react__background_green .journal-react__first-errorGroup:not(.tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m *)",
+          "validation_failure_text": "Найденные ошибки",
+          "validation_success_text": "Ошибки не найдены"
         }
       }
     ]
@@ -28,7 +29,7 @@
   "script": {
     "format": "json-workflow",
     "title": "СБИС: ФНС, СФР и Росстат из JSON",
-    "version": "2.0.1",
+    "version": "2.0.2",
     "default_step_timeout_ms": 60000,
     "context": {
       "mode": "validate_only",
@@ -52,19 +53,25 @@
             "description": "Открывает профиль текущего пользователя для проверки связанной организации."
           },
           {
-            "type": "waitForElement",
-            "selectors": [
-              [
-                ".personProfile-header__depPath .o_n_aa"
-              ]
-            ],
-            "visible": true,
-            "description": "Ожидает ссылку на организацию в заголовке профиля."
+            "type": "waitForExpression",
+            "expression": "new Promise(resolve => setTimeout(() => resolve(true), 2000))",
+            "description": "Пауза 2000 мс для отложенных необязательных окон после открытия профиля. После нее JSON отдельно закрывает известные подсказки; сама пауза не подтверждает ИНН."
           },
           {
             "type": "waitForExpression",
-            "expression": "(() => { const visible=e=>e.getClientRects().length && getComputedStyle(e).visibility!=='hidden'; const roots=[...document.querySelectorAll('.personProfile-header__depPath .o_n_aa')].filter(visible); if(roots.length!==1)return false; const root=roots[0]; const link=root.querySelector('a,[role=link]'); const leaves=[...root.querySelectorAll('*')].filter(e=>visible(e)&&e.children.length===0&&e.textContent.trim()); const target=link||leaves[0]||root; target.click(); return true; })()",
-            "description": "Дожидается единственной ссылки организации и активирует её видимый текстовый элемент. Не зависит от записанного смещения клика внутри широкого блока профиля."
+            "description": "Находит единственную ссылку организации в профиле юридического лица или ИП и помечает ее. Полный ИНН проверяется отдельно в открытой карточке.",
+            "expression": "(() => {const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const legacy=[...document.querySelectorAll('.personProfile-header__depPath .o_n_aa')].filter(visible);const roots=legacy.length?legacy:[...document.querySelectorAll('*')].filter(e=>e.children.length===0&&visible(e)&&e.textContent.trim().endsWith(', ИП'));if(roots.length!==1)return false;const root=roots[0];const link=root.querySelector('a,[role=link]');const leaf=[...root.querySelectorAll('*')].find(e=>visible(e)&&e.children.length===0&&e.textContent.trim());for(const old of document.querySelectorAll('[data-sf-organization-link]'))old.removeAttribute('data-sf-organization-link');(link||leaf||root).setAttribute('data-sf-organization-link','true');return true;})()"
+          },
+          {
+            "type": "click",
+            "selectors": [
+              [
+                "[data-sf-organization-link=\"true\"]"
+              ]
+            ],
+            "offsetX": 10,
+            "offsetY": 8,
+            "description": "Открывает выбранную ссылку организации обычным кликом мыши. DOM.click может не обрабатываться текущим интерфейсом Saby."
           }
         ],
         "organization_selector": ".ourCompanies-Requisites__INNField",
@@ -150,37 +157,54 @@
         "validate_steps": [
           {
             "type": "waitForExpression",
-            "expression": "(() => { const visible = e => !!e && e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'; const roots = [...document.querySelectorAll('.controls-Popup__lastItem')].filter(visible).filter(e => e.querySelector('.report-theme__contrastWrapper')); if (roots.length !== 1) return false; const labels = [...roots[0].querySelectorAll('*')].filter(e => visible(e) && e.children.length === 0 && e.textContent.trim() === 'Проверить'); if (labels.length !== 1) return false; const label = labels[0], button = label.closest('button,[role=button],.controls-BaseButton') || label; if (button.disabled || button.closest('[disabled],[aria-disabled=\"true\"]')) return false; label.scrollIntoView({block:'center',inline:'nearest'}); const box = label.getBoundingClientRect(), hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2); return !!hit && button.contains(hit); })()",
-            "description": "Ожидает единственную надпись «Проверить» в карточке, прокручивает её в область видимости и проверяет доступность и отсутствие перекрытия."
+            "expression": "(()=>{const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const buttons=[...document.querySelectorAll('[title=\"Проверить\"]')].filter(visible);if(buttons.length!==1)return false;const button=buttons[0];if(button.disabled||button.closest('[disabled],[aria-disabled=\"true\"]'))return false;button.scrollIntoView({block:'center',inline:'nearest'});const box=button.getBoundingClientRect();const hit=document.elementFromPoint(box.left+Math.min(20,box.width/2),box.top+Math.min(10,box.height/2));return !!hit&&button.contains(hit)})()",
+            "description": "Ожидает единственную доступную кнопку с точным title=\"Проверить\" и проверяет отсутствие перекрытия. ИНН и ключ карточки сверены перед этим действием."
           },
           {
             "type": "click",
             "selectors": [
               [
-                ".controls-Popup__lastItem ::-p-text(Проверить)"
+                "[title=\"Проверить\"]"
               ]
             ],
             "offsetX": 20,
             "offsetY": 10,
-            "description": "Один раз нажимает доступную кнопку «Проверить» обычным событием мыши браузера."
+            "description": "Один раз запускает проверку подтвержденной карточки. Эта привязка проверена на РСВ и ЕФС-1; результат отдельно ожидается по точному статусу и непустому тексту."
           }
         ],
-        "validation_status_selector": null,
-        "protocol_selector": null,
-        "validation_success_text": "Ошибок не обнаружено",
-        "validation_failure_text": null,
+        "validation_status_selector": ".controls-Header__caption",
+        "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m, .journal-react__background_green .journal-react__first-errorGroup:not(.tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m *)",
+        "validation_success_text": "Ошибки не найдены",
+        "validation_failure_text": "Найденные ошибки",
         "reopen_steps": [],
         "submit_steps": [
+          {
+            "type": "waitForElement",
+            "selectors": [
+              [
+                "[title=\"Перейти к отправке отчетов в контролирующие органы\"]"
+              ]
+            ],
+            "visible": true,
+            "count": 1,
+            "operator": "==",
+            "description": "Ожидает единственную кнопку перехода к отправке подтвержденной карточки. Этот переход проверен для РСВ; кабинет пока блокирует дальнейшую отправку лицензией."
+          },
           {
             "type": "click",
             "selectors": [
               [
-                ".controls-Popup__lastItem ::-p-text(Отправить)"
+                "[title=\"Перейти к отправке отчетов в контролирующие органы\"]"
               ]
             ],
             "offsetX": 20,
             "offsetY": 10,
-            "description": "Первая кнопка «Отправить» в новой карточке НДС подтверждена визуально. Полный диалог подписи, отправки и конечный статус не проверены; пустые обязательные reopen_steps и sent_status_selector блокируют send до запуска браузера."
+            "description": "Переходит к отправке текущего отчёта. Полный диалог подписи и конечный статус ещё не проверены; пустые обязательные reopen_steps и sent_status_selector блокируют рабочий send."
+          },
+          {
+            "type": "waitForExpression",
+            "expression": "new Promise(resolve=>setTimeout(()=>resolve(true),5000))",
+            "description": "Пауза для появления ответа на переход к отправке. После неё отдельно проверяются лицензия и подтверждённый статус; сама пауза не подтверждает отправку."
           }
         ],
         "sent_status_selector": null,
@@ -204,6 +228,12 @@
             "scope_selector": ".controls-ConfirmationTemplate",
             "text": "Добавить Saby Report в быстрый доступ?",
             "close_selector": ".controls-CloseButton__close"
+          },
+          {
+            "scope_selector": ".authRemind-AddRuEmailDialog.controls-DialogTemplate",
+            "text": "Email не надёжен",
+            "close_selector": ".controls-CloseButton__close[title=\"Закрыть\"]",
+            "requires_skip_security_setup": true
           }
         ],
         "organization_after_steps": [],
@@ -213,27 +243,51 @@
         "report_identity_steps": [
           {
             "type": "waitForExpression",
-            "expression": "(()=>{const root=document.querySelector('.report-theme__contrastWrapper');if(!root)return false;if(new RegExp('(^|[^0-9]){{inn}}([^0-9]|$)').test(root.innerText))return true;const expand=[...root.querySelectorAll('*')].find(e=>!e.children.length&&e.getClientRects().length&&e.innerText?.trim()==='Развернуть');if(!expand)return false;expand.click();return true})()",
-            "description": "Раскрывает реквизиты новой карточки кнопкой «Развернуть», если полный ИНН ещё не отображается. Не изменяет поля отчёта. Исполнитель затем отдельно ждёт полного ИНН и сверяет ключ карточки."
+            "expression": "(()=>{const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const roots=[...document.querySelectorAll('{{ui.report_scope_selector}}')].filter(visible);if(roots.length!==1)return false;const links=[...roots[0].querySelectorAll('*')].filter(e=>visible(e)&&!e.children.length&&e.textContent.trim()==='Развернуть');if(links.length!==1)return false;for(const e of document.querySelectorAll('[data-sf-expand-requisites]'))e.removeAttribute('data-sf-expand-requisites');links[0].setAttribute('data-sf-expand-requisites','true');return true})()",
+            "description": "Находит единственную кнопку раскрытия реквизитов в карточке. Не меняет поля отчёта."
+          },
+          {
+            "type": "click",
+            "selectors": [
+              [
+                "[data-sf-expand-requisites=\"true\"]"
+              ]
+            ],
+            "offsetX": 35,
+            "offsetY": 8,
+            "description": "Раскрывает реквизиты обычным кликом мыши. После этого отдельно проверяется полный ИНН."
           }
         ],
         "sent_status_text": "Отправлен",
-        "sent_scope_selector": null
+        "sent_scope_selector": null,
+        "reporting_license_text": "Но нет лицензии \"Отчетность\"",
+        "unsent_status_selector": ".np-StickerTab__main",
+        "unsent_status_text": "Отчет создан",
+        "current_card_scope_selector": ".controls-StackTemplate:has(.report-theme__contrastWrapper)",
+        "validation_scope_selector": ".journal-react__view:is(.journal-react__background_green,.journal-react__background_pink)"
       },
       "authority_prefixes": [
         {
           "authority": "FNS",
           "prefixes": [],
           "ui": {
-            "validation_scope_selector": ".journal-react__view.journal-react__background_pink",
+            "validation_scope_selector": ".journal-react__view:is(.journal-react__background_green,.journal-react__background_pink)",
             "validation_status_selector": ".controls-Header__caption",
-            "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m",
-            "validation_failure_text": "Найденные ошибки"
+            "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m, .journal-react__background_green .journal-react__first-errorGroup:not(.tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m *)",
+            "validation_failure_text": "Найденные ошибки",
+            "validation_success_text": "Ошибки не найдены"
           }
         },
         {
           "authority": "SFR",
-          "prefixes": []
+          "prefixes": [],
+          "ui": {
+            "validation_scope_selector": ".journal-react__view:is(.journal-react__background_green,.journal-react__background_pink)",
+            "validation_status_selector": ".controls-Header__caption",
+            "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m, .journal-react__background_green .journal-react__first-errorGroup:not(.tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m *)",
+            "validation_success_text": "Ошибки не найдены",
+            "validation_failure_text": "Найденные ошибки"
+          }
         },
         {
           "authority": "ROSSTAT",
@@ -267,27 +321,49 @@
           "offsetY": 15,
           "description": "Открывает список доступных подписей либо запускает автоматический вход, если Saby предлагает единственную подпись. "
         }
-      ]
+      ],
+      "browser_ignore_default_args": true
     },
     "routines": {
       "browser": [
         {
-          "action": "browser_eval",
-          "title": "Закрыть только явно перечисленные необязательные подсказки",
-          "description": "Закрыть только явно перечисленные необязательные подсказки",
+          "action": "for_each",
+          "title": "Исполнить шаги браузера с проверкой известных подсказок",
+          "description": "Перед и после каждого шага Recorder закрывает только явно перечисленные необязательные подсказки. Это обрабатывает окна, появляющиеся после навигации.",
           "params": {
-            "expression": "(() => { for (const hint of context.ui?.dismissible_popups || []) { for (const root of document.querySelectorAll(hint.scope_selector)) { if (root.getClientRects().length && root.innerText.replace(/\\s+/g,' ').includes(hint.text)) { const button=root.querySelector(hint.close_selector); if (!button) throw Object.assign(new Error('Не найдена кнопка известной подсказки'),{code:'UI_BINDING_REQUIRED'}); button.click(); } } } return true; })()"
+            "items": "{{flow_steps}}"
           },
-          "private": true
-        },
-        {
-          "action": "browser_steps",
-          "title": "Исполнить браузерные шаги из JSON",
-          "description": "Исполнить браузерные шаги из JSON",
-          "params": {
-            "steps": "{{flow_steps}}",
-            "timeout_ms": 30000
-          },
+          "as": "browser_step",
+          "steps": [
+            {
+              "action": "call",
+              "routine": "dismiss_popups",
+              "title": "Проверить известные подсказки перед шагом",
+              "description": "Проверить известные подсказки перед шагом",
+              "params": {},
+              "private": true
+            },
+            {
+              "action": "browser_steps",
+              "title": "Исполнить один браузерный шаг из JSON",
+              "description": "Исполнить один браузерный шаг из JSON",
+              "params": {
+                "steps": [
+                  "{{browser_step}}"
+                ],
+                "timeout_ms": 30000
+              },
+              "private": true
+            },
+            {
+              "action": "call",
+              "routine": "dismiss_popups",
+              "title": "Проверить известные подсказки после шага",
+              "description": "Проверить известные подсказки после шага",
+              "params": {},
+              "private": true
+            }
+          ],
           "private": true
         }
       ],
@@ -337,11 +413,21 @@
           "private": true
         },
         {
+          "action": "browser_eval",
+          "title": "Раскрывать реквизиты только при отсутствии полного ИНН",
+          "description": "Если полный ИНН уже виден в единственной карточке, не сворачивает реквизиты повторным кликом. В остальных случаях выполняет шаги раскрытия из ui.",
+          "params": {
+            "expression": "(()=>{const roots=[...document.querySelectorAll(context.ui.report_scope_selector)].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden');return roots.length===1&&new RegExp('(^|[^0-9])'+context.inn+'([^0-9]|$)').test((roots[0].innerText+'\\n'+[...roots[0].querySelectorAll('input,textarea')].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden').map(e=>e.value).join('\\n')))?[]:context.ui.report_identity_steps;})()"
+          },
+          "save_as": "identity_expansion_steps",
+          "private": true
+        },
+        {
           "action": "call",
           "title": "Раскрыть реквизиты карточки",
           "description": "Раскрыть реквизиты карточки",
           "params": {
-            "flow_steps": "{{ui.report_identity_steps}}"
+            "flow_steps": "{{identity_expansion_steps}}"
           },
           "routine": "browser",
           "private": true
@@ -351,7 +437,7 @@
           "title": "Подтвердить полный ИНН в единственной карточке",
           "description": "Подтвердить полный ИНН в единственной карточке",
           "params": {
-            "expression": "(() => {const cards=[...document.querySelectorAll(context.ui.report_scope_selector)].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');return cards.length===1&&new RegExp('(^|[^0-9])'+context.inn+'([^0-9]|$)').test(cards[0].innerText);})()",
+            "expression": "(() => {const cards=[...document.querySelectorAll(context.ui.report_scope_selector)].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');return cards.length===1&&new RegExp('(^|[^0-9])'+context.inn+'([^0-9]|$)').test((cards[0].innerText+'\\n'+[...cards[0].querySelectorAll('input,textarea')].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden').map(e=>e.value).join('\\n')));})()",
             "timeout_ms": 30000,
             "error_code": "REPORT_IDENTITY_MISMATCH",
             "message": "Подтвердить полный ИНН в единственной карточке"
@@ -374,7 +460,7 @@
           "title": "Сверить ключ открытой карточки",
           "description": "Сверить ключ открытой карточки",
           "params": {
-            "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';\n if(context.ui.upload_duplicate_text&&document.body.innerText.includes(context.ui.upload_duplicate_text))throw Object.assign(new Error('Отчёт уже загружен; повтор запрещён'),{code:'REPORT_ALREADY_IMPORTED'});\n const cards=[...document.querySelectorAll(context.ui.report_scope_selector)].filter(visible);\n if(cards.length!==1||!new RegExp('(^|[^0-9])'+context.inn+'([^0-9]|$)').test(cards[0].innerText))throw Object.assign(new Error('Карточка не подтверждает полный ИНН'),{code:'REPORT_IDENTITY_MISMATCH'});\n const key=context.candidate_identity_key;\n if(typeof key!=='string'||!key.trim()||key.length>256||!context.report.file_selection_verified)throw Object.assign(new Error('Не подтверждены файл и ключ карточки'),{code:'REPORT_IDENTITY_MISMATCH'});\n if(!context.capture_key&&key!==context.report.report_key)throw Object.assign(new Error('Открыта другая карточка'),{code:'REPORT_IDENTITY_MISMATCH'});\n return key;\n})()"
+            "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';\n if(context.ui.upload_duplicate_text&&document.body.innerText.includes(context.ui.upload_duplicate_text))throw Object.assign(new Error('Отчёт уже загружен; повтор запрещён'),{code:'REPORT_ALREADY_IMPORTED'});\n const cards=[...document.querySelectorAll(context.ui.report_scope_selector)].filter(visible);\n if(cards.length!==1||!new RegExp('(^|[^0-9])'+context.inn+'([^0-9]|$)').test((cards[0].innerText+'\\n'+[...cards[0].querySelectorAll('input,textarea')].filter(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden').map(e=>e.value).join('\\n'))))throw Object.assign(new Error('Карточка не подтверждает полный ИНН'),{code:'REPORT_IDENTITY_MISMATCH'});\n const key=context.candidate_identity_key;\n if(typeof key!=='string'||!key.trim()||key.length>256||!context.report.file_selection_verified)throw Object.assign(new Error('Не подтверждены файл и ключ карточки'),{code:'REPORT_IDENTITY_MISMATCH'});\n if(!context.capture_key&&key!==context.report.report_key)throw Object.assign(new Error('Открыта другая карточка'),{code:'REPORT_IDENTITY_MISMATCH'});\n return key;\n})()"
           },
           "save_as": "identity_key",
           "private": true
@@ -503,6 +589,74 @@
           },
           "save_as": "Rezult_1",
           "private": true
+        },
+        {
+          "action": "compute",
+          "title": "Подготовить JSON результата",
+          "params": {
+            "expression": "({sequence:(context.result_export_index||0)+1,text:JSON.stringify(context.Rezult_1,null,2)})"
+          },
+          "save_as": "result_export",
+          "private": true,
+          "description": "Подготовить JSON результата"
+        },
+        {
+          "action": "set",
+          "title": "Обновить номер файла результата",
+          "params": {
+            "result_export_index": "{{result_export.sequence}}"
+          },
+          "private": true,
+          "description": "Обновить номер файла результата"
+        },
+        {
+          "action": "artifact_write",
+          "title": "Сохранить JSON результата для 1С",
+          "params": {
+            "filename": "result-{{result_export_index}}.json",
+            "text": "{{result_export.text}}",
+            "mime_type": "application/json"
+          },
+          "private": true,
+          "description": "Сохранить JSON результата для 1С"
+        }
+      ],
+      "dismiss_popups": [
+        {
+          "action": "for_each",
+          "title": "Закрыть последовательные известные подсказки",
+          "description": "До трех раз проверяет явно перечисленные подсказки, чтобы обработать очередь необязательных окон. Неизвестные окна не закрывает.",
+          "params": {
+            "items": [
+              0,
+              1,
+              2
+            ]
+          },
+          "as": "popup_pass",
+          "steps": [
+            {
+              "action": "browser_eval",
+              "title": "Найти кнопку закрытия только известной подсказки",
+              "description": "Проверяет текст известной подсказки и единственную видимую кнопку. Помечает её для обычного клика мышью; произвольные окна не закрывает.",
+              "params": {
+                "expression": "(() => {\n const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n for(const e of document.querySelectorAll('[data-sf-dismiss-popup]'))e.removeAttribute('data-sf-dismiss-popup');\n for(const hint of context.ui?.dismissible_popups||[]){\n  if(hint.requires_skip_security_setup&&context.skip_security_setup!==true)continue;\n  const roots=[...document.querySelectorAll(hint.scope_selector)].filter(visible).filter(e=>e.innerText.replace(/\\s+/g,' ').includes(hint.text));\n  if(roots.length>1)throw Object.assign(new Error('Несколько окон известной подсказки'),{code:'UI_BINDING_REQUIRED'});\n  if(!roots.length)continue;\n  const buttons=[...roots[0].querySelectorAll(hint.close_selector)].filter(visible);\n  if(buttons.length!==1)throw Object.assign(new Error('Не найдена единственная кнопка известной подсказки'),{code:'UI_BINDING_REQUIRED'});\n  buttons[0].setAttribute('data-sf-dismiss-popup','true');\n  return [{type:'click',selectors:[['[data-sf-dismiss-popup=\"true\"]']],offsetX:8,offsetY:8},{type:'waitForExpression',expression:'!document.querySelector(\"[data-sf-dismiss-popup]\") || !document.querySelector(\"[data-sf-dismiss-popup]\").getClientRects().length'}];\n }\n return [];\n})()"
+              },
+              "private": true,
+              "save_as": "dismiss_steps"
+            },
+            {
+              "action": "browser_steps",
+              "title": "Закрыть известную подсказку обычным кликом",
+              "description": "Нажимает подтвержденную кнопку мышью и ожидает закрытия окна. DOM.click может не обрабатываться интерфейсом Saby.",
+              "params": {
+                "steps": "{{dismiss_steps}}",
+                "timeout_ms": 30000
+              },
+              "private": true
+            }
+          ],
+          "private": true
         }
       ]
     },
@@ -515,7 +669,8 @@
           "reports": [],
           "phases": [],
           "submission_started": false,
-          "result_state": null
+          "result_state": null,
+          "result_export_index": 0
         },
         "private": true
       },
@@ -524,7 +679,7 @@
         "title": "Проверить параметры и UI-привязки всех ведомств до запуска",
         "description": "Проверить параметры и UI-привязки всех ведомств до запуска",
         "params": {
-          "expression": "(() => {\n const bad = message => { throw Object.assign(new Error(message),{code:'MISSING_PARAMETER'}); };\n if (!['preflight','validate_only','send'].includes(context.mode)) bad('Некорректный mode');\n if (!/^\\d{10}(\\d{2})?$/.test(context.inn||'')) bad('Требуется полный ИНН организации');\n if (context.certificate_inn != null && !/^\\d{10}(\\d{2})?$/.test(context.certificate_inn)) bad('Некорректный certificate_inn');\n const plans=context.authority_prefixes == null ? [{authority:context.authority,prefixes:context.prefixes}] : context.authority_prefixes;\n if (!Array.isArray(plans) || !plans.length || plans.length>3) bad('Требуется от одного до трёх ведомств');\n const seen=new Set();\n return plans.map(plan=>{\n  if (!['FNS','SFR','ROSSTAT'].includes(plan.authority) || seen.has(plan.authority)) bad('Неизвестное или повторное ведомство');\n  seen.add(plan.authority);\n  if (!Array.isArray(plan.prefixes) || !plan.prefixes.length || plan.prefixes.some(p=>typeof p!=='string'||!p.trim())) bad('Не заданы префиксы файлов');\n  const ui={...context.ui,...(plan.ui||{})};\n  const required=['organization_selector','report_scope_selector','report_key_expression','validation_status_selector','protocol_selector','validation_success_text','validation_failure_text'];\n  if(context.mode==='send'&&context.submit_enabled===true)required.push('sent_status_selector');\n  const missing=context.mode==='preflight'?[]:required.filter(k=>!ui[k]);\n  if(context.mode!=='preflight')for(const k of ['upload_steps','validate_steps',...(context.mode==='send'&&context.submit_enabled===true?['reopen_steps','submit_steps']:[])])if(!Array.isArray(ui[k])||!ui[k].length)missing.push(k);\n  if(!ui.authority_paths?.[plan.authority])missing.push('authority_paths');\n  if(missing.length)throw Object.assign(new Error('Не настроены UI-привязки: '+missing.join(', ')),{code:'UI_BINDING_REQUIRED'});\n  return {...plan,ui};\n });\n})()"
+          "expression": "(() => {\n const bad = message => { throw Object.assign(new Error(message),{code:'MISSING_PARAMETER'}); };\n if (!['preflight','validate_only','send'].includes(context.mode)) bad('Некорректный mode');\n if (!/^\\d{10}(\\d{2})?$/.test(context.inn||'')) bad('Требуется полный ИНН организации');\n if (context.certificate_inn != null && !/^\\d{10}(\\d{2})?$/.test(context.certificate_inn)) bad('Некорректный certificate_inn');\n const plans=context.authority_prefixes == null ? [{authority:context.authority,prefixes:context.prefixes}] : context.authority_prefixes;\n if (!Array.isArray(plans) || !plans.length || plans.length>3) bad('Требуется от одного до трёх ведомств');\n const seen=new Set();\n return plans.map(plan=>{\n  if (!['FNS','SFR','ROSSTAT'].includes(plan.authority) || seen.has(plan.authority)) bad('Неизвестное или повторное ведомство');\n  seen.add(plan.authority);\n  if (!Array.isArray(plan.prefixes) || !plan.prefixes.length || plan.prefixes.some(p=>typeof p!=='string'||!p.trim())) bad('Не заданы префиксы файлов');\n  const ui={...context.ui,...(plan.ui||{})};\n  const required=['organization_selector','report_scope_selector','report_key_expression','validation_status_selector','protocol_selector','validation_success_text','validation_failure_text'];\n  if(context.mode==='send'&&context.submit_enabled===true)required.push('sent_status_selector','current_card_scope_selector');\n  const missing=context.mode==='preflight'?[]:required.filter(k=>!ui[k]);\n  if(context.mode!=='preflight')for(const k of ['upload_steps','validate_steps',...(context.mode==='send'&&context.submit_enabled===true?['reopen_steps','submit_steps']:[])])if(!Array.isArray(ui[k])||!ui[k].length)missing.push(k);\n  if(!ui.authority_paths?.[plan.authority])missing.push('authority_paths');\n  if(missing.length)throw Object.assign(new Error('Не настроены UI-привязки: '+missing.join(', ')),{code:'UI_BINDING_REQUIRED'});\n  return {...plan,ui};\n });\n})()"
         },
         "save_as": "plans",
         "private": true
@@ -579,11 +734,12 @@
       {
         "action": "browser_launch",
         "title": "Создать общую сессию браузера",
-        "description": "Создать общую сессию браузера",
+        "description": "Создать общую сессию настроенного браузера. browser_ignore_default_args включает минимальный совместимый запуск без смены браузера и конфигурации УН.",
         "params": {
           "init_scripts": [
             "(() => { try { Object.defineProperty(Navigator.prototype, 'registerProtocolHandler', {configurable:true,value:()=>{}}); } catch {} })()"
-          ]
+          ],
+          "ignore_default_args": "{{browser_ignore_default_args}}"
         }
       },
       {
@@ -1097,11 +1253,21 @@
                     "private": true
                   },
                   {
+                    "action": "compute",
+                    "title": "Подготовить переход по root_dir или явным шагам каталога",
+                    "description": "Для локального диска C строит Recorder-шаги из root_dir. Явный upload_directory_steps имеет приоритет; другой диск требует такого переопределения. Перед выбором XML отдельно проверяются имя и полный путь.",
+                    "params": {
+                      "expression": "(()=>{if(Array.isArray(context.upload_directory_steps)&&context.upload_directory_steps.length)return context.upload_directory_steps;const root=String(context.root_dir||'').replaceAll(String.fromCharCode(92),'/');if(!/^[a-z]:\\//i.test(root))return [];if(!/^c:\\//i.test(root))throw Object.assign(new Error('Для другого диска настройте upload_directory_steps'),{code:'UI_BINDING_REQUIRED'});const folders=root.split('/').slice(1).filter(Boolean);return [{type:'click',selectors:[['text/Локальный диск (C:)']],offsetX:65,offsetY:10,description:'Открывает диск C в файловом диалоге перед переходом по root_dir.'},...folders.flatMap(name=>{const selector='.FileBrowserComponent__Browser__columnName:has([data-minicard-name='+JSON.stringify(name)+']) .FileBrowserComponent__Browser__columnNameRow';return [{type:'waitForElement',selectors:[[selector]],visible:true,count:1,operator:'==',description:'Ожидает единственную строку подкаталога из root_dir.'},{type:'doubleClick',selectors:[[selector]],offsetX:45,offsetY:10,description:'Открывает следующий подкаталог из root_dir по точному имени.'}]})]})()"
+                    },
+                    "save_as": "directory_navigation_steps",
+                    "private": true
+                  },
+                  {
                     "action": "call",
                     "title": "Перейти в заданный подкаталог файлового диалога",
                     "description": "Перейти в заданный подкаталог файлового диалога",
                     "params": {
-                      "flow_steps": "{{upload_directory_steps}}"
+                      "flow_steps": "{{directory_navigation_steps}}"
                     },
                     "routine": "browser",
                     "private": true
@@ -1337,6 +1503,73 @@
                         "private": true
                       },
                       {
+                        "action": "call",
+                        "routine": "identity",
+                        "title": "Повторно подтвердить карточку после шагов отправки",
+                        "description": "До подтверждения отправки или сброса неопределённости заново проверяет полный ИНН и прежний ключ. Чужая или неоднозначная карточка сохраняет requires_reconciliation.",
+                        "params": {
+                          "capture_key": false
+                        },
+                        "private": true
+                      },
+                      {
+                        "action": "browser_eval",
+                        "title": "Проверить явную блокировку лицензией до подтверждения отправки",
+                        "description": "После повторной сверки полного ИНН и прежнего ключа карточки требует единственное видимое сообщение лицензии и единственный неотправленный статус внутри current_card_scope_selector. При противоречащем статусе не снимает неопределённость.",
+                        "params": {
+                          "expression": "(()=>{const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const caption=String(context.ui.reporting_license_text||'').replace(/\\s+/g,' ').trim();if(!caption)return false;const includes=e=>e.textContent.replace(/\\s+/g,' ').includes(caption);const messages=[...document.querySelectorAll('*')].filter(e=>visible(e)&&includes(e)&&![...e.children].some(c=>includes(c)));if(messages.length!==1)return false;const scopes=[...document.querySelectorAll(context.ui.current_card_scope_selector)].filter(visible);if(scopes.length!==1)return false;const scope=scopes[0];const cards=[...(scope.matches(context.ui.report_scope_selector)?[scope]:[]),...scope.querySelectorAll(context.ui.report_scope_selector)].filter(visible);if(cards.length!==1)return false;const statuses=[...scope.querySelectorAll(context.ui.unsent_status_selector)].filter(visible);if(statuses.length!==1||statuses[0].innerText.trim()!==context.ui.unsent_status_text)return false;const sent=[...scope.querySelectorAll(context.ui.sent_status_selector)].filter(visible).map(e=>e.innerText.trim());if(sent.some(s=>s===context.ui.sent_status_text||/^Отправ(?:ляется|лен|лено)/i.test(s)))return false;return true})()"
+                        },
+                        "save_as": "license_blocked",
+                        "private": true
+                      },
+                      {
+                        "action": "if",
+                        "title": "Вернуть отсутствие лицензии без повтора и архивирования",
+                        "description": "Сохраняет успешную проверку и явный отказ кабинета отправлять отчёт с этой лицензией. Не покупает лицензию и не оформляет её в долг.",
+                        "params": {
+                          "condition": "{{license_blocked}}"
+                        },
+                        "then": [
+                          {
+                            "action": "set",
+                            "title": "Зафиксировать явное отсутствие отправки",
+                            "description": "Окно лицензирования и статус неотправленного отчёта исключают неопределённую отправку.",
+                            "params": {
+                              "submission_started": false
+                            },
+                            "private": true
+                          },
+                          {
+                            "action": "compute",
+                            "title": "Сохранить проверенный неотправленный отчёт",
+                            "description": "Сохраняет статус проверки, протокол и причину отсутствия отправки.",
+                            "params": {
+                              "expression": "({...context.report,state:'validated',sbis_status:'Отправка заблокирована: нет лицензии'})"
+                            },
+                            "save_as": "report",
+                            "private": true
+                          },
+                          {
+                            "action": "call",
+                            "routine": "store_report",
+                            "title": "Сохранить блокировку отчёта",
+                            "description": "Обновляет результат текущего отчёта перед возвратом ошибки.",
+                            "params": {},
+                            "private": true
+                          },
+                          {
+                            "action": "fail",
+                            "title": "Вернуть необходимость лицензии",
+                            "description": "Возвращает REPORTING_LICENSE_REQUIRED, без автоматического повтора отправки.",
+                            "params": {
+                              "error_code": "REPORTING_LICENSE_REQUIRED",
+                              "message": "СБИС блокирует отправку: отсутствует лицензия Отчетность"
+                            }
+                          }
+                        ],
+                        "else": []
+                      },
+                      {
                         "action": "browser_wait",
                         "title": "Дождаться точного подтверждённого статуса отправки",
                         "description": "Дождаться точного подтверждённого статуса отправки",
@@ -1523,7 +1756,7 @@
         "title": "Определить итог при ошибке",
         "description": "Определить итог при ошибке",
         "params": {
-          "expression": "context.error.code==='VALIDATION_ERROR'?'validation_failed':context.submission_started?'requires_reconciliation':'failed'"
+          "expression": "context.error.code==='REPORTING_LICENSE_REQUIRED'?'license_required':context.error.code==='VALIDATION_ERROR'?'validation_failed':context.submission_started?'requires_reconciliation':'failed'"
         },
         "save_as": "result_state",
         "private": true

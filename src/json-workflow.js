@@ -102,9 +102,13 @@ export async function executeJsonWorkflow(options) {
       case 'browser_launch': {
         if (browser) fail('BROWSER_ALREADY_STARTED', 'Сессия браузера уже существует');
         const headless = options.headless ?? true;
+        const minimal = params.ignore_default_args ?? false;
+        if (typeof minimal !== 'boolean') fail('INVALID_BROWSER_OPTIONS', 'ignore_default_args должен быть boolean');
+        const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--window-size=1400,860'];
+        if (minimal) args.push('--enable-automation', '--no-first-run', '--no-default-browser-check', ...(headless ? ['--headless=new'] : []));
         browser = await puppeteer.launch({ executablePath: await resolveBrowserExecutablePath(options.executablePath), headless,
           defaultViewport: headless ? { width: 1400, height: 860 } : null,
-          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--window-size=1400,860'] });
+          ignoreDefaultArgs: minimal, args });
         if (activeSignal?.aborted) { await browser.close(); throw activeSignal.reason; }
         page = (await browser.pages())[0] || await browser.newPage();
         await page.bringToFront();

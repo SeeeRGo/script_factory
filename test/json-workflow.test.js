@@ -111,6 +111,22 @@ test('recursive calls are bounded rather than exhausting the process', async t =
   await assert.rejects(executeJsonWorkflow(await options(t, script)), { code: 'WORKFLOW_LIMIT' });
 });
 
+test('minimal launch keeps headless mode and automation while replaying multiple pages', async t => {
+  const script = { ...base([
+    { action: 'browser_launch', params: { ignore_default_args: '{{minimal}}' } },
+    { action: 'browser_steps', params: { steps: [
+      { type: 'navigate', url: 'data:text/html,<title>first</title>' },
+      { type: 'navigate', url: 'data:text/html,<title>second</title>' }
+    ] } },
+    { action: 'browser_eval', params: { expression: '({title:document.title,automation:navigator.webdriver,headless:navigator.userAgent.includes("HeadlessChrome")})' }, save_as: 'answer' }
+  ]), context: { minimal: true }, output: { Rezult_1: '{{answer}}' } };
+  const result = await executeJsonWorkflow(await options(t, script));
+  assert.deepEqual(result.context.Rezult_1, { title: 'second', automation: true, headless: true });
+  assert.ok(validateScript(base([{ action: 'browser_launch', params: { ignore_default_args: 'true' } }])).length);
+  script.context.minimal = 'true';
+  await assert.rejects(executeJsonWorkflow(await options(t, script)), { code: 'INVALID_BROWSER_OPTIONS' });
+});
+
 test('browser expressions and waits work on pages restricting eval with CSP and Trusted Types', async t => {
   const server = createServer((_req, res) => {
     res.setHeader('Content-Security-Policy', "script-src 'self'; require-trusted-types-for 'script'");
