@@ -8,6 +8,17 @@ import { executeJsonWorkflow, computeWorkflowExpression } from '../src/json-work
 import { validateScript } from '../src/interpreter.js';
 import { archiveWorkflowFile, listWorkflowFiles } from '../src/workflow-files.js';
 const base = steps => ({ format: 'json-workflow', steps });
+test('if rejects a misplaced or non-Boolean condition before executing a branch', async t => {
+  assert.ok(validateScript(base([{ action: 'if', condition: true, then: [] }]))
+    .some(e => e.path.endsWith('params.condition')));
+  assert.ok(validateScript(base([{ action: 'if', params: { condition: 'true' }, then: [] }]))
+    .some(e => e.path.endsWith('params.condition')));
+  const opts = await options(t, base([{ action: 'if', params: { condition: '{{flag}}' },
+    else: [{ action: 'artifact_write', params: { filename: 'unexpected.txt', text: 'must not run' } }] }]));
+  opts.context.flag = 'true';
+  await assert.rejects(executeJsonWorkflow(opts), e => e.code === 'INVALID_CONDITION');
+  await assert.rejects(readFile(path.join(opts.artifactDirectory, 'unexpected.txt')), { code: 'ENOENT' });
+});
 async function options(t, script) {
   const root = await mkdtemp(path.join(tmpdir(), 'json-workflow-'));
   t.after(() => rm(root, { recursive: true, force: true }));

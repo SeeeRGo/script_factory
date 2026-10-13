@@ -29,7 +29,7 @@
   "script": {
     "format": "json-workflow",
     "title": "СБИС: ФНС, СФР и Росстат из JSON",
-    "version": "2.0.2",
+    "version": "2.0.3",
     "default_step_timeout_ms": 60000,
     "context": {
       "mode": "validate_only",
@@ -176,7 +176,13 @@
         "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m, .journal-react__background_green .journal-react__first-errorGroup:not(.tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m *)",
         "validation_success_text": "Ошибки не найдены",
         "validation_failure_text": "Найденные ошибки",
-        "reopen_steps": [],
+        "reopen_steps": [
+          {
+            "type": "waitForExpression",
+            "expression": "true",
+            "description": "Оставляет текущую карточку открытой. Следующая проверка сверяет ИНН и сохранённый ключ. Для нескольких файлов одного ведомства требуется свой профиль повторного открытия."
+          }
+        ],
         "submit_steps": [
           {
             "type": "waitForElement",
@@ -207,7 +213,7 @@
             "description": "Пауза для появления ответа на переход к отправке. После неё отдельно проверяются лицензия и подтверждённый статус; сама пауза не подтверждает отправку."
           }
         ],
-        "sent_status_selector": null,
+        "sent_status_selector": ".np-StickerTab__main",
         "authority_paths": {
           "FNS": "/page/fns",
           "SFR": "/page/sfr",
@@ -258,13 +264,20 @@
             "description": "Раскрывает реквизиты обычным кликом мыши. После этого отдельно проверяется полный ИНН."
           }
         ],
-        "sent_status_text": "Отправлен",
-        "sent_scope_selector": null,
+        "sent_status_text": "Отчет отправлен, но еще не считается сданным",
+        "sent_scope_selector": ".controls-StackTemplate:has(.report-theme__contrastWrapper)",
         "reporting_license_text": "Но нет лицензии \"Отчетность\"",
         "unsent_status_selector": ".np-StickerTab__main",
         "unsent_status_text": "Отчет создан",
         "current_card_scope_selector": ".controls-StackTemplate:has(.report-theme__contrastWrapper)",
-        "validation_scope_selector": ".journal-react__view:is(.journal-react__background_green,.journal-react__background_pink)"
+        "validation_scope_selector": ".journal-react__view:is(.journal-react__background_green,.journal-react__background_pink)",
+        "license_debt_caption": "Вы используете \"Отчетность\" в долг",
+        "license_debt_button_selector": ".licenseRestriction-buttonBlock__refuseButton[title=\"В долг\"]",
+        "license_pay_button_selector": ".licenseRestriction-buttonBlock__payButton",
+        "sent_status_texts": [
+          "Отчет отправлен, но еще не считается сданным",
+          "Отчет сдан"
+        ]
       },
       "authority_prefixes": [
         {
@@ -322,7 +335,10 @@
           "description": "Открывает список доступных подписей либо запускает автоматический вход, если Saby предлагает единственную подпись. "
         }
       ],
-      "browser_ignore_default_args": true
+      "browser_ignore_default_args": true,
+      "control_timeout_ms": 900000,
+      "license_debt_enabled": false,
+      "license_debt_expected_amount": null
     },
     "routines": {
       "browser": [
@@ -341,7 +357,8 @@
               "title": "Проверить известные подсказки перед шагом",
               "description": "Проверить известные подсказки перед шагом",
               "params": {},
-              "private": true
+              "private": true,
+              "timeout_ms": "{{control_timeout_ms}}"
             },
             {
               "action": "browser_steps",
@@ -361,10 +378,12 @@
               "title": "Проверить известные подсказки после шага",
               "description": "Проверить известные подсказки после шага",
               "params": {},
-              "private": true
+              "private": true,
+              "timeout_ms": "{{control_timeout_ms}}"
             }
           ],
-          "private": true
+          "private": true,
+          "timeout_ms": "{{control_timeout_ms}}"
         }
       ],
       "phase": [
@@ -430,7 +449,8 @@
             "flow_steps": "{{identity_expansion_steps}}"
           },
           "routine": "browser",
-          "private": true
+          "private": true,
+          "timeout_ms": "{{control_timeout_ms}}"
         },
         {
           "action": "browser_wait",
@@ -489,10 +509,12 @@
               "description": "store_report",
               "params": {},
               "routine": "store_report",
-              "private": true
+              "private": true,
+              "timeout_ms": "{{control_timeout_ms}}"
             }
           ],
-          "else": []
+          "else": [],
+          "timeout_ms": "{{control_timeout_ms}}"
         }
       ],
       "validate": [
@@ -504,7 +526,8 @@
             "capture_key": false
           },
           "routine": "identity",
-          "private": true
+          "private": true,
+          "timeout_ms": "{{control_timeout_ms}}"
         },
         {
           "action": "call",
@@ -514,7 +537,8 @@
             "flow_steps": "{{ui.validate_steps}}"
           },
           "routine": "browser",
-          "private": true
+          "private": true,
+          "timeout_ms": "{{control_timeout_ms}}"
         },
         {
           "action": "browser_wait",
@@ -536,7 +560,8 @@
             "capture_key": false
           },
           "routine": "identity",
-          "private": true
+          "private": true,
+          "timeout_ms": "{{control_timeout_ms}}"
         },
         {
           "action": "compute",
@@ -576,7 +601,8 @@
           "description": "store_report",
           "params": {},
           "routine": "store_report",
-          "private": true
+          "private": true,
+          "timeout_ms": "{{control_timeout_ms}}"
         }
       ],
       "result": [
@@ -585,7 +611,7 @@
           "title": "Сформировать результат для 1С",
           "description": "Сформировать результат для 1С",
           "params": {
-            "expression": "(() => {\n const reports=context.reports||[],plans=context.plans||[];\n const state=context.result_state || (context.mode==='preflight'?'preflight_completed':reports.some(r=>r.state==='validation_failed')?'validation_failed':reports.length&&reports.every(r=>r.state==='archived')?'sent':'validated_not_sent');\n return {state,inn:context.inn,authority:plans.length===1?plans[0].authority:null,mode:context.mode,\n authorities:plans.map(p=>{const items=reports.filter(r=>r.authority===p.authority);return {authority:p.authority,prefixes:p.prefixes,state:context.mode==='preflight'&& !context.result_state?'preflight_completed':items.some(r=>r.state==='validation_failed')?'validation_failed':items.length&&items.every(r=>r.state==='archived')?'sent':context.result_state||'validated_not_sent',report_count:items.length};}),\n reports:reports.map(r=>({authority:r.authority,file_name:r.filename,sha256:r.sha256,state:r.state,load_datetime:r.load_datetime||null,validation_result:r.validation_result,file_selection_verified:!!r.file_selection_verified,report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,sbis_status:r.sbis_status,archived_path:r.archived_path||null})),phases:context.phases||[]};\n})()"
+            "expression": "(() => {\n const reports=context.reports||[],plans=context.plans||[];\n const state=context.result_state || (context.mode==='preflight'?'preflight_completed':reports.some(r=>r.state==='validation_failed')?'validation_failed':reports.length&&reports.every(r=>r.state==='archived')?'sent':'validated_not_sent');\n return {state,inn:context.inn,authority:plans.length===1?plans[0].authority:null,mode:context.mode,\n authorities:plans.map(p=>{const items=reports.filter(r=>r.authority===p.authority);return {authority:p.authority,prefixes:p.prefixes,state:context.mode==='preflight'&& !context.result_state?'preflight_completed':items.some(r=>r.state==='validation_failed')?'validation_failed':items.length&&items.every(r=>r.state==='archived')?'sent':context.result_state||'validated_not_sent',report_count:items.length};}),\n ...(context.license_quote?{license:context.license_quote}:{}),\n reports:reports.map(r=>({authority:r.authority,file_name:r.filename,sha256:r.sha256,state:r.state,load_datetime:r.load_datetime||null,validation_result:r.validation_result,file_selection_verified:!!r.file_selection_verified,report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,sbis_status:r.sbis_status,archived_path:r.archived_path||null})),phases:context.phases||[]};\n})()"
           },
           "save_as": "Rezult_1",
           "private": true
@@ -656,7 +682,8 @@
               "private": true
             }
           ],
-          "private": true
+          "private": true,
+          "timeout_ms": "{{control_timeout_ms}}"
         }
       ]
     },
@@ -679,7 +706,7 @@
         "title": "Проверить параметры и UI-привязки всех ведомств до запуска",
         "description": "Проверить параметры и UI-привязки всех ведомств до запуска",
         "params": {
-          "expression": "(() => {\n const bad = message => { throw Object.assign(new Error(message),{code:'MISSING_PARAMETER'}); };\n if (!['preflight','validate_only','send'].includes(context.mode)) bad('Некорректный mode');\n if (!/^\\d{10}(\\d{2})?$/.test(context.inn||'')) bad('Требуется полный ИНН организации');\n if (context.certificate_inn != null && !/^\\d{10}(\\d{2})?$/.test(context.certificate_inn)) bad('Некорректный certificate_inn');\n const plans=context.authority_prefixes == null ? [{authority:context.authority,prefixes:context.prefixes}] : context.authority_prefixes;\n if (!Array.isArray(plans) || !plans.length || plans.length>3) bad('Требуется от одного до трёх ведомств');\n const seen=new Set();\n return plans.map(plan=>{\n  if (!['FNS','SFR','ROSSTAT'].includes(plan.authority) || seen.has(plan.authority)) bad('Неизвестное или повторное ведомство');\n  seen.add(plan.authority);\n  if (!Array.isArray(plan.prefixes) || !plan.prefixes.length || plan.prefixes.some(p=>typeof p!=='string'||!p.trim())) bad('Не заданы префиксы файлов');\n  const ui={...context.ui,...(plan.ui||{})};\n  const required=['organization_selector','report_scope_selector','report_key_expression','validation_status_selector','protocol_selector','validation_success_text','validation_failure_text'];\n  if(context.mode==='send'&&context.submit_enabled===true)required.push('sent_status_selector','current_card_scope_selector');\n  const missing=context.mode==='preflight'?[]:required.filter(k=>!ui[k]);\n  if(context.mode!=='preflight')for(const k of ['upload_steps','validate_steps',...(context.mode==='send'&&context.submit_enabled===true?['reopen_steps','submit_steps']:[])])if(!Array.isArray(ui[k])||!ui[k].length)missing.push(k);\n  if(!ui.authority_paths?.[plan.authority])missing.push('authority_paths');\n  if(missing.length)throw Object.assign(new Error('Не настроены UI-привязки: '+missing.join(', ')),{code:'UI_BINDING_REQUIRED'});\n  return {...plan,ui};\n });\n})()"
+          "expression": "(() => {\n const bad = message => { throw Object.assign(new Error(message),{code:'MISSING_PARAMETER'}); };\n if (!['preflight','validate_only','send'].includes(context.mode)) bad('Некорректный mode');\n if (!/^\\d{10}(\\d{2})?$/.test(context.inn||'')) bad('Требуется полный ИНН организации');\n if (context.certificate_inn != null && !/^\\d{10}(\\d{2})?$/.test(context.certificate_inn)) bad('Некорректный certificate_inn');\n const plans=context.authority_prefixes == null ? [{authority:context.authority,prefixes:context.prefixes}] : context.authority_prefixes;\n if (!Array.isArray(plans) || !plans.length || plans.length>3) bad('Требуется от одного до трёх ведомств');\n if(typeof context.license_debt_enabled!=='boolean')bad('license_debt_enabled должен быть Boolean');\n if(context.license_debt_enabled&&(!Number.isFinite(context.license_debt_expected_amount)||context.license_debt_expected_amount<=0))bad('Для В долг нужна явно разрешенная положительная сумма');\n if(!Number.isInteger(context.control_timeout_ms)||context.control_timeout_ms<1000||context.control_timeout_ms>900000)bad('Некорректный control_timeout_ms');\n const seen=new Set();\n return plans.map(plan=>{\n  if (!['FNS','SFR','ROSSTAT'].includes(plan.authority) || seen.has(plan.authority)) bad('Неизвестное или повторное ведомство');\n  seen.add(plan.authority);\n  if (!Array.isArray(plan.prefixes) || !plan.prefixes.length || plan.prefixes.some(p=>typeof p!=='string'||!p.trim())) bad('Не заданы префиксы файлов');\n  const ui={...context.ui,...(plan.ui||{})};\n  const required=['organization_selector','report_scope_selector','report_key_expression','validation_status_selector','protocol_selector','validation_success_text','validation_failure_text'];\n  if(context.mode==='send'&&context.submit_enabled===true)required.push('sent_status_selector','current_card_scope_selector');\n  const missing=context.mode==='preflight'?[]:required.filter(k=>!ui[k]);\n  if(context.mode!=='preflight')for(const k of ['upload_steps','validate_steps',...(context.mode==='send'&&context.submit_enabled===true?['reopen_steps','submit_steps']:[])])if(!Array.isArray(ui[k])||!ui[k].length)missing.push(k);\n  if(!ui.authority_paths?.[plan.authority])missing.push('authority_paths');\n  if(missing.length)throw Object.assign(new Error('Не настроены UI-привязки: '+missing.join(', ')),{code:'UI_BINDING_REQUIRED'});\n  return {...plan,ui};\n });\n})()"
         },
         "save_as": "plans",
         "private": true
@@ -726,9 +753,58 @@
         "title": "Выбрать последний XML для каждого префикса всех ведомств",
         "description": "Выбрать последний XML для каждого префикса всех ведомств",
         "params": {
-          "expression": "(() => {\n const selected=new Set(),reports=[];\n for(const plan of context.plans){const current=new Map();for(const prefix of plan.prefixes){\n  const files=context.directory_files.filter(f=>f.filename.toLowerCase().endsWith('.xml')&&f.filename.startsWith(prefix)).sort((a,b)=>b.modified_ms-a.modified_ms||a.filename.localeCompare(b.filename));\n  if(!files.length)throw Object.assign(new Error('Не найден XML для заданного префикса'),{code:'FILE_NOT_FOUND'});\n  current.set(files[0].path,files[0]);\n }\n if(context.allow_multiple===false&&current.size>1)throw Object.assign(new Error('Несколько файлов при allow_multiple=false'),{code:'MULTIPLE_FILES'});\n for(const file of current.values()){\n  const key=/^[a-z]:[\\\\/]/i.test(file.path)?file.path.toLowerCase():file.path;\n  if(selected.has(key))throw Object.assign(new Error('Один XML выбран для разных ведомств'),{code:'AUTHORITY_FILE_CONFLICT'});\n  selected.add(key);reports.push({...file,authority:plan.authority,state:'selected',validation_result:null,sbis_status:null});\n }}return reports;\n})()"
+          "expression": "(() => {\n const selected=new Set(),reports=[];\n for(const plan of context.plans){const current=new Map();for(const prefix of plan.prefixes){\n  const files=context.directory_files.filter(f=>f.filename.toLowerCase().endsWith('.xml')&&f.filename.startsWith(prefix)).sort((a,b)=>b.modified_ms-a.modified_ms||a.filename.localeCompare(b.filename));\n  if(!files.length)throw Object.assign(new Error('Не найден XML для заданного префикса'),{code:'FILE_NOT_FOUND'});\n  current.set(files[0].path,files[0]);\n }\n if(context.allow_multiple===false&&current.size>1)throw Object.assign(new Error('Несколько файлов при allow_multiple=false'),{code:'MULTIPLE_FILES'});\n if(context.mode==='send'&&context.submit_enabled===true&&current.size>1&&plan.ui.reopen_steps?.length===1&&plan.ui.reopen_steps[0].type==='waitForExpression'&&plan.ui.reopen_steps[0].expression==='true')throw Object.assign(new Error('Для нескольких файлов ведомства настройте повторное открытие каждой карточки'),{code:'UI_BINDING_REQUIRED'});\n for(const file of current.values()){\n  const key=/^[a-z]:[\\\\/]/i.test(file.path)?file.path.toLowerCase():file.path;\n  if(selected.has(key))throw Object.assign(new Error('Один XML выбран для разных ведомств'),{code:'AUTHORITY_FILE_CONFLICT'});\n  selected.add(key);reports.push({...file,authority:plan.authority,state:'selected',validation_result:null,sbis_status:null});\n }}return reports;\n})()"
         },
         "save_as": "reports",
+        "private": true
+      },
+      {
+        "action": "compute",
+        "title": "Определить рабочую отправку",
+        "description": "Отличает рабочую отправку от preflight и проверки без отправки.",
+        "params": {
+          "expression": "context.mode==='send'&&context.submit_enabled===true"
+        },
+        "save_as": "send_requested",
+        "private": true
+      },
+      {
+        "action": "if",
+        "title": "Проверить существующий архив до любых отправок",
+        "description": "Отсутствующий каталог и совпадение имени XML в архиве останавливают задание до запуска браузера.",
+        "params": {
+          "condition": "{{send_requested}}"
+        },
+        "then": [
+          {
+            "action": "files_list",
+            "title": "Проверить доступность каталога архива",
+            "params": {
+              "directory": "{{loaded_dir}}"
+            },
+            "save_as": "archive_existing",
+            "private": true
+          },
+          {
+            "action": "compute",
+            "title": "Проверить отсутствие конфликтующих архивных XML",
+            "params": {
+              "expression": "!context.reports.some(r=>context.archive_existing.some(a=>a.filename.toLowerCase()===r.filename.toLowerCase()))"
+            },
+            "save_as": "archive_clear",
+            "private": true
+          },
+          {
+            "action": "assert",
+            "title": "Запретить отправку при конфликте архива",
+            "params": {
+              "condition": "{{archive_clear}}",
+              "error_code": "ARCHIVE_CONFLICT",
+              "message": "XML с таким именем уже находится в архиве"
+            }
+          }
+        ],
+        "timeout_ms": "{{control_timeout_ms}}",
         "private": true
       },
       {
@@ -743,18 +819,19 @@
         }
       },
       {
-        "action": "call",
-        "title": "Открыть страницу входа",
-        "description": "Открыть страницу входа",
+        "action": "browser_steps",
+        "title": "Открыть страницу входа до чтения её DOM",
+        "description": "Открыть страницу входа до чтения её DOM",
         "params": {
-          "flow_steps": [
+          "steps": [
             {
               "type": "navigate",
-              "url": "{{login_url}}"
+              "url": "{{login_url}}",
+              "description": "Завершает начальную навигацию перед анализом подсказок и кнопок входа."
             }
-          ]
+          ],
+          "timeout_ms": 30000
         },
-        "routine": "browser",
         "private": true
       },
       {
@@ -765,7 +842,8 @@
           "flow_steps": "{{auth_steps}}"
         },
         "routine": "browser",
-        "private": true
+        "private": true,
+        "timeout_ms": "{{control_timeout_ms}}"
       },
       {
         "action": "browser_wait",
@@ -829,7 +907,8 @@
               "message": "Требуется явный выбор сертификата"
             }
           }
-        ]
+        ],
+        "timeout_ms": "{{control_timeout_ms}}"
       },
       {
         "action": "browser_wait",
@@ -850,7 +929,8 @@
           "flow_steps": "{{ui.certificate_after_steps}}"
         },
         "routine": "browser",
-        "private": true
+        "private": true,
+        "timeout_ms": "{{control_timeout_ms}}"
       },
       {
         "action": "browser_eval",
@@ -908,10 +988,12 @@
               ]
             },
             "routine": "browser",
-            "private": true
+            "private": true,
+            "timeout_ms": "{{control_timeout_ms}}"
           }
         ],
-        "else": []
+        "else": [],
+        "timeout_ms": "{{control_timeout_ms}}"
       },
       {
         "action": "browser_wait",
@@ -955,7 +1037,8 @@
           }
         },
         "routine": "phase",
-        "private": true
+        "private": true,
+        "timeout_ms": "{{control_timeout_ms}}"
       },
       {
         "action": "call",
@@ -970,7 +1053,8 @@
           ]
         },
         "routine": "browser",
-        "private": true
+        "private": true,
+        "timeout_ms": "{{control_timeout_ms}}"
       },
       {
         "action": "for_each",
@@ -1013,7 +1097,8 @@
               ]
             },
             "routine": "browser",
-            "private": true
+            "private": true,
+            "timeout_ms": "{{control_timeout_ms}}"
           },
           {
             "action": "call",
@@ -1023,7 +1108,8 @@
               "flow_steps": "{{ui.authority_steps}}"
             },
             "routine": "browser",
-            "private": true
+            "private": true,
+            "timeout_ms": "{{control_timeout_ms}}"
           },
           {
             "action": "browser_wait",
@@ -1047,7 +1133,8 @@
               "flow_steps": "{{ui.organization_steps}}"
             },
             "routine": "browser",
-            "private": true
+            "private": true,
+            "timeout_ms": "{{control_timeout_ms}}"
           },
           {
             "action": "browser_wait",
@@ -1075,7 +1162,8 @@
               ]
             },
             "routine": "browser",
-            "private": true
+            "private": true,
+            "timeout_ms": "{{control_timeout_ms}}"
           },
           {
             "action": "call",
@@ -1085,7 +1173,8 @@
               "flow_steps": "{{ui.authority_steps}}"
             },
             "routine": "browser",
-            "private": true
+            "private": true,
+            "timeout_ms": "{{control_timeout_ms}}"
           },
           {
             "action": "browser_wait",
@@ -1115,7 +1204,8 @@
               }
             },
             "routine": "phase",
-            "private": true
+            "private": true,
+            "timeout_ms": "{{control_timeout_ms}}"
           },
           {
             "action": "compute",
@@ -1177,7 +1267,8 @@
                       ]
                     },
                     "routine": "browser",
-                    "private": true
+                    "private": true,
+                    "timeout_ms": "{{control_timeout_ms}}"
                   },
                   {
                     "action": "call",
@@ -1187,7 +1278,8 @@
                       "flow_steps": "{{ui.authority_steps}}"
                     },
                     "routine": "browser",
-                    "private": true
+                    "private": true,
+                    "timeout_ms": "{{control_timeout_ms}}"
                   },
                   {
                     "action": "browser_wait",
@@ -1250,7 +1342,8 @@
                       "flow_steps": "{{picker_steps}}"
                     },
                     "routine": "browser",
-                    "private": true
+                    "private": true,
+                    "timeout_ms": "{{control_timeout_ms}}"
                   },
                   {
                     "action": "compute",
@@ -1270,7 +1363,8 @@
                       "flow_steps": "{{directory_navigation_steps}}"
                     },
                     "routine": "browser",
-                    "private": true
+                    "private": true,
+                    "timeout_ms": "{{control_timeout_ms}}"
                   },
                   {
                     "action": "compute",
@@ -1290,7 +1384,8 @@
                       "flow_steps": "{{file_row_wait_steps}}"
                     },
                     "routine": "browser",
-                    "private": true
+                    "private": true,
+                    "timeout_ms": "{{control_timeout_ms}}"
                   },
                   {
                     "action": "browser_eval",
@@ -1318,7 +1413,8 @@
                     "description": "store_report",
                     "params": {},
                     "routine": "store_report",
-                    "private": true
+                    "private": true,
+                    "timeout_ms": "{{control_timeout_ms}}"
                   },
                   {
                     "action": "compute",
@@ -1338,7 +1434,8 @@
                       "flow_steps": "{{select_file_steps}}"
                     },
                     "routine": "browser",
-                    "private": true
+                    "private": true,
+                    "timeout_ms": "{{control_timeout_ms}}"
                   },
                   {
                     "action": "call",
@@ -1348,7 +1445,8 @@
                       "capture_key": true
                     },
                     "routine": "identity",
-                    "private": true
+                    "private": true,
+                    "timeout_ms": "{{control_timeout_ms}}"
                   },
                   {
                     "action": "compute",
@@ -1366,7 +1464,8 @@
                     "description": "store_report",
                     "params": {},
                     "routine": "store_report",
-                    "private": true
+                    "private": true,
+                    "timeout_ms": "{{control_timeout_ms}}"
                   },
                   {
                     "action": "call",
@@ -1374,11 +1473,13 @@
                     "description": "Проверить отчёт и сохранить текст результата",
                     "params": {},
                     "routine": "validate",
-                    "private": true
+                    "private": true,
+                    "timeout_ms": "{{control_timeout_ms}}"
                   }
                 ],
                 "index_as": "report_index",
-                "private": true
+                "private": true,
+                "timeout_ms": "{{control_timeout_ms}}"
               },
               {
                 "action": "compute",
@@ -1435,7 +1536,8 @@
                           "flow_steps": "{{ui.reopen_steps}}"
                         },
                         "routine": "browser",
-                        "private": true
+                        "private": true,
+                        "timeout_ms": "{{control_timeout_ms}}"
                       },
                       {
                         "action": "call",
@@ -1443,7 +1545,8 @@
                         "description": "Повторно проверить точную карточку перед отправкой",
                         "params": {},
                         "routine": "validate",
-                        "private": true
+                        "private": true,
+                        "timeout_ms": "{{control_timeout_ms}}"
                       },
                       {
                         "action": "compute",
@@ -1490,7 +1593,8 @@
                         "description": "store_report",
                         "params": {},
                         "routine": "store_report",
-                        "private": true
+                        "private": true,
+                        "timeout_ms": "{{control_timeout_ms}}"
                       },
                       {
                         "action": "call",
@@ -1500,7 +1604,8 @@
                           "flow_steps": "{{ui.submit_steps}}"
                         },
                         "routine": "browser",
-                        "private": true
+                        "private": true,
+                        "timeout_ms": "{{control_timeout_ms}}"
                       },
                       {
                         "action": "call",
@@ -1510,7 +1615,8 @@
                         "params": {
                           "capture_key": false
                         },
-                        "private": true
+                        "private": true,
+                        "timeout_ms": "{{control_timeout_ms}}"
                       },
                       {
                         "action": "browser_eval",
@@ -1555,7 +1661,8 @@
                             "title": "Сохранить блокировку отчёта",
                             "description": "Обновляет результат текущего отчёта перед возвратом ошибки.",
                             "params": {},
-                            "private": true
+                            "private": true,
+                            "timeout_ms": "{{control_timeout_ms}}"
                           },
                           {
                             "action": "fail",
@@ -1567,17 +1674,274 @@
                             }
                           }
                         ],
-                        "else": []
+                        "else": [],
+                        "timeout_ms": "{{control_timeout_ms}}"
+                      },
+                      {
+                        "action": "browser_eval",
+                        "title": "Прочитать предупреждение о действующей лицензии в долг",
+                        "description": "Прочитать предупреждение о действующей лицензии в долг",
+                        "params": {
+                          "expression": "(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const caption=context.ui.license_debt_caption;\n if(!caption)return null;\n const has=e=>e.textContent.replace(/\\s+/g,' ').includes(caption);\n const messages=[...document.querySelectorAll('*')].filter(e=>v(e)&&has(e)&&![...e.children].some(has));\n if(!messages.length)return null;\n const scopes=[...document.querySelectorAll(context.ui.current_card_scope_selector)].filter(v);\n if(messages.length!==1||scopes.length!==1)throw Object.assign(new Error('Неоднозначное окно лицензии'),{code:'UI_BINDING_REQUIRED'});\n const statuses=[...scopes[0].querySelectorAll(context.ui.unsent_status_selector)].filter(v);\n const sent=[...scopes[0].querySelectorAll(context.ui.sent_status_selector)].filter(v).map(e=>e.innerText.trim());\n if(sent.some(t=>(context.ui.sent_status_texts||[]).includes(t)||t===context.ui.sent_status_text||/^Отправ(?:ляется|лен|лено)/i.test(t)))throw Object.assign(new Error('Противоречивый статус отправки'),{code:'REQUIRES_RECONCILIATION'});\n const buttons=[...document.querySelectorAll(context.ui.license_debt_button_selector)].filter(v);\n const pay=[...document.querySelectorAll(context.ui.license_pay_button_selector)].filter(v);\n if(statuses.length!==1||statuses[0].innerText.trim()!==context.ui.unsent_status_text||buttons.length!==1||pay.length!==1)throw Object.assign(new Error('Не подтверждена текущая неотправленная карточка'),{code:'REQUIRES_RECONCILIATION'});\n const match=/^Оплатить\\s+([\\d\\s\\u00a0\\u202f]+)\\s*₽$/.exec(pay[0].innerText.trim());\n return {requires_confirmation:true,amount:match?Number(match[1].replace(/\\s/g,'')):null,currency:'RUB'};\n})()"
+                        },
+                        "private": true,
+                        "save_as": "license_quote"
+                      },
+                      {
+                        "action": "compute",
+                        "title": "Определить наличие финансового предупреждения",
+                        "description": "Определить наличие финансового предупреждения",
+                        "params": {
+                          "expression": "context.license_quote!=null"
+                        },
+                        "private": true,
+                        "save_as": "license_debt_visible"
+                      },
+                      {
+                        "action": "if",
+                        "title": "Проверить отдельное разрешение на В долг",
+                        "description": "Проверить отдельное разрешение на В долг",
+                        "params": {
+                          "condition": "{{license_debt_visible}}"
+                        },
+                        "then": [
+                          {
+                            "action": "compute",
+                            "title": "Сверить разрешение и ожидаемую сумму",
+                            "description": "Сверить разрешение и ожидаемую сумму",
+                            "params": {
+                              "expression": "context.license_debt_enabled===true&&context.license_quote.amount===context.license_debt_expected_amount"
+                            },
+                            "private": true,
+                            "save_as": "license_debt_authorized"
+                          },
+                          {
+                            "action": "if",
+                            "title": "Продолжить только при совпадении финансовых условий",
+                            "description": "Продолжить только при совпадении финансовых условий",
+                            "params": {
+                              "condition": "{{license_debt_authorized}}"
+                            },
+                            "then": [
+                              {
+                                "action": "browser_wait",
+                                "title": "Дождаться разрешенной кнопки В долг и неизменной суммы",
+                                "description": "Дождаться разрешенной кнопки В долг и неизменной суммы",
+                                "params": {
+                                  "expression": "(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const buttons=[...document.querySelectorAll(context.ui.license_debt_button_selector)].filter(v);\n const pay=[...document.querySelectorAll(context.ui.license_pay_button_selector)].filter(v);\n const match=pay.length===1?/^Оплатить\\s+([\\d\\s\\u00a0\\u202f]+)\\s*₽$/.exec(pay[0].innerText.trim()):null;\n return buttons.length===1&&!buttons[0].disabled&&buttons[0].getAttribute('aria-disabled')!=='true'&&match&&Number(match[1].replace(/\\s/g,''))===context.license_debt_expected_amount;\n})()",
+                                  "timeout_ms": 90000
+                                },
+                                "timeout_ms": 95000,
+                                "private": true
+                              },
+                              {
+                                "action": "call",
+                                "title": "Сверить карточку перед финансовым продолжением",
+                                "description": "Сверить карточку перед финансовым продолжением",
+                                "params": {
+                                  "capture_key": false
+                                },
+                                "routine": "identity",
+                                "private": true,
+                                "timeout_ms": "{{control_timeout_ms}}"
+                              },
+                              {
+                                "action": "browser_eval",
+                                "title": "Защитить нативный клик повторной сверкой суммы и карточки",
+                                "description": "Защитить нативный клик повторной сверкой суммы и карточки",
+                                "params": {
+                                  "expression": "(() => {\n if(window.__sfDebtCleanup)window.__sfDebtCleanup();\n const read=()=>(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\nconst cards=[...document.querySelectorAll(context.ui.report_scope_selector)].filter(v);if(cards.length!==1||!new RegExp('(^|[^0-9])'+context.inn+'([^0-9]|$)').test(cards[0].innerText+' '+[...cards[0].querySelectorAll('input,textarea')].filter(v).map(e=>e.value).join(' '))||String(({{ui.report_key_expression}}))!==String(context.report.report_key))throw Object.assign(new Error('Карточка изменилась'),{code:'REPORT_IDENTITY_MISMATCH'});\n const caption=context.ui.license_debt_caption;\n if(!caption)throw Object.assign(new Error('Нет сообщения лицензии'),{code:'REQUIRES_RECONCILIATION'});\n const has=e=>e.textContent.replace(/\\s+/g,' ').includes(caption);\n const messages=[...document.querySelectorAll('*')].filter(e=>v(e)&&has(e)&&![...e.children].some(has));\n if(!messages.length)throw Object.assign(new Error('Нет сообщения лицензии'),{code:'REQUIRES_RECONCILIATION'});\n const scopes=[...document.querySelectorAll(context.ui.current_card_scope_selector)].filter(v);\n if(messages.length!==1||scopes.length!==1)throw Object.assign(new Error('Неоднозначное окно лицензии'),{code:'UI_BINDING_REQUIRED'});\n const statuses=[...scopes[0].querySelectorAll(context.ui.unsent_status_selector)].filter(v);\n const sent=[...scopes[0].querySelectorAll(context.ui.sent_status_selector)].filter(v).map(e=>e.innerText.trim());\n if(sent.some(t=>(context.ui.sent_status_texts||[]).includes(t)||t===context.ui.sent_status_text||/^Отправ(?:ляется|лен|лено)/i.test(t)))throw Object.assign(new Error('Противоречивый статус отправки'),{code:'REQUIRES_RECONCILIATION'});\n const buttons=[...document.querySelectorAll(context.ui.license_debt_button_selector)].filter(v);\n const pay=[...document.querySelectorAll(context.ui.license_pay_button_selector)].filter(v);\n if(statuses.length!==1||statuses[0].innerText.trim()!==context.ui.unsent_status_text||buttons.length!==1||pay.length!==1)throw Object.assign(new Error('Не подтверждена текущая неотправленная карточка'),{code:'REQUIRES_RECONCILIATION'});\n const match=/^Оплатить\\s+([\\d\\s\\u00a0\\u202f]+)\\s*₽$/.exec(pay[0].innerText.trim());\n return {requires_confirmation:true,amount:match?Number(match[1].replace(/\\s/g,'')):null,currency:'RUB'};\n})();\n const expected=context.license_debt_expected_amount;\n const initial=read();\n window.__sfDebtError=initial.amount===expected?null:'LICENSE_PRICE_CHANGED';\n const handler=event=>{\n  if(!event.target.closest(context.ui.license_debt_button_selector))return;\n  try {const quote=read();if(quote.amount!==expected)window.__sfDebtError='LICENSE_PRICE_CHANGED';}\n  catch(error){window.__sfDebtError=error.code||'REQUIRES_RECONCILIATION';}\n  if(window.__sfDebtError){event.preventDefault();event.stopImmediatePropagation();}\n };\n const types=['pointerdown','mousedown','mouseup','click'];\n types.forEach(type=>window.addEventListener(type,handler,true));\n window.__sfDebtCleanup=()=>{types.forEach(type=>window.removeEventListener(type,handler,true));delete window.__sfDebtCleanup;};\n return true;\n})()"
+                                },
+                                "private": true
+                              },
+                              {
+                                "action": "browser_steps",
+                                "title": "Продолжить В долг с проверкой на каждом событии клика",
+                                "description": "Продолжить В долг с проверкой на каждом событии клика",
+                                "params": {
+                                  "steps": [
+                                    {
+                                      "type": "click",
+                                      "selectors": [
+                                        [
+                                          "{{ui.license_debt_button_selector}}"
+                                        ]
+                                      ],
+                                      "offsetX": 20,
+                                      "offsetY": 10
+                                    }
+                                  ]
+                                },
+                                "private": true
+                              },
+                              {
+                                "action": "browser_eval",
+                                "title": "Снять защиту и получить результат финансовой проверки",
+                                "description": "Снять защиту и получить результат финансовой проверки",
+                                "params": {
+                                  "expression": "(()=>{const code=window.__sfDebtError;window.__sfDebtCleanup?.();delete window.__sfDebtError;if(code&&code!=='LICENSE_PRICE_CHANGED')throw Object.assign(new Error('Карточка или статус изменились'),{code});return code==='LICENSE_PRICE_CHANGED'})()"
+                                },
+                                "private": true,
+                                "save_as": "late_license_price_changed"
+                              },
+                              {
+                                "action": "if",
+                                "title": "Остановиться при позднем изменении суммы",
+                                "description": "Остановиться при позднем изменении суммы",
+                                "params": {
+                                  "condition": "{{late_license_price_changed}}"
+                                },
+                                "private": true,
+                                "then": [
+                                  {
+                                    "action": "set",
+                                    "title": "Зафиксировать остановку до финансового решения",
+                                    "description": "Зафиксировать остановку до финансового решения",
+                                    "params": {
+                                      "submission_started": false
+                                    },
+                                    "private": true
+                                  },
+                                  {
+                                    "action": "compute",
+                                    "title": "Сохранить проверенный неотправленный отчет",
+                                    "description": "Сохранить проверенный неотправленный отчет",
+                                    "params": {
+                                      "expression": "({...context.report,state:'validated',sbis_status:'Требуется решение по лицензии'})"
+                                    },
+                                    "private": true,
+                                    "save_as": "report"
+                                  },
+                                  {
+                                    "action": "call",
+                                    "title": "Сохранить причину остановки отчета",
+                                    "description": "Сохранить причину остановки отчета",
+                                    "params": {},
+                                    "routine": "store_report",
+                                    "private": true,
+                                    "timeout_ms": "{{control_timeout_ms}}"
+                                  },
+                                  {
+                                    "action": "compute",
+                                    "title": "Определить причину запрета продолжения",
+                                    "description": "Определить причину запрета продолжения",
+                                    "params": {
+                                      "expression": "'LICENSE_PRICE_CHANGED'"
+                                    },
+                                    "private": true,
+                                    "save_as": "license_error_code"
+                                  },
+                                  {
+                                    "action": "fail",
+                                    "title": "Не продолжать без разрешения на финансовые условия",
+                                    "description": "Не продолжать без разрешения на финансовые условия",
+                                    "params": {
+                                      "error_code": "{{license_error_code}}",
+                                      "message": "СБИС требует решение по лицензии; продолжение В долг не разрешено либо сумма изменилась"
+                                    }
+                                  }
+                                ],
+                                "else": [
+                                  {
+                                    "action": "compute",
+                                    "title": "Сохранить выбранное продолжение без оплаты",
+                                    "description": "Отмечает отдельно разрешенное продолжение В долг; не подтверждает оплату счета.",
+                                    "params": {
+                                      "expression": "({...context.license_quote,requires_confirmation:false,continuation:'debt'})"
+                                    },
+                                    "save_as": "license_quote",
+                                    "private": true
+                                  }
+                                ],
+                                "timeout_ms": "{{control_timeout_ms}}"
+                              }
+                            ],
+                            "else": [
+                              {
+                                "action": "set",
+                                "title": "Зафиксировать остановку до финансового решения",
+                                "description": "Зафиксировать остановку до финансового решения",
+                                "params": {
+                                  "submission_started": false
+                                },
+                                "private": true
+                              },
+                              {
+                                "action": "compute",
+                                "title": "Сохранить проверенный неотправленный отчет",
+                                "description": "Сохранить проверенный неотправленный отчет",
+                                "params": {
+                                  "expression": "({...context.report,state:'validated',sbis_status:'Требуется решение по лицензии'})"
+                                },
+                                "private": true,
+                                "save_as": "report"
+                              },
+                              {
+                                "action": "call",
+                                "title": "Сохранить причину остановки отчета",
+                                "description": "Сохранить причину остановки отчета",
+                                "params": {},
+                                "routine": "store_report",
+                                "private": true,
+                                "timeout_ms": "{{control_timeout_ms}}"
+                              },
+                              {
+                                "action": "compute",
+                                "title": "Определить причину запрета продолжения",
+                                "description": "Определить причину запрета продолжения",
+                                "params": {
+                                  "expression": "context.license_debt_enabled===true?'LICENSE_PRICE_CHANGED':'REPORTING_LICENSE_CONFIRMATION_REQUIRED'"
+                                },
+                                "private": true,
+                                "save_as": "license_error_code"
+                              },
+                              {
+                                "action": "fail",
+                                "title": "Не продолжать без разрешения на финансовые условия",
+                                "description": "Не продолжать без разрешения на финансовые условия",
+                                "params": {
+                                  "error_code": "{{license_error_code}}",
+                                  "message": "СБИС требует решение по лицензии; продолжение В долг не разрешено либо сумма изменилась"
+                                }
+                              }
+                            ],
+                            "private": true,
+                            "timeout_ms": "{{control_timeout_ms}}"
+                          }
+                        ],
+                        "private": true,
+                        "timeout_ms": "{{control_timeout_ms}}"
                       },
                       {
                         "action": "browser_wait",
                         "title": "Дождаться точного подтверждённого статуса отправки",
                         "description": "Дождаться точного подтверждённого статуса отправки",
                         "params": {
-                          "expression": "(() => {const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden');return roots.length===1&&roots[0].querySelector(context.ui.sent_status_selector)?.innerText.trim()===context.ui.sent_status_text;})()",
+                          "expression": "(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(v);\n if(roots.length!==1)return false;\n const es=[...roots[0].querySelectorAll(context.ui.sent_status_selector)].filter(v);\n return es.length===1&&[context.ui.sent_status_text,...(context.ui.sent_status_texts||[])].includes(es[0].innerText.trim());\n})()",
                           "timeout_ms": "{{submit_timeout_ms}}"
                         },
                         "timeout_ms": "{{submit_step_timeout_ms}}",
+                        "private": true
+                      },
+                      {
+                        "action": "call",
+                        "title": "Повторно сверить ИНН и ключ после отправки",
+                        "description": "Повторно сверить ИНН и ключ после отправки",
+                        "params": {
+                          "capture_key": false
+                        },
+                        "routine": "identity",
+                        "private": true,
+                        "timeout_ms": "{{control_timeout_ms}}"
+                      },
+                      {
+                        "action": "browser_eval",
+                        "title": "Прочитать фактический подтвержденный статус",
+                        "description": "Сохраняет текст статуса текущей карточки, включая уже полученное Отчет сдан.",
+                        "params": {
+                          "expression": "(()=>{const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(v);if(roots.length!==1)throw new Error('Неоднозначная карточка');const es=[...roots[0].querySelectorAll(context.ui.sent_status_selector)].filter(v);if(es.length!==1||![context.ui.sent_status_text,...(context.ui.sent_status_texts||[])].includes(es[0].innerText.trim()))throw new Error('Статус изменился до подтверждения');return es[0].innerText.trim()})()"
+                        },
+                        "save_as": "confirmed_sent_status",
                         "private": true
                       },
                       {
@@ -1585,7 +1949,7 @@
                         "title": "Зафиксировать подтверждённую отправку",
                         "description": "Зафиксировать подтверждённую отправку",
                         "params": {
-                          "expression": "({...context.report,state:'sent',sbis_status:context.ui.sent_status_text})"
+                          "expression": "({...context.report,state:'sent',sbis_status:context.confirmed_sent_status})"
                         },
                         "save_as": "report",
                         "private": true
@@ -1596,11 +1960,13 @@
                         "description": "store_report",
                         "params": {},
                         "routine": "store_report",
-                        "private": true
+                        "private": true,
+                        "timeout_ms": "{{control_timeout_ms}}"
                       }
                     ],
                     "index_as": "report_index",
-                    "private": true
+                    "private": true,
+                    "timeout_ms": "{{control_timeout_ms}}"
                   },
                   {
                     "action": "compute",
@@ -1686,22 +2052,28 @@
                             "description": "store_report",
                             "params": {},
                             "routine": "store_report",
-                            "private": true
+                            "private": true,
+                            "timeout_ms": "{{control_timeout_ms}}"
                           }
                         ],
-                        "private": true
+                        "private": true,
+                        "timeout_ms": "{{control_timeout_ms}}"
                       }
                     ],
-                    "else": []
+                    "else": [],
+                    "timeout_ms": "{{control_timeout_ms}}"
                   }
                 ],
-                "else": []
+                "else": [],
+                "timeout_ms": "{{control_timeout_ms}}"
               }
             ],
-            "else": []
+            "else": [],
+            "timeout_ms": "{{control_timeout_ms}}"
           }
         ],
-        "private": true
+        "private": true,
+        "timeout_ms": "{{control_timeout_ms}}"
       },
       {
         "action": "call",
@@ -1709,7 +2081,8 @@
         "description": "Сформировать итоговый результат для 1С",
         "params": {},
         "routine": "result",
-        "private": true
+        "private": true,
+        "timeout_ms": "{{control_timeout_ms}}"
       },
       {
         "action": "browser_screenshot",
@@ -1747,7 +2120,8 @@
             }
           }
         ],
-        "else": []
+        "else": [],
+        "timeout_ms": "{{control_timeout_ms}}"
       }
     ],
     "on_error": [
@@ -1756,7 +2130,7 @@
         "title": "Определить итог при ошибке",
         "description": "Определить итог при ошибке",
         "params": {
-          "expression": "context.error.code==='REPORTING_LICENSE_REQUIRED'?'license_required':context.error.code==='VALIDATION_ERROR'?'validation_failed':context.submission_started?'requires_reconciliation':'failed'"
+          "expression": "['REPORTING_LICENSE_CONFIRMATION_REQUIRED','LICENSE_PRICE_CHANGED'].includes(context.error.code)?'license_confirmation_required':context.error.code==='REPORTING_LICENSE_REQUIRED'?'license_required':context.error.code==='VALIDATION_ERROR'?'validation_failed':context.submission_started?'requires_reconciliation':'failed'"
         },
         "save_as": "result_state",
         "private": true
@@ -1767,7 +2141,8 @@
         "description": "Сохранить подтверждённый частичный результат",
         "params": {},
         "routine": "result",
-        "private": true
+        "private": true,
+        "timeout_ms": "{{control_timeout_ms}}"
       }
     ],
     "output": {

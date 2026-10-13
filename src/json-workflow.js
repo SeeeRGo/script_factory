@@ -82,7 +82,10 @@ export async function executeJsonWorkflow(options) {
       case 'assert': if (params.condition !== true) fail(params.error_code || 'ASSERTION_FAILED', params.message || 'Условие не выполнено'); return true;
       case 'fail': fail(params.error_code || 'WORKFLOW_FAILED', params.message || 'Сценарий остановлен'); break;
       case 'wait': await abortableDelay(params.duration_ms || 0, activeSignal); return true;
-      case 'if': await run(params.condition === true ? step.then || [] : step.else || [], activeSignal, depth + 1); return null;
+      case 'if':
+        if (typeof params.condition !== 'boolean') fail('INVALID_CONDITION', 'params.condition должен разрешаться в Boolean');
+        await run(params.condition ? step.then || [] : step.else || [], activeSignal, depth + 1);
+        return null;
       case 'for_each': {
         if (!Array.isArray(params.items)) fail('INVALID_ITERATION', 'items должен быть массивом');
         if (params.items.length > 1000) fail('WORKFLOW_LIMIT', 'Слишком много итераций');

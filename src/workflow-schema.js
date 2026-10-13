@@ -30,6 +30,9 @@ export function validateWorkflow(script) {
         visit(step.steps, `${at}.steps`, depth + 1);
       }
       if (step.action === 'if') {
+        if (typeof step.params?.condition !== 'boolean' && !timeoutTemplate(step.params?.condition)) {
+          add(at + '.params.condition', 'Укажите Boolean или шаблон переменной в params.condition');
+        }
         visit(step.then || [], `${at}.then`, depth + 1);
         visit(step.else || [], `${at}.else`, depth + 1);
       }
