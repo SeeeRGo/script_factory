@@ -1,7 +1,7 @@
 {
   "format": "json-workflow",
   "title": "СБИС: ФНС, СФР и Росстат из JSON",
-  "version": "2.0.3",
+  "version": "3.0.0",
   "default_step_timeout_ms": 60000,
   "context": {
     "mode": "validate_only",
@@ -376,10 +376,19 @@
         "title": "Обновить состояние текущего отчёта",
         "description": "Обновить состояние текущего отчёта",
         "params": {
-          "expression": "context.reports.map(r=>r.path===context.report.path?context.report:r)"
+          "expression": "context.reports.map(r=>r.path===context.report.path?{...context.report,license_quote:context.license_quote||context.report.license_quote||null}:r)"
         },
         "save_as": "reports",
         "private": true
+      },
+      {
+        "action": "call",
+        "routine": "project_results",
+        "title": "Обновить результаты отдельных отчетов",
+        "description": "Обновляет плоские результаты для API и частичного завершения.",
+        "params": {},
+        "private": true,
+        "timeout_ms": "{{control_timeout_ms}}"
       }
     ],
     "identity": [
@@ -579,20 +588,19 @@
     ],
     "result": [
       {
-        "action": "compute",
-        "title": "Сформировать результат для 1С",
-        "description": "Сформировать результат для 1С",
-        "params": {
-          "expression": "(() => {\n const reports=context.reports||[],plans=context.plans||[];\n const state=context.result_state || (context.mode==='preflight'?'preflight_completed':reports.some(r=>r.state==='validation_failed')?'validation_failed':reports.length&&reports.every(r=>r.state==='archived')?'sent':'validated_not_sent');\n return {state,inn:context.inn,authority:plans.length===1?plans[0].authority:null,mode:context.mode,\n authorities:plans.map(p=>{const items=reports.filter(r=>r.authority===p.authority);return {authority:p.authority,prefixes:p.prefixes,state:context.mode==='preflight'&& !context.result_state?'preflight_completed':items.some(r=>r.state==='validation_failed')?'validation_failed':items.length&&items.every(r=>r.state==='archived')?'sent':context.result_state||'validated_not_sent',report_count:items.length};}),\n ...(context.license_quote?{license:context.license_quote}:{}),\n reports:reports.map(r=>({authority:r.authority,file_name:r.filename,sha256:r.sha256,state:r.state,load_datetime:r.load_datetime||null,validation_result:r.validation_result,file_selection_verified:!!r.file_selection_verified,report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,sbis_status:r.sbis_status,archived_path:r.archived_path||null})),phases:context.phases||[]};\n})()"
-        },
-        "save_as": "Rezult_1",
-        "private": true
+        "action": "call",
+        "routine": "project_results",
+        "title": "Обновить результаты отдельных отчетов",
+        "description": "Обновляет плоские результаты для API и частичного завершения.",
+        "params": {},
+        "private": true,
+        "timeout_ms": "{{control_timeout_ms}}"
       },
       {
         "action": "compute",
         "title": "Подготовить JSON результата",
         "params": {
-          "expression": "({sequence:(context.result_export_index||0)+1,text:JSON.stringify(context.Rezult_1,null,2)})"
+          "expression": "({sequence:(context.result_export_index||0)+1,text:JSON.stringify(context.report_results,null,2)})"
         },
         "save_as": "result_export",
         "private": true,
@@ -657,6 +665,18 @@
         "private": true,
         "timeout_ms": "{{control_timeout_ms}}"
       }
+    ],
+    "project_results": [
+      {
+        "action": "compute",
+        "title": "Сформировать плоские результаты каждого отчета",
+        "description": "Стабильный Rezult_N на каждый выбранный самостоятельный XML. Сохраняет отправленный статус предыдущих отчетов при последующих ошибках. Коллекции и внутренние ключи не публикуются. section_name заполняется после подтверждения импорта.",
+        "params": {
+          "expression": "(() => {\n const names={FNS:'ФНС',SFR:'СФР',ROSSTAT:'Росстат'},out={};\n for(const [index,r] of (context.reports||[]).entries()) {\n  const active=r.path===context.active_report_path;\n  const error=context.error||null;\n  const affected=!!error&&error.code!=='VALIDATION_ERROR'&&(active||context.active_report_path==null);\n  const quote=r.license_quote||(active?context.license_quote:null)||null;\n  let state;\n  if(['sent','archived'].includes(r.state))state='sent';\n  else if(r.state==='submission_unknown')state='requires_reconciliation';\n  else if(r.state==='validation_failed')state='validation_failed';\n  else if(affected&&error.code!=='VALIDATION_ERROR')state=active?(context.result_state||'failed'):'not_processed';\n  else if(context.mode==='preflight'&&!error)state='preflight_completed';\n  else state=r.state==='validated'?'validated_not_sent':'not_processed';\n  out['Rezult_'+(index+1)]={state,report_state:r.state,inn:context.inn,authority:r.authority,\n   section_name:r.load_datetime?(names[r.authority]||r.authority):null,mode:context.mode,\n   file_name:r.filename,sha256:r.sha256,load_datetime:r.load_datetime||null,\n   validation_result:r.validation_result||null,file_selection_verified:!!r.file_selection_verified,\n   report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,\n   sbis_status:r.sbis_status||null,archived_path:r.archived_path||null,\n   error_code:r.state==='validation_failed'?'VALIDATION_ERROR':affected?error.code:null,\n   error_message:r.state==='validation_failed'?'СБИС обнаружил ошибки отчетности':affected?error.message:null,\n   license_requires_confirmation:quote?.requires_confirmation??null,\n   license_amount:quote?.amount??null,license_currency:quote?.currency??null,\n   license_continuation:quote?.continuation??null};\n }\n return out;\n})()"
+        },
+        "save_as": "report_results",
+        "private": true
+      }
     ]
   },
   "steps": [
@@ -669,7 +689,10 @@
         "phases": [],
         "submission_started": false,
         "result_state": null,
-        "result_export_index": 0
+        "result_export_index": 0,
+        "report_results": {},
+        "active_report_path": null,
+        "license_quote": null
       },
       "private": true
     },
@@ -729,6 +752,15 @@
       },
       "save_as": "reports",
       "private": true
+    },
+    {
+      "action": "call",
+      "routine": "project_results",
+      "title": "Обновить результаты отдельных отчетов",
+      "description": "Обновляет плоские результаты для API и частичного завершения.",
+      "params": {},
+      "private": true,
+      "timeout_ms": "{{control_timeout_ms}}"
     },
     {
       "action": "compute",
@@ -1039,6 +1071,16 @@
       "steps": [
         {
           "action": "set",
+          "title": "Начать обработку ведомства",
+          "description": "Сбрасывает привязку ошибки к предыдущему отчету.",
+          "params": {
+            "active_report_path": null,
+            "license_quote": null
+          },
+          "private": true
+        },
+        {
+          "action": "set",
           "title": "Обновить переменные сценария",
           "description": "Обновить переменные сценария",
           "params": {
@@ -1216,6 +1258,16 @@
               },
               "as": "report",
               "steps": [
+                {
+                  "action": "set",
+                  "title": "Отметить текущий отчет для отдельного результата",
+                  "description": "Привязывает ошибку и финансовые условия только к текущему XML.",
+                  "params": {
+                    "active_report_path": "{{report.path}}",
+                    "license_quote": "{{report.license_quote}}"
+                  },
+                  "private": true
+                },
                 {
                   "action": "set",
                   "title": "Обновить переменные сценария",
@@ -1490,6 +1542,16 @@
                   },
                   "as": "report",
                   "steps": [
+                    {
+                      "action": "set",
+                      "title": "Отметить текущий отчет для отдельного результата",
+                      "description": "Привязывает ошибку и финансовые условия только к текущему XML.",
+                      "params": {
+                        "active_report_path": "{{report.path}}",
+                        "license_quote": "{{report.license_quote}}"
+                      },
+                      "private": true
+                    },
                     {
                       "action": "set",
                       "title": "Обновить переменные сценария",
@@ -1978,6 +2040,16 @@
                       "as": "report",
                       "steps": [
                         {
+                          "action": "set",
+                          "title": "Отметить текущий отчет для отдельного результата",
+                          "description": "Привязывает ошибку и финансовые условия только к текущему XML.",
+                          "params": {
+                            "active_report_path": "{{report.path}}",
+                            "license_quote": "{{report.license_quote}}"
+                          },
+                          "private": true
+                        },
+                        {
                           "action": "compute",
                           "title": "Сформировать путь архивного протокола",
                           "description": "Сформировать путь архивного протокола",
@@ -2069,7 +2141,7 @@
       "title": "Проверить наличие ошибок отчётности",
       "description": "Проверить наличие ошибок отчётности",
       "params": {
-        "expression": "context.Rezult_1.state==='validation_failed'"
+        "expression": "context.reports.some(r=>r.state==='validation_failed')"
       },
       "save_as": "validation_failed",
       "private": true
@@ -2117,7 +2189,5 @@
       "timeout_ms": "{{control_timeout_ms}}"
     }
   ],
-  "output": {
-    "Rezult_1": "{{Rezult_1}}"
-  }
+  "output": "{{report_results}}"
 }

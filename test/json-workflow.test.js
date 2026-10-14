@@ -154,3 +154,18 @@ test('browser expressions and waits work on pages restricting eval with CSP and 
   const result = await executeJsonWorkflow(await options(t, script));
   assert.equal(result.context.Rezult_1.text, 'ready');
 });
+
+test('output object template projects a dynamic number of results without leaking context', async t => {
+  const script = { ...base([
+    { action: 'compute', params: { expression: 'Object.fromEntries(context.names.map((name,i)=>["Rezult_"+(i+1),{file_name:name,section_name:"ФНС"}]))' }, save_as: 'results' }
+  ]), context: { names: ['one.xml', 'two.xml'], secret: 'private-context' }, output: '{{results}}' };
+  const result = await executeJsonWorkflow(await options(t, script));
+  assert.deepEqual(result.context, { artifacts: [], Rezult_1: { file_name: 'one.xml', section_name: 'ФНС' }, Rezult_2: { file_name: 'two.xml', section_name: 'ФНС' } });
+  for (const value of [null, [], 'bad', 3]) {
+    await assert.rejects(executeJsonWorkflow(await options(t, { ...base([]), context: { results: value }, output: '{{results}}' })), error => {
+      assert.equal(error.code, 'INVALID_OUTPUT'); assert.deepEqual(error.partial_context, { artifacts: [] }); return true;
+    });
+  }
+  const failed = { ...base([{ action: 'fail', params: { error_code: 'ORIGINAL_ERROR' } }]), context: { results: 'bad', secret: 'private' }, output: '{{results}}' };
+  await assert.rejects(executeJsonWorkflow(await options(t, failed)), error => error.code === 'ORIGINAL_ERROR' && Object.keys(error.partial_context).length === 1);
+});

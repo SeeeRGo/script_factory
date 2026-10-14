@@ -51,7 +51,12 @@ export async function executeJsonWorkflow(options) {
   const emit = event => onEvent({ ts: new Date().toISOString(), ...event });
   const close = () => { void browser?.close().catch(() => {}); };
   signal?.addEventListener('abort', close, { once: true });
-  const projection = () => ({ ...(script.output ? resolveTemplates(script.output, context) : clone(context)), artifacts: [...artifacts] });
+  const projection = (strict = false) => {
+    const output = script.output === undefined ? clone(context) : resolveTemplates(script.output, context);
+    const valid = output !== null && typeof output === 'object' && !Array.isArray(output);
+    if (!valid && strict) fail('INVALID_OUTPUT', 'output должен разрешаться в объект');
+    return { ...(valid ? output : {}), artifacts: [...artifacts] };
+  };
   const requirePage = () => { if (!page || page.isClosed()) fail('BROWSER_NOT_STARTED', 'Браузер не запущен'); };
   const writeArtifact = async (filename, value, mime = 'text/plain', kind = 'workflow_artifact') => {
     if (!artifactDirectory || typeof filename !== 'string' || !filename || path.basename(filename) !== filename || filename === '.' || filename === '..' || /[\\/]/.test(filename)) fail('INVALID_ARTIFACT', 'Неверное имя артефакта');
@@ -208,7 +213,7 @@ export async function executeJsonWorkflow(options) {
   await emit({ type: 'script_started', execution_steps: [], total_steps: 0, runtime: 'json-workflow' });
   try {
     await run(script.steps, signal);
-    const result = { steps_executed: completed, duration_ms: Date.now() - startedAt, context: projection() };
+    const result = { steps_executed: completed, duration_ms: Date.now() - startedAt, context: projection(true) };
     await emit({ type: 'script_completed', result });
     return result;
   } catch (error) {

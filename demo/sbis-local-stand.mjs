@@ -142,8 +142,10 @@ try {
     assert.equal((await readdir(loaded)).length, scenario === 'success' ? 6 : 0);
     const artifact = job.result.artifacts.filter(a => /^result-\d+\.json$/.test(a.filename)).at(-1);
     assert.ok(artifact);
-    const downloaded = await (await request(artifact.api_url)).json(); assert.deepEqual(downloaded, job.result.Rezult_1);
-    const callback = await until(async () => callbacks.get(id)); assert.deepEqual(callback.job.result.Rezult_1, downloaded);
+    const downloaded = await (await request(artifact.api_url)).json(); assert.deepEqual(downloaded, Object.fromEntries(Object.entries(job.result).filter(([key])=>/^Rezult_[1-9]\d*$/.test(key))));
+    const callback = await until(async () => callbacks.get(id)); assert.deepEqual(Object.fromEntries(Object.entries(callback.job.result).filter(([key])=>/^Rezult_[1-9]\d*$/.test(key))), downloaded);
+    assert.equal(Object.keys(downloaded).length,3);
+    for(const record of Object.values(downloaded))for(const value of Object.values(record))assert.ok(value===null||['string','number','boolean'].includes(typeof value));
     assert.equal(callback.job.status, job.status); assert.equal(callback.job.error?.code, job.error?.code);
     proof.scenarios.push({ scenario, job_id: id, status: job.status, state: expected, error_code: job.error?.code || null, imported: state.imported,
       checked: state.checked, simulated_submissions: state.submitted, blocked_attempts: state.attempted, archived_files: (await readdir(loaded)).length,

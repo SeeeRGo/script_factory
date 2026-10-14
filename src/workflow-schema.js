@@ -11,7 +11,7 @@ export function validateWorkflow(script) {
   const add = (path, message) => errors.push({ path, message });
   if (!script || script.format !== 'json-workflow') return [{ path: 'script.format', message: 'Ожидается json-workflow' }];
   if (script.context != null && (typeof script.context !== 'object' || Array.isArray(script.context))) add('script.context', 'context должен быть объектом');
-  if (script.output !== undefined && (!script.output || typeof script.output !== 'object' || Array.isArray(script.output))) add('script.output', 'output должен быть объектом');
+  if (script.output !== undefined && !timeoutTemplate(script.output) && (!script.output || typeof script.output !== 'object' || Array.isArray(script.output))) add('script.output', 'output должен быть объектом или точным шаблоном объекта');
   const routines = script.routines || {};
   if (typeof routines !== 'object' || Array.isArray(routines)) add('script.routines', 'routines должен быть объектом');
   const visit = (steps, path, depth = 0) => {
