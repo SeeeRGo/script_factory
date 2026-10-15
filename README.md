@@ -305,3 +305,7 @@ npm run demo:all
 From version 0.6.14, `format: "json-workflow"` runs loops, conditions, reusable routines, browser actions and file operations entirely from JSON. Site-specific behavior is part of the submitted script. There is no SBIS executor or `select_authority` runtime action. See [the generic format](demo/json-workflow.md) and [the SBIS scenario](demo/sbis-report-full.md). Native Puppeteer Replay and legacy demo JSON Steps remain supported. Old `sbis-report` scripts must be replaced with the new template.
 
 Подробная инструкция по переносу Chrome Recorder JSON в универсальный сценарий: [docs/recorder-to-json-workflow.md](docs/recorder-to-json-workflow.md).
+
+### Спящий режим незанятой Windows-УН
+
+С API 0.7.0 доступен фоновый модуль и метод POST /api/v2/system/power/suspend. Очередь и активность пользователей проверяются после ответа 202; 202 не означает, что УН уснула. По умолчанию модуль отключён, dry-run включён. Настройки пользователя и порога бездействия сохраняются на УН. [Установка, вызов из 1С и массовое внедрение](docs/project-guide/09-power-management.md).

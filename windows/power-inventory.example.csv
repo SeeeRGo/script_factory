@@ -1,0 +1,3 @@
+ApiUrl,ApiKeyEnv,ExcludedUser
+http://un-01:33001,UN_01_API_KEY,
+http://un-02:33001,UN_02_API_KEY,UN-02\Robot

@@ -24,6 +24,8 @@ import { createDemoMail } from './demo-mail.js';
 import { checkExternalIp, detectYandexVersion, prefixResourceFields } from './system-checks.js';
 import { serializeJobResult } from './job-result.js';
 import { isJobExpired } from './job-retention.js';
+import { createPowerManager, powerWorkBlockers } from './power-management.js';
+import { handlePowerRequest } from './power-http.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
@@ -139,6 +141,12 @@ let persistTimer = null;
 let persistRequested = false;
 let cleanupTimer = null;
 let db = null;
+let powerManager = null;
+let activeArtifactTransfers = 0;
+
+function powerBlockers() {
+  return powerWorkBlockers({ jobs: state.jobs.values(), running: Math.max(state.activeCount, state.running.size), transfers: activeArtifactTransfers });
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -683,6 +691,12 @@ async function sendDemoDownloadFile(res, filename) {
 }
 
 async function sendJobArtifactFile(res, job, artifact) {
+  powerManager?.assertAcceptingWork();
+  activeArtifactTransfers++;
+  let released = false;
+  const release = () => { if (!released) { released = true; activeArtifactTransfers--; } };
+  res.once('finish', release);
+  res.once('close', release);
   const filename = path.basename(artifact?.filename || 'artifact');
   const artifactRoot = path.resolve(ARTIFACTS_DIR);
   const localPath = artifact?.local_path ? path.resolve(artifact.local_path) : null;
@@ -1579,6 +1593,7 @@ async function executeJob(job) {
 }
 
 function drainQueue() {
+  if (powerManager?.committing || powerManager?.stopping) return;
   while (state.activeCount < state.config.max_parallel_jobs && state.queue.length > 0) {
     const jobId = state.queue.shift();
     const job = state.jobs.get(jobId);
@@ -1700,6 +1715,7 @@ async function buildHealthResponse(requestId) {
   const headless = process.env.BROWSER_HEADLESS !== 'false';
   const noVncConfigured = process.env.NOVNC_ENABLED === 'true';
   const checks = await buildReadinessChecks();
+  if (powerManager?.committing) checks.power = { status: 'error', message: 'УН переходит в suspend' };
   const failedCheck = Object.entries(checks).find(([, check]) => check.status !== 'ok');
   const ready = !failedCheck;
   return {
@@ -2114,6 +2130,10 @@ const server = http.createServer(async (req, res) => {
 
     requireApiKey(req);
 
+    if ((powerManager?.committing || powerManager?.stopping) && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) powerManager.assertAcceptingWork();
+
+    if (await handlePowerRequest({ req, res, method, resourcePath, powerManager, readJsonBody, sendJson })) return;
+
     if (method === 'GET' && resourcePath === '/interpreter/actions') {
       sendJson(res, 200, { actions: [...new Set([...stepRegistry.actions(), ...WORKFLOW_ACTIONS])], formats: { 'json-workflow': WORKFLOW_ACTIONS, 'json-steps': stepRegistry.actions() } });
       return;
@@ -2193,6 +2213,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      powerManager?.assertAcceptingWork();
+      powerManager?.notifyWork();
       const job = createJobRecord(normalizedRequest, incomingRequestHash);
       state.jobs.set(job.job_id, job);
       enqueue(job);
@@ -2409,6 +2431,7 @@ async function main() {
   validateRuntimeConfig();
   state.config = defaultConfig();
   await loadPersistedState();
+  powerManager = await createPowerManager({ dataDir: DATA_DIR, getBlockers: powerBlockers, beforeSuspend: async () => { schedulePersist(); flushPersistence(); }, onRelease: drainQueue });
   await cleanupExpiredJobs();
   schedulePersist();
   await flushPersistence();
@@ -2422,6 +2445,7 @@ async function main() {
 }
 
 async function shutdown(code = 0) {
+  await powerManager?.close();
   await flushPersistence();
   if (persistTimer) {
     clearTimeout(persistTimer);

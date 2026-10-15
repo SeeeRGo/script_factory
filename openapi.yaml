@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.6.21
+  version: 0.7.0
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
@@ -26,6 +26,19 @@ components:
       in: header
       name: X-API-Key
   schemas:
+    PowerConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled: {type: boolean, default: false}
+        background_enabled: {type: boolean, default: false}
+        dry_run: {type: boolean, default: true}
+        excluded_user: {type: string, nullable: true, minLength: 1, maxLength: 256, description: 'Исключаемая Windows-учётная запись; null в PATCH сбрасывает переопределение к .env/пользователю API. Сопоставляется по SID.'}
+        user_idle_seconds: {type: integer, minimum: 1, maximum: 2592000, default: 1800}
+        check_interval_seconds: {type: integer, minimum: 5, maximum: 86400, default: 60}
+        grace_seconds: {type: integer, minimum: 0, maximum: 3600, default: 30}
+        resume_cooldown_seconds: {type: integer, minimum: 1, maximum: 86400, default: 300}
+
     RetryPolicy:
       type: object
       properties:
@@ -1218,6 +1231,93 @@ paths:
                         enum: [IP_SETTINGS_READ_FAILED, IP_SETTINGS_INVALID, IP_LOOKUP_FAILED, IP_LOOKUP_INVALID, IP_MISMATCH, IP_CHECK_TIMEOUT]
                       message:
                         type: string
+  /system/power/suspend:
+    post:
+      tags: [Система]
+      summary: Принять запрос проверки условий и перехода Windows в спящий режим
+      description: >-
+        Требует enabled=true. Возвращает только факт принятия вызова; 202 не означает,
+        что УН уснула. После отправки ответа проверяет очередь, сеансы пользователей,
+        порог бездействия и поддержку сна. Никакого shutdown/hibernate/force.
+        При занятой очереди или активном пользователе переход не выполняется.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+            example: {}
+      responses:
+        "202":
+          description: Вызов принят; результат алгоритма не передаётся в 1С
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [accepted]}
+        "400": {description: Некорректное тело запроса}
+        "401": {description: Неверный X-API-Key}
+        "503": {description: Модуль отключён, ОС не поддерживается или идёт переход в сон}
+  /system/power/status:
+    get:
+      tags: [Система]
+      summary: Диагностика модуля suspend, текущие настройки и последняя причина блокировки
+      responses:
+        "200": {description: supported, config, checking, committing, last}
+        "401": {description: Неверный X-API-Key}
+  /system/power/sessions:
+    get:
+      tags: [Система]
+      summary: Прочитать Windows-сеансы, время бездействия, поддержку сна и наличие привилегии
+      description: Диагностическая операция, не переводит УН в сон. Требует прав чтения чужих сеансов Windows.
+      responses:
+        "200": {description: Полный снимок WTS-сеансов и возможностей suspend}
+        "401": {description: Неверный X-API-Key}
+        "503": {description: Windows API недоступен, недостаточно прав или неверная исключаемая учётная запись}
+  /system/power/config:
+    get:
+      tags: [Система]
+      summary: Получить действующие настройки suspend
+      responses:
+        "200":
+          description: Настройки
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config: {$ref: '#/components/schemas/PowerConfig'}
+    patch:
+      tags: [Система]
+      summary: Изменить настройки suspend и сохранить на УН без перезапуска API
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PowerConfig'}
+            example: {enabled: true, background_enabled: true, dry_run: true, user_idle_seconds: 1800}
+      responses:
+        "200": {description: Настройки сохранены в DATA_DIR/power/config.json}
+        "400": {description: Неверное поле, тип или значение}
+        "401": {description: Неверный X-API-Key}
+        "409": {description: Настройки изменяются во время перехода в suspend}
+        "503": {description: УН переходит в suspend}
+  /system/power/cancel:
+    post:
+      tags: [Система]
+      summary: Отменить текущую проверку или отсрочку suspend
+      description: Не отключает будущие фоновые проверки; для этого измените background_enabled или enabled.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+      responses:
+        "200": {description: Отмена принята}
+        "400": {description: Некорректное тело запроса}
+        "401": {description: Неверный X-API-Key}
+        "409": {description: Переход начался во время чтения запроса; отмена недоступна}
+        "503": {description: Переход в suspend уже начат; отмена недоступна}
   /system/config:
     get:
       tags: [Система]
