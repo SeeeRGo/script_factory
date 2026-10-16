@@ -18,7 +18,7 @@ async function setup(t, overrides = {}) {
 }
 test('power settings validate types, bounds, account and environment defaults', () => {
   const initial = powerDefaults({}); assert.equal(initial.enabled, false); assert.equal(initial.background_enabled, false); assert.equal(initial.dry_run, true);
-  for (const patch of [{ enabled: 'true' }, { user_idle_seconds: 0 }, { check_interval_seconds: 1 }, { dry_run: null }, { excluded_user: '' }, { excluded_user: '-Command' }, { excluded_user: 'x\nexit' }, { forced: true }]) assert.throws(() => validatePowerConfig(patch, initial), { code: 'INVALID_POWER_CONFIG' });
+  for (const patch of [{ enabled: 'true' }, { user_idle_seconds: 0 }, { check_interval_seconds: 1 }, { dry_run: null }, { excluded_user: '' }, { excluded_user: '-Command' }, { excluded_user: 'x\nexit' }, { forced: true }, { mode: 'shutdown' }, { mode: null }]) assert.throws(() => validatePowerConfig(patch, initial), { code: 'INVALID_POWER_CONFIG' });
   assert.throws(() => powerDefaults({ POWER_ENABLED: 'yes' }), { code: 'INVALID_POWER_CONFIG' });
   assert.equal(validatePowerConfig({ excluded_user: 'DOMAIN\\Robot', user_idle_seconds: 600 }, initial).user_idle_seconds, 600);
 });
@@ -134,4 +134,25 @@ test('automatic excluded account follows the API account after restart unless ex
   await moved.update({ excluded_user: null }); assert.equal(moved.config.excluded_user, 'TEST\\Robot2');
   const saved = JSON.parse(await readFile(path.join(original.root, 'power/config.json'), 'utf8'));
   assert.equal(Object.hasOwn(saved, 'excluded_user'), false);
+});
+
+
+test('hibernate is explicit, independently capability checked and never substitutes for sleep', async t => {
+  assert.equal(powerDefaults({}).mode, 'sleep');
+  assert.equal(powerDefaults({ POWER_MODE: 'hibernate' }).mode, 'hibernate');
+  assert.throws(() => powerDefaults({ POWER_MODE: 'auto' }), { code: 'INVALID_POWER_CONFIG' });
+  const hibernateOnly = { ...snapshot([user(2000)]), suspend_supported: false, hibernate_supported: true };
+  assert.equal(assessPowerSnapshot(hibernateOnly, defaults()), 'SUSPEND_UNSUPPORTED');
+  const config = { ...defaults(), mode: 'hibernate' };
+  assert.equal(assessPowerSnapshot(hibernateOnly, config), null);
+  assert.equal(assessPowerSnapshot(snapshot(), config), 'HIBERNATE_UNSUPPORTED');
+  assert.equal(assessPowerSnapshot({ ...hibernateOnly, sessions: [user(0)] }, config), 'USER_ACTIVE');
+  let calls = 0;
+  const o = await setup(t, { defaults: config, adapter: { supported: true, inspect: async () => hibernateOnly,
+    suspend: async settings => { assert.equal(settings.mode, 'hibernate'); calls++; return { suspended: true }; } } });
+  await o.manager.request(); assert.equal(calls, 1); assert.equal(o.manager.status().last.state, 'resumed');
+  const seen = [];
+  const adapter = createWindowsPowerAdapter({ platform: 'win32', run: async (_file, args) => { seen.push(args); return { stdout: '{"suspended":true}' }; } });
+  await adapter.suspend(config);
+  assert.equal(seen[0][seen[0].indexOf('-PowerMode') + 1], 'hibernate');
 });

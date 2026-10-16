@@ -47,11 +47,11 @@ test('real server authenticates power endpoints and persists settings across res
   const request=(route,opts={})=>fetch(`http://127.0.0.1:${port}/api/v2${route}`,{headers:{'X-API-Key':'test-power-key','Content-Type':'application/json'},...opts});
   assert.equal((await request('/system/power/status',{headers:{}})).status,401);
   const before=await(await request('/system/config')).json();
-  assert.equal((await request('/system/power/config',{method:'PATCH',body:'{"excluded_user":"TEST\\\\Robot","user_idle_seconds":700}'})).status,200);
+  assert.equal((await request('/system/power/config',{method:'PATCH',body:'{"excluded_user":"TEST\\\\Robot","user_idle_seconds":700,"mode":"hibernate"}'})).status,200);
   assert.equal((await request('/system/power/config',{method:'PATCH',body:'{"user_idle_seconds":0}'})).status,400);
   assert.equal((await request('/system/power/suspend',{method:'POST',body:'{}'})).status,503);
   assert.deepEqual(await(await request('/system/config')).json(),before);
   await stop();await start();
-  const config=(await(await request('/system/power/config')).json()).config;assert.equal(config.user_idle_seconds,700);assert.equal(config.excluded_user,'TEST\\Robot');
+  const config=(await(await request('/system/power/config')).json()).config;assert.equal(config.mode,'hibernate');assert.equal(config.user_idle_seconds,700);assert.equal(config.excluded_user,'TEST\\Robot');
   assert.equal((JSON.parse(await readFile(path.join(dir,'power/config.json'),'utf8'))).user_idle_seconds,700);
 });

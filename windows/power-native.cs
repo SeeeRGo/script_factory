@@ -11,7 +11,7 @@ namespace ScriptFactory {
  }
  public sealed class PowerSnapshot {
   public bool complete; public string api_account; public string excluded_sid;
-  public bool suspend_supported; public bool suspend_privilege; public PowerSession[] sessions;
+  public bool suspend_supported; public bool hibernate_supported; public bool suspend_privilege; public PowerSession[] sessions;
  }
  public static class PowerNative {
   [StructLayout(LayoutKind.Sequential)] struct SessionInfo { public int Id; public IntPtr Station; public int State; }
@@ -90,25 +90,26 @@ namespace ScriptFactory {
    byte[] capabilities=new byte[256];
    if(!GetPwrCapabilities(capabilities))throw new Win32Exception();
    return new PowerSnapshot{complete=true,api_account=identity.Name,excluded_sid=excludedSid,sessions=sessions.ToArray(),
-    suspend_supported=capabilities[3]!=0||capabilities[4]!=0||capabilities[5]!=0||capabilities[25]!=0,suspend_privilege=EnableSleepPrivilege()};
+    suspend_supported=capabilities[3]!=0||capabilities[4]!=0||capabilities[5]!=0||capabilities[25]!=0,hibernate_supported=capabilities[6]!=0&&capabilities[8]!=0,suspend_privilege=EnableSleepPrivilege()};
   }
-  public static string BlockReason(PowerSnapshot snapshot,int idleSeconds) {
+  public static string BlockReason(PowerSnapshot snapshot,int idleSeconds,bool hibernate=false) {
    if(!snapshot.complete)return "SESSION_DATA_UNAVAILABLE";
    foreach(PowerSession session in snapshot.sessions) {
     if(session.account_sid==snapshot.excluded_sid)continue;
     if(session.account==null||!session.idle_seconds.HasValue||session.idle_seconds.Value<0||!(session.state=="active"||session.state=="connected"||session.state=="connect_query"||session.state=="shadow"||session.state=="disconnected"||session.state=="idle"))return "SESSION_DATA_UNAVAILABLE";
     if(session.idle_seconds.Value<=idleSeconds)return "USER_ACTIVE";
    }
-   if(!snapshot.suspend_supported)return "SUSPEND_UNSUPPORTED";
+   if(hibernate) {if(!snapshot.hibernate_supported)return "HIBERNATE_UNSUPPORTED";}
+   else if(!snapshot.suspend_supported)return "SUSPEND_UNSUPPORTED";
    if(!snapshot.suspend_privilege)return "POWER_PRIVILEGE_MISSING";
    return null;
   }
-  public static string SuspendIfIdle(string user,int idleSeconds,int ownerPid) {
+  public static string SuspendIfIdle(string user,int idleSeconds,int ownerPid,bool hibernate=false) {
    PowerSnapshot fresh=Inspect(user);
-   string reason=BlockReason(fresh,idleSeconds);if(reason!=null)return reason;
+   string reason=BlockReason(fresh,idleSeconds,hibernate);if(reason!=null)return reason;
    try {if(Process.GetProcessById(ownerPid).HasExited)return "POWER_OWNER_GONE";}catch {return "POWER_OWNER_GONE";}
-   // Sleep (not shutdown or hibernation), preserve wake events. There is no forced logout.
-   if(!SetSuspendState(false,false,false))throw new Win32Exception();
+   // Explicit sleep/hibernate choice, preserve wake events. No forced logout or shutdown fallback.
+   if(!SetSuspendState(hibernate,false,false))throw new Win32Exception();
    return null;
   }
  }

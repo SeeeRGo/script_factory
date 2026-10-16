@@ -18,6 +18,8 @@ export function validatePowerConfig(value, base = {}) {
     else if (Object.hasOwn(bounds, key)) {
       const [min, max] = bounds[key];
       if (!Number.isInteger(item) || item < min || item > max) throw powerError('INVALID_POWER_CONFIG', `${key}: требуется целое число ${min}..${max}`);
+    } else if (key === 'mode') {
+      if (!['sleep', 'hibernate'].includes(item)) throw powerError('INVALID_POWER_CONFIG', 'mode: требуется sleep или hibernate');
     } else if (key === 'excluded_user') {
       if (typeof item !== 'string' || !item.trim() || item.length > 256 || /^[\s-]|[\x00-\x1f"'`;|<>]/.test(item)) throw powerError('INVALID_POWER_CONFIG', 'excluded_user: требуется имя Windows-пользователя, желательно DOMAIN\\User');
     } else throw powerError('INVALID_POWER_CONFIG', `Неизвестная настройка ${key}`);
@@ -28,6 +30,7 @@ export function powerDefaults(env = process.env) {
   const username = os.userInfo().username;
   const bool = (key, fallback) => env[key] === undefined || env[key] === '' ? fallback : env[key] === 'true' ? true : env[key] === 'false' ? false : (() => { throw powerError('INVALID_POWER_CONFIG', `${key}: требуется true/false`); })();
   return validatePowerConfig({
+    mode: env.POWER_MODE || 'sleep',
     enabled: bool('POWER_ENABLED', false), background_enabled: bool('POWER_BACKGROUND_ENABLED', false), dry_run: bool('POWER_DRY_RUN', true),
     excluded_user: env.POWER_EXCLUDED_USER || (env.USERDOMAIN ? `${env.USERDOMAIN}\\${username}` : username),
     user_idle_seconds: Number(env.POWER_USER_IDLE_SECONDS || 1800), check_interval_seconds: Number(env.POWER_CHECK_INTERVAL_SECONDS || 60),
@@ -49,7 +52,9 @@ export function assessPowerSnapshot(snapshot, config) {
       || !Number.isFinite(session.idle_seconds) || session.idle_seconds < 0) return 'SESSION_DATA_UNAVAILABLE';
     if (session.idle_seconds <= config.user_idle_seconds) return 'USER_ACTIVE';
   }
-  if (snapshot.suspend_supported !== true) return 'SUSPEND_UNSUPPORTED';
+  if (config.mode === 'hibernate') {
+    if (snapshot.hibernate_supported !== true) return 'HIBERNATE_UNSUPPORTED';
+  } else if (snapshot.suspend_supported !== true) return 'SUSPEND_UNSUPPORTED';
   if (snapshot.suspend_privilege !== true) return 'POWER_PRIVILEGE_MISSING';
   return null;
 }
@@ -58,7 +63,7 @@ export function createWindowsPowerAdapter({ platform = process.platform, env = p
   const helper = fileURLToPath(new URL('../windows/power-helper.ps1', import.meta.url));
   const invoke = async (mode, config, signal) => {
     if (platform !== 'win32') throw powerError('POWER_OS_UNSUPPORTED', 'Модуль suspend поддерживает только Windows', 503);
-    const args = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper, '-Mode', mode,
+    const args = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper, '-Mode', mode, '-PowerMode', config.mode || 'sleep',
       '-ExcludedUser', config.excluded_user, '-IdleSeconds', String(config.user_idle_seconds), '-OwnerPid', String(process.pid)];
     const { stdout } = await run(shell, args, { shell: false, windowsHide: true, timeout: mode === 'Inspect' ? 15000 : 0, maxBuffer: 1024 * 1024, signal });
     let response;
@@ -130,7 +135,7 @@ export async function createPowerManager({ dataDir, defaults = powerDefaults(), 
       await beforeSuspend();
       if (await blocked()) return;
       if (settings.dry_run) { await record('dry_run', 'WOULD_SUSPEND', source); return; }
-      await record('suspending', null, source);
+      await record('suspending', null, source, { mode: settings.mode || 'sleep' });
       if (await blocked()) return;
       // Helper repeats the WTS and privilege checks immediately before SetSuspendState.
       transitionStarted = true;

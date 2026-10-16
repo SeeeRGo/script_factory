@@ -4,6 +4,7 @@ param(
   [ValidateRange(1,2592000)][int]$UserIdleSeconds=1800,
   [ValidateRange(5,86400)][int]$CheckIntervalSeconds=60,
   [ValidateRange(0,3600)][int]$GraceSeconds=30,
+  [ValidateSet('sleep','hibernate')][string]$PowerMode='sleep',
   [switch]$Background,
   [switch]$EnableSleep,
   [string]$ResultCsv=''
@@ -25,7 +26,7 @@ foreach($row in $rows) {
   if(-not $PSCmdlet.ShouldProcess($base,'Configure Windows suspend policy')) {continue}
   $power=Invoke-RestMethod "$base/api/v2/system/power/status" -Headers $headers -TimeoutSec 15
   if(-not $power.supported) {throw 'Windows suspend is unavailable on this OS; install API 0.7.0+ on Windows'}
-  $patch=@{enabled=$true;background_enabled=[bool]$Background;dry_run=$true;user_idle_seconds=$UserIdleSeconds;check_interval_seconds=$CheckIntervalSeconds;grace_seconds=$GraceSeconds}
+  $patch=@{mode=$PowerMode;enabled=$true;background_enabled=[bool]$Background;dry_run=$true;user_idle_seconds=$UserIdleSeconds;check_interval_seconds=$CheckIntervalSeconds;grace_seconds=$GraceSeconds}
   # An empty ExcludedUser leaves the API process account (or existing setting) unchanged.
   if($row.ExcludedUser) {$patch.excluded_user=$row.ExcludedUser}
   $body=[Text.Encoding]::UTF8.GetBytes(($patch|ConvertTo-Json -Compress))
@@ -33,7 +34,8 @@ foreach($row in $rows) {
   $safeApplied=$true
   if($EnableSleep) {
    $snapshot=Invoke-RestMethod "$base/api/v2/system/power/sessions" -Headers $headers -TimeoutSec 30
-   if(-not $snapshot.complete -or -not $snapshot.suspend_supported -or -not $snapshot.suspend_privilege) {throw 'Sleep support or session permissions unavailable; dry-run remains enabled'}
+   $transitionSupported=if($PowerMode -eq 'hibernate'){$snapshot.hibernate_supported}else{$snapshot.suspend_supported}
+   if(-not $snapshot.complete -or -not $transitionSupported -or -not $snapshot.suspend_privilege) {throw 'Selected power mode or session permissions unavailable; dry-run remains enabled'}
    $armingAttempted=$true
    $response=Invoke-RestMethod "$base/api/v2/system/power/config" -Method Patch -Headers $headers -ContentType 'application/json' -Body '{"dry_run":false}' -TimeoutSec 20
   }
