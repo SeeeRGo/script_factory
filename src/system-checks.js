@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 const executeFile = promisify(execFile);
 export const IP_MONITOR_SETTINGS_PATH = 'C:\\_external ip monitor\\settings.ini';
 export const IP_CHECK_URL = 'https://api.ipify.org?format=json';
+export const IP_CHECK_FALLBACK_URL = 'https://api.2ip.io';
 export const IP_CHECK_TIMEOUT_MS = 3000;
 const VERSION_TIMEOUT_MS = 2500;
 
@@ -42,58 +43,62 @@ export function parseMonitorSettings(source) {
   return addresses[0];
 }
 
+async function lookupExternalIp(url, signal) {
+  try {
+    const response = await fetch(url, { signal, redirect: 'error' });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw checkError('IP_LOOKUP_FAILED', 'Сервис определения внешнего IP недоступен');
+    }
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.byteLength;
+      if (size > 1024) throw checkError('IP_LOOKUP_INVALID', 'Сервис определения внешнего IP вернул некорректный ответ');
+      chunks.push(chunk);
+    }
+    const text = Buffer.concat(chunks).toString('utf8').trim();
+    let value = text;
+    if (text.startsWith('{')) {
+      try { value = JSON.parse(text).ip; } catch { value = null; }
+    }
+    const actual = normalizedIp(value);
+    if (!actual) throw checkError('IP_LOOKUP_INVALID', 'Сервис определения внешнего IP вернул некорректный ответ');
+    return actual;
+  } catch (error) {
+    if (error?.statusCode === 503) throw error;
+    throw checkError('IP_LOOKUP_FAILED', 'Сервис определения внешнего IP недоступен');
+  }
+}
+
+async function withIpTimeout(operation, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.min(IP_CHECK_TIMEOUT_MS, Math.max(1, timeoutMs)));
+  try { return await operation(controller.signal); }
+  catch (error) {
+    if (controller.signal.aborted) throw checkError('IP_CHECK_TIMEOUT', 'Превышено время ожидания проверки IP');
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+
 export async function checkExternalIp({
   settingsPath = process.env.IP_MONITOR_SETTINGS_PATH || IP_MONITOR_SETTINGS_PATH,
   url = process.env.IP_CHECK_URL || IP_CHECK_URL,
+  fallbackUrl = process.env.IP_CHECK_FALLBACK_URL || IP_CHECK_FALLBACK_URL,
   timeoutMs = IP_CHECK_TIMEOUT_MS
 } = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.min(IP_CHECK_TIMEOUT_MS, Math.max(1, timeoutMs)));
-  try {
+  const { expected, actual } = await withIpTimeout(async signal => {
     let source;
-    try {
-      source = await readFile(settingsPath, { encoding: 'utf8', signal: controller.signal });
-    } catch {
-      throw checkError('IP_SETTINGS_READ_FAILED', 'Не удалось прочитать настройки IP-монитора');
-    }
+    try { source = await readFile(settingsPath, { encoding: 'utf8', signal }); }
+    catch { throw checkError('IP_SETTINGS_READ_FAILED', 'Не удалось прочитать настройки IP-монитора'); }
     const expected = parseMonitorSettings(source);
-    let actual;
-    try {
-      const response = await fetch(url, { signal: controller.signal, redirect: 'error' });
-      if (!response.ok) {
-        await response.body?.cancel();
-        throw checkError('IP_LOOKUP_FAILED', 'Сервис определения внешнего IP недоступен');
-      }
-      const chunks = [];
-      let size = 0;
-      for await (const chunk of response.body) {
-        size += chunk.byteLength;
-        if (size > 1024) throw checkError('IP_LOOKUP_INVALID', 'Сервис определения внешнего IP вернул некорректный ответ');
-        chunks.push(chunk);
-      }
-      const text = Buffer.concat(chunks).toString('utf8').trim();
-      let value = text;
-      if (text.startsWith('{')) {
-        try {
-          value = JSON.parse(text).ip;
-        } catch {
-          value = null;
-        }
-      }
-      actual = normalizedIp(value);
-      if (!actual) throw checkError('IP_LOOKUP_INVALID', 'Сервис определения внешнего IP вернул некорректный ответ');
-    } catch (error) {
-      if (error?.statusCode === 503) throw error;
-      throw checkError('IP_LOOKUP_FAILED', 'Сервис определения внешнего IP недоступен');
-    }
-    if (actual !== expected) throw checkError('IP_MISMATCH', 'Внешний IP не совпадает с настройками IP-монитора');
-    return { status: 'success', ip: actual.replace(/^\[|\]$/g, '') };
-  } catch (error) {
-    if (controller.signal.aborted) throw checkError('IP_CHECK_TIMEOUT', 'Превышено время ожидания проверки IP');
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
+    return { expected, actual: await lookupExternalIp(url, signal) };
+  }, timeoutMs);
+  // Only a valid but mismatching primary IP triggers the fallback, as specified.
+  const confirmed = actual === expected ? actual
+    : await withIpTimeout(signal => lookupExternalIp(fallbackUrl, signal), timeoutMs);
+  if (confirmed !== expected) throw checkError('IP_MISMATCH', 'Внешний IP не совпадает с настройками IP-монитора');
+  return { status: 'success', ip: confirmed.replace(/^\[|\]$/g, '') };
 }
 
 export function prefixResourceFields(value, prefix = '') {

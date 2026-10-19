@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.8.0
+  version: 0.9.0
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
@@ -33,7 +33,7 @@ components:
         enabled: {type: boolean, default: false}
         background_enabled: {type: boolean, default: false}
         dry_run: {type: boolean, default: true}
-        mode: {type: string, enum: [sleep, hibernate], default: sleep, description: 'Явный режим Windows: сон или гибернация; автоматической подмены нет.'}
+        mode: {type: string, enum: [sleep, hibernate, shutdown], default: sleep, description: 'Явный режим Windows: сон, гибернация или завершение работы; автоматической подмены нет.'}
         excluded_user: {type: string, nullable: true, minLength: 1, maxLength: 256, description: 'Исключаемая Windows-учётная запись; null в PATCH сбрасывает переопределение к .env/пользователю API. Сопоставляется по SID.'}
         user_idle_seconds: {type: integer, minimum: 1, maximum: 2592000, default: 1800}
         check_interval_seconds: {type: integer, minimum: 5, maximum: 86400, default: 60}
@@ -1200,7 +1200,11 @@ paths:
       summary: Проверить соответствие внешнего IP УН адресу из settings.ini
       description: >-
         Читает C:\_external ip monitor\settings.ini ([main] ip_adress), определяет
-        внешний адрес через сервис ipify и возвращает статус проверки и полученный внешний IP.
+        внешний адрес через ipify. Если корректный IP не совпадает, запрашивает api.2ip.io
+        и сравнивает с тем же значением settings.ini. Совпадение любого из этих последовательных
+        ответов даёт успех; возвращается IP подтвердившего сервиса. Второй ресурс вызывается
+        только при несовпадении, не при ошибке или тайм-ауте первого. Каждый этап ограничен
+        3 секундами (до 6 секунд суммарно). URL задаются через IP_CHECK_URL и IP_CHECK_FALLBACK_URL.
       responses:
         "200":
           description: Проверка пройдена
@@ -1215,7 +1219,7 @@ paths:
                     enum: [success]
                   ip:
                     type: string
-                    description: Фактический внешний IP, полученный от ipify.
+                    description: Фактический внешний IP от ipify либо резервного 2ip, совпавший с settings.ini.
         "503":
           description: Проверка не пройдена
           content:
@@ -1239,7 +1243,7 @@ paths:
       description: >-
         Требует enabled=true. Возвращает только факт принятия вызова; 202 не означает,
         что УН уснула. После отправки ответа проверяет очередь, сеансы пользователей,
-        порог бездействия и поддержку сна. Никакого shutdown/hibernate/force.
+        порог бездействия и поддержку выбранного sleep/hibernate. При mode=shutdown вернёт 409 POWER_MODE_MISMATCH; используйте /system/power/shutdown. Принудительного закрытия приложений нет.
         При занятой очереди или активном пользователе переход не выполняется.
       requestBody:
         required: false
@@ -1258,7 +1262,38 @@ paths:
                   status: {type: string, enum: [accepted]}
         "400": {description: Некорректное тело запроса}
         "401": {description: Неверный X-API-Key}
+        "409": {description: При mode=shutdown используйте /system/power/shutdown}
         "503": {description: Модуль отключён, ОС не поддерживается или идёт переход в сон}
+  /system/power/shutdown:
+    post:
+      tags: [Система]
+      summary: Принять запрос проверки условий и штатного выключения Windows
+      description: >-
+        Требует enabled=true и mode=shutdown (иначе 409 POWER_MODE_MISMATCH).
+        После ответа 202 проверяет очередь и активность пользователей тем же алгоритмом.
+        dry_run=true только записывает WOULD_SHUTDOWN. При dry_run=false запрашивает
+        штатное выключение Windows без перезапуска и принудительного закрытия приложений.
+        202 не подтверждает выключение. После принятия команды Windows API не принимает
+        новые задания до перезапуска процесса. Приложения могут задержать или отменить выключение.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false}
+            example: {}
+      responses:
+        "202":
+          description: Вызов принят; результат алгоритма не передаётся в 1С
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, enum: [accepted]}
+        "400": {description: Некорректное тело запроса}
+        "409": {description: Неверный mode; требуется shutdown}
+        "401": {description: Неверный X-API-Key}
+        "503": {description: Модуль отключён, ОС не поддерживается или идёт переход питания}
   /system/power/status:
     get:
       tags: [Система]

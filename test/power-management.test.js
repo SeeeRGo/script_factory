@@ -18,7 +18,7 @@ async function setup(t, overrides = {}) {
 }
 test('power settings validate types, bounds, account and environment defaults', () => {
   const initial = powerDefaults({}); assert.equal(initial.enabled, false); assert.equal(initial.background_enabled, false); assert.equal(initial.dry_run, true);
-  for (const patch of [{ enabled: 'true' }, { user_idle_seconds: 0 }, { check_interval_seconds: 1 }, { dry_run: null }, { excluded_user: '' }, { excluded_user: '-Command' }, { excluded_user: 'x\nexit' }, { forced: true }, { mode: 'shutdown' }, { mode: null }]) assert.throws(() => validatePowerConfig(patch, initial), { code: 'INVALID_POWER_CONFIG' });
+  for (const patch of [{ enabled: 'true' }, { user_idle_seconds: 0 }, { check_interval_seconds: 1 }, { dry_run: null }, { excluded_user: '' }, { excluded_user: '-Command' }, { excluded_user: 'x\nexit' }, { forced: true }, { mode: 'poweroff-unknown' }, { mode: null }]) assert.throws(() => validatePowerConfig(patch, initial), { code: 'INVALID_POWER_CONFIG' });
   assert.throws(() => powerDefaults({ POWER_ENABLED: 'yes' }), { code: 'INVALID_POWER_CONFIG' });
   assert.equal(validatePowerConfig({ excluded_user: 'DOMAIN\\Robot', user_idle_seconds: 600 }, initial).user_idle_seconds, 600);
 });
@@ -111,7 +111,8 @@ test('Windows adapter uses fixed scripts, bounded inspection, literal account ar
 test('background mode runs without an API command and remains dry-run by default', async t => {
   const o = await setup(t, { defaults: { ...defaults(), background_enabled: true, dry_run: true, check_interval_seconds: 5 } });
   const until = Date.now() + 8000;
-  while (o.manager.status().last.reason !== 'WOULD_SUSPEND' && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 20));
+  // The audit event precedes releasing the admission lock; await completion before patching config.
+  while ((o.manager.status().last.reason !== 'WOULD_SUSPEND' || o.manager.status().checking) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(o.manager.status().last.source, 'background'); assert.equal(o.manager.status().last.reason, 'WOULD_SUSPEND'); assert.equal(o.sleeps(), 0);
   await o.manager.update({ background_enabled: false });
 });
@@ -155,4 +156,41 @@ test('hibernate is explicit, independently capability checked and never substitu
   const adapter = createWindowsPowerAdapter({ platform: 'win32', run: async (_file, args) => { seen.push(args); return { stdout: '{"suspended":true}' }; } });
   await adapter.suspend(config);
   assert.equal(seen[0][seen[0].indexOf('-PowerMode') + 1], 'hibernate');
+});
+
+
+test('shutdown does not need sleep support, preserves policy, and keeps admission closed after acceptance', async t => {
+  const config = { ...defaults(), mode: 'shutdown' };
+  assert.equal(powerDefaults({ POWER_MODE: 'shutdown' }).mode, 'shutdown');
+  const awakeOnly = { ...snapshot(), suspend_supported: false, hibernate_supported: false };
+  assert.equal(assessPowerSnapshot(awakeOnly, config), null);
+  assert.equal(assessPowerSnapshot({ ...awakeOnly, suspend_privilege: false }, config), 'POWER_PRIVILEGE_MISSING');
+  assert.equal(assessPowerSnapshot({ ...awakeOnly, sessions: [user(0)] }, config), 'USER_ACTIVE');
+  let calls = 0, releases = 0;
+  const o = await setup(t, { defaults: config, onRelease: () => { releases++; }, adapter: {
+    supported: true, inspect: async () => awakeOnly,
+    suspend: async settings => { assert.equal(settings.mode, 'shutdown'); calls++; return { shutdown_requested: true }; }
+  } });
+  await o.manager.request();
+  assert.equal(o.manager.status().last.state, 'shutdown_requested');
+  assert.equal(o.manager.committing, true);
+  assert.throws(() => o.manager.assertAcceptingWork(), { code: 'POWER_TRANSITION_IN_PROGRESS' });
+  assert.throws(() => o.manager.cancel(), { code: 'POWER_TRANSITION_IN_PROGRESS' });
+  await assert.rejects(o.manager.update({ enabled: false }), { code: 'POWER_TRANSITION_IN_PROGRESS' });
+  await o.manager.request(); assert.equal(calls, 1); assert.equal(releases, 0);
+  const dry = await setup(t, { defaults: { ...config, dry_run: true }, adapter: {
+    supported: true, inspect: async () => awakeOnly, suspend: async () => assert.fail('dry run must never shut down')
+  } });
+  await dry.manager.request(); assert.equal(dry.manager.status().last.reason, 'WOULD_SHUTDOWN');
+  assert.equal(dry.manager.committing, false);
+});
+
+test('uncertain shutdown response keeps work blocked until administrator checks Windows', async t => {
+  const o = await setup(t, { defaults: { ...defaults(), mode: 'shutdown' }, adapter: {
+    supported: true, inspect: async () => snapshot(),
+    suspend: async () => { throw Object.assign(new Error('lost response'), { code: 'POWER_HELPER_INVALID' }); }
+  } });
+  await o.manager.request(); assert.equal(o.manager.committing, true);
+  assert.equal(o.manager.status().last.reason, 'POWER_HELPER_INVALID');
+  assert.throws(() => o.manager.assertAcceptingWork(), { code: 'POWER_TRANSITION_IN_PROGRESS' });
 });

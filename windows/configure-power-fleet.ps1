@@ -4,7 +4,7 @@ param(
   [ValidateRange(1,2592000)][int]$UserIdleSeconds=1800,
   [ValidateRange(5,86400)][int]$CheckIntervalSeconds=60,
   [ValidateRange(0,3600)][int]$GraceSeconds=30,
-  [ValidateSet('sleep','hibernate')][string]$PowerMode='sleep',
+  [ValidateSet('sleep','hibernate','shutdown')][string]$PowerMode='sleep',
   [switch]$Background,
   [switch]$EnableSleep,
   [string]$ResultCsv=''
@@ -34,7 +34,7 @@ foreach($row in $rows) {
   $safeApplied=$true
   if($EnableSleep) {
    $snapshot=Invoke-RestMethod "$base/api/v2/system/power/sessions" -Headers $headers -TimeoutSec 30
-   $transitionSupported=if($PowerMode -eq 'hibernate'){$snapshot.hibernate_supported}else{$snapshot.suspend_supported}
+   $transitionSupported=if($PowerMode -eq 'shutdown'){$true}elseif($PowerMode -eq 'hibernate'){$snapshot.hibernate_supported}else{$snapshot.suspend_supported}
    if(-not $snapshot.complete -or -not $transitionSupported -or -not $snapshot.suspend_privilege) {throw 'Selected power mode or session permissions unavailable; dry-run remains enabled'}
    $armingAttempted=$true
    $response=Invoke-RestMethod "$base/api/v2/system/power/config" -Method Patch -Headers $headers -ContentType 'application/json' -Body '{"dry_run":false}' -TimeoutSec 20

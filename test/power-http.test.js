@@ -26,6 +26,11 @@ test('API returns only acceptance before inspecting users, coalesces checks, and
   while(manager.status().last.reason!=='JOBS_PENDING'||manager.status().checking)await new Promise(r=>setTimeout(r,5));assert.equal(inspections,0);
   busy=false;response=await request('suspend',{method:'POST',body:'{}'});assert.equal(response.status,202);
   while(manager.status().last.reason!=='WOULD_SUSPEND'||manager.status().checking)await new Promise(r=>setTimeout(r,5));assert.equal(inspections,2);
+  assert.equal((await request('shutdown',{method:'POST',body:'{}'})).status,409);
+  response=await request('config',{method:'PATCH',body:'{"mode":"shutdown"}'});assert.equal(response.status,200);
+  assert.equal((await request('suspend',{method:'POST',body:'{}'})).status,409);
+  response=await request('shutdown',{method:'POST',body:'{}'});assert.equal(response.status,202);assert.deepEqual(await response.json(),{status:'accepted'});
+  while(manager.status().last.reason!=='WOULD_SHUTDOWN'||manager.status().checking)await new Promise(r=>setTimeout(r,5));
   assert.equal((await request('suspend',{method:'POST',body:'{"force":true}'})).status,400);
   assert.equal((await request('suspend',{method:'POST',body:'{}',headers:{}})).status,401);
   response=await request('config',{method:'PATCH',body:'{"enabled":false}'});assert.equal(response.status,200);

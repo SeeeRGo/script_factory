@@ -19,7 +19,7 @@ export function validatePowerConfig(value, base = {}) {
       const [min, max] = bounds[key];
       if (!Number.isInteger(item) || item < min || item > max) throw powerError('INVALID_POWER_CONFIG', `${key}: требуется целое число ${min}..${max}`);
     } else if (key === 'mode') {
-      if (!['sleep', 'hibernate'].includes(item)) throw powerError('INVALID_POWER_CONFIG', 'mode: требуется sleep или hibernate');
+      if (!['sleep', 'hibernate', 'shutdown'].includes(item)) throw powerError('INVALID_POWER_CONFIG', 'mode: требуется sleep, hibernate или shutdown');
     } else if (key === 'excluded_user') {
       if (typeof item !== 'string' || !item.trim() || item.length > 256 || /^[\s-]|[\x00-\x1f"'`;|<>]/.test(item)) throw powerError('INVALID_POWER_CONFIG', 'excluded_user: требуется имя Windows-пользователя, желательно DOMAIN\\User');
     } else throw powerError('INVALID_POWER_CONFIG', `Неизвестная настройка ${key}`);
@@ -54,7 +54,7 @@ export function assessPowerSnapshot(snapshot, config) {
   }
   if (config.mode === 'hibernate') {
     if (snapshot.hibernate_supported !== true) return 'HIBERNATE_UNSUPPORTED';
-  } else if (snapshot.suspend_supported !== true) return 'SUSPEND_UNSUPPORTED';
+  } else if (config.mode !== 'shutdown' && snapshot.suspend_supported !== true) return 'SUSPEND_UNSUPPORTED';
   if (snapshot.suspend_privilege !== true) return 'POWER_PRIVILEGE_MISSING';
   return null;
 }
@@ -62,7 +62,7 @@ export function createWindowsPowerAdapter({ platform = process.platform, env = p
   const shell = path.win32.join(env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
   const helper = fileURLToPath(new URL('../windows/power-helper.ps1', import.meta.url));
   const invoke = async (mode, config, signal) => {
-    if (platform !== 'win32') throw powerError('POWER_OS_UNSUPPORTED', 'Модуль suspend поддерживает только Windows', 503);
+    if (platform !== 'win32') throw powerError('POWER_OS_UNSUPPORTED', 'Модуль управления питанием поддерживает только Windows', 503);
     const args = ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helper, '-Mode', mode, '-PowerMode', config.mode || 'sleep',
       '-ExcludedUser', config.excluded_user, '-IdleSeconds', String(config.user_idle_seconds), '-OwnerPid', String(process.pid)];
     const { stdout } = await run(shell, args, { shell: false, windowsHide: true, timeout: mode === 'Inspect' ? 15000 : 0, maxBuffer: 1024 * 1024, signal });
@@ -81,8 +81,8 @@ export async function createPowerManager({ dataDir, defaults = powerDefaults(), 
   await mkdir(directory, { recursive: true, mode: 0o700 });
   let config = defaults, overrides = {};
   try { overrides = JSON.parse(await readFile(configFile, 'utf8')); config = validatePowerConfig(overrides, defaults); }
-  catch (error) { if (error.code !== 'ENOENT') throw powerError('POWER_CONFIG_READ_FAILED', 'Не удалось прочитать настройки suspend; исправьте DATA_DIR/power/config.json', 503); }
-  let timer, inFlight, controller, closed = false, committing = false, generation = 0, cooldownUntil = 0, updating = 0;
+  catch (error) { if (error.code !== 'ENOENT') throw powerError('POWER_CONFIG_READ_FAILED', 'Не удалось прочитать настройки питания; исправьте DATA_DIR/power/config.json', 503); }
+  let timer, inFlight, controller, closed = false, committing = false, generation = 0, cooldownUntil = 0, updating = 0, shutdownRequested = false;
   let last = { state: 'idle', reason: null, checked_at: null };
   let writes = Promise.resolve();
   const record = async (state, reason, source, extra = {}) => {
@@ -100,7 +100,7 @@ export async function createPowerManager({ dataDir, defaults = powerDefaults(), 
       timer = setInterval(() => { void request('background').catch(error => logger.error('Power background check failed:', error.code)); }, config.check_interval_seconds * 1000); timer.unref();
     }
   };
-  const cancel = () => { if (committing) throw powerError('POWER_TRANSITION_IN_PROGRESS', 'Переход в suspend уже начат', 409); generation++; controller?.abort(); };
+  const cancel = () => { if (committing) throw powerError('POWER_TRANSITION_IN_PROGRESS', 'Переход питания уже начат', 409); generation++; controller?.abort(); };
   const check = async source => {
     const version = generation;
     const settings = { ...config };
@@ -134,22 +134,30 @@ export async function createPowerManager({ dataDir, defaults = powerDefaults(), 
       committing = true;
       await beforeSuspend();
       if (await blocked()) return;
-      if (settings.dry_run) { await record('dry_run', 'WOULD_SUSPEND', source); return; }
-      await record('suspending', null, source, { mode: settings.mode || 'sleep' });
+      if (settings.dry_run) { await record('dry_run', settings.mode === 'shutdown' ? 'WOULD_SHUTDOWN' : 'WOULD_SUSPEND', source, { mode: settings.mode }); return; }
+      await record(settings.mode === 'shutdown' ? 'shutdown_requesting' : 'suspending', null, source, { mode: settings.mode || 'sleep' });
       if (await blocked()) return;
-      // Helper repeats the WTS and privilege checks immediately before SetSuspendState.
+      // Helper repeats WTS and privilege checks immediately before the selected Windows operation.
       transitionStarted = true;
       const result = await adapter.suspend(settings, signal);
+      if (settings.mode === 'shutdown' && result.shutdown_requested === true) {
+        shutdownRequested = true;
+        await record('shutdown_requested', null, source, { mode: 'shutdown' });
+        return;
+      }
       cooldownUntil = now() + settings.resume_cooldown_seconds * 1000;
       await record(result.suspended === true ? 'resumed' : 'blocked', result.reason || null, source);
     } catch (error) {
+      // A lost helper response cannot prove that Windows rejected an already issued shutdown.
+      if (transitionStarted && settings.mode === 'shutdown') shutdownRequested = true;
       if (transitionStarted) cooldownUntil = Math.max(cooldownUntil, now() + settings.resume_cooldown_seconds * 1000);
       try { await record(signal.aborted ? 'cancelled' : 'error', signal.aborted ? 'CHECK_CANCELLED' : error.code || 'POWER_CHECK_FAILED', source); }
       catch { logger.error('Power audit write failed'); }
-    } finally { committing = false; controller = null; if (!closed) onRelease(); }
+    } finally { committing = shutdownRequested; controller = null; if (!closed && !shutdownRequested) onRelease(); }
   };
   function request(source = 'api') {
     if (closed || !config.enabled || !adapter.supported) return Promise.resolve();
+    if (shutdownRequested) return Promise.resolve();
     if (inFlight) return inFlight;
     inFlight = check(source).finally(() => { inFlight = null; });
     return inFlight;
@@ -161,15 +169,15 @@ export async function createPowerManager({ dataDir, defaults = powerDefaults(), 
     get config() { return { ...config }; },
     status: () => ({ supported: adapter.supported, config: { ...config }, checking: !!inFlight, committing, last: { ...last } }),
     assertAvailable() {
-      if (closed || !adapter.supported) throw powerError('POWER_OS_UNSUPPORTED', 'Модуль suspend недоступен на этой ОС', 503);
-      if (!config.enabled) throw powerError('POWER_DISABLED', 'Модуль suspend выключен настройкой enabled', 503);
+      if (closed || !adapter.supported) throw powerError('POWER_OS_UNSUPPORTED', 'Модуль управления питанием недоступен на этой ОС', 503);
+      if (!config.enabled) throw powerError('POWER_DISABLED', 'Модуль управления питанием выключен настройкой enabled', 503);
     },
-    assertAcceptingWork() { if (closed) throw powerError('POWER_STOPPING', 'Сервис останавливается; повторите запрос позже', 503); if (committing) throw powerError('POWER_TRANSITION_IN_PROGRESS', 'УН готовится к suspend; повторите запрос после пробуждения или выберите другую УН', 503); },
+    assertAcceptingWork() { if (closed) throw powerError('POWER_STOPPING', 'Сервис останавливается; повторите запрос позже', 503); if (committing) throw powerError('POWER_TRANSITION_IN_PROGRESS', 'УН готовится к переходу питания; выберите другую УН или дождитесь её включения', 503); },
     notifyWork() { if (!committing) { generation++; controller?.abort(); } },
     request,
     async inspect() { return adapter.inspect(config); },
     async update(patch) {
-      if (committing) throw powerError('POWER_TRANSITION_IN_PROGRESS', 'Настройки нельзя менять во время перехода в suspend', 409);
+      if (committing) throw powerError('POWER_TRANSITION_IN_PROGRESS', 'Настройки нельзя менять во время перехода питания', 409);
       const resetUser = patch && Object.hasOwn(patch, 'excluded_user') && patch.excluded_user === null;
       const validatedPatch = resetUser ? Object.fromEntries(Object.entries(patch).filter(([key]) => key !== 'excluded_user')) : patch;
       validatePowerConfig(validatedPatch, config);

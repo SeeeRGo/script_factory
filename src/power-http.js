@@ -5,13 +5,15 @@ export async function handlePowerRequest({ req, res, method, resourcePath, power
   if (method === 'GET' && resourcePath === '/system/power/sessions') { sendJson(res, 200, await powerManager.inspect()); return true; }
   if (method === 'GET' && resourcePath === '/system/power/config') { sendJson(res, 200, { config: powerManager.config }); return true; }
   if (method === 'PATCH' && resourcePath === '/system/power/config') { sendJson(res, 200, { config: await powerManager.update(await readJsonBody(req)) }); return true; }
-  if (method !== 'POST' || !['/system/power/suspend', '/system/power/cancel'].includes(resourcePath)) return false;
+  if (method !== 'POST' || !['/system/power/suspend', '/system/power/shutdown', '/system/power/cancel'].includes(resourcePath)) return false;
   const body = await readJsonBody(req);
   if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length) throw powerError('INVALID_PAYLOAD', 'Метод принимает пустой JSON-объект {}');
   if (resourcePath.endsWith('/cancel')) { powerManager.cancel(); sendJson(res, 200, { status: 'accepted' }); }
   else {
     powerManager.assertAvailable();
-    res.once('finish', () => setImmediate(() => { void powerManager.request('api').catch(error => logger.error('Power check failed:', error.code)); }));
+    if (resourcePath.endsWith('/shutdown') !== (powerManager.config.mode === 'shutdown')) throw powerError('POWER_MODE_MISMATCH', 'Для /shutdown требуется mode=shutdown; для /suspend — sleep или hibernate', 409);
+    const expectedMode = powerManager.config.mode;
+    res.once('finish', () => setImmediate(() => { if (powerManager.config.mode !== expectedMode) return; void powerManager.request('api').catch(error => logger.error('Power check failed:', error.code)); }));
     sendJson(res, 202, { status: 'accepted' });
   }
   return true;

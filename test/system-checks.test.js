@@ -104,18 +104,20 @@ test('IP helpers and authenticated endpoints return the actual IP only after suc
   const settingsPath = path.join(directory, 'settings.ini');
   await writeFile(settingsPath, `[main]\nip_adress=${expectedIp}`);
   let mode = 'success';
+  let fallbackMode = null;
   let calls = 0;
   const lookup = http.createServer((req, res) => {
     calls += 1;
-    if (mode === 'timeout') return;
-    if (mode === 'body-timeout') {
+    const lookupMode = req.url === '/fallback' && fallbackMode !== null ? fallbackMode : mode;
+    if (lookupMode === 'timeout') return;
+    if (lookupMode === 'body-timeout') {
       res.writeHead(200);
       res.write('{"ip":');
       return;
     }
-    res.writeHead(mode === 'failure' ? 500 : 200);
-    res.end(mode === 'invalid' ? 'invalid' : mode === 'oversize' ? 'x'.repeat(2000)
-      : JSON.stringify({ ip: mode === 'mismatch' ? otherIp : expectedIp }));
+    res.writeHead(lookupMode === 'failure' ? 500 : 200);
+    res.end(lookupMode === 'invalid' ? 'invalid' : lookupMode === 'oversize' ? 'x'.repeat(2000)
+      : JSON.stringify({ ip: lookupMode === 'mismatch' ? otherIp : expectedIp }));
   });
   await new Promise((resolve) => lookup.listen(0, '127.0.0.1', resolve));
   t.after(() => {
@@ -123,13 +125,13 @@ test('IP helpers and authenticated endpoints return the actual IP only after suc
     lookup.close();
   });
   const url = `http://127.0.0.1:${lookup.address().port}`;
-  assert.deepEqual(await checkExternalIp({ settingsPath, url }), { status: 'success', ip: expectedIp });
+  assert.deepEqual(await checkExternalIp({ settingsPath, url, fallbackUrl: url }), { status: 'success', ip: expectedIp });
   for (const [lookupMode, code] of [
     ['mismatch', 'IP_MISMATCH'], ['invalid', 'IP_LOOKUP_INVALID'], ['oversize', 'IP_LOOKUP_INVALID'],
     ['failure', 'IP_LOOKUP_FAILED'], ['timeout', 'IP_CHECK_TIMEOUT'], ['body-timeout', 'IP_CHECK_TIMEOUT']
   ]) {
     mode = lookupMode;
-    await assert.rejects(checkExternalIp({ settingsPath, url, timeoutMs: 100 }), (error) => assertCheckError(error, code));
+    await assert.rejects(checkExternalIp({ settingsPath, url, fallbackUrl: url, timeoutMs: 100 }), (error) => assertCheckError(error, code));
   }
   mode = 'success';
   const child = spawn(process.execPath, ['src/server.js'], {
@@ -137,7 +139,7 @@ test('IP helpers and authenticated endpoints return the actual IP only after suc
     env: {
       ...process.env, PORT: String(41000 + Math.floor(Math.random() * 10000)), HOST: '127.0.0.1', API_KEY: 'system-check-key',
       WEB_LOGIN: 'system-check-user', WEB_PASSWORD: 'system-check-password', UN_ID: 'system-check-un',
-      DATA_DIR: path.join(directory, 'data'), IP_MONITOR_SETTINGS_PATH: settingsPath, IP_CHECK_URL: url
+      DATA_DIR: path.join(directory, 'data'), IP_MONITOR_SETTINGS_PATH: settingsPath, IP_CHECK_URL: url, IP_CHECK_FALLBACK_URL: `${url}/fallback`
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -181,6 +183,9 @@ test('IP helpers and authenticated endpoints return the actual IP only after suc
   }
   assert.equal(calls, beforeUnauthorized);
   await check(200);
+  mode = 'mismatch'; fallbackMode = 'success';
+  await check(200);
+  mode = 'success'; fallbackMode = null;
   await writeFile(settingsPath, `[main]\nip_adress=${otherIp}`);
   await check(503, 'IP_MISMATCH');
   await writeFile(settingsPath, '[main]\nip_adress=invalid');
@@ -223,4 +228,49 @@ test('IP helpers and authenticated endpoints return the actual IP only after suc
     } else leaves.push(key);
   }
   assert.equal(leaves.length, new Set(leaves).size);
+});
+
+
+test('IP fallback runs only after a valid mismatch and must independently confirm monitor IP', async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'ip-fallback-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const settingsPath = path.join(directory, 'settings.ini');
+  await writeFile(settingsPath, `[main]\nip_adress=${expectedIp}`);
+  let primary = 'match', secondary = 'match';
+  const calls = [];
+  const server = http.createServer((req, res) => {
+    calls.push(req.url);
+    const mode = req.url === '/primary' ? primary : secondary;
+    if (mode === 'timeout') return;
+    if (mode === 'redirect') { res.writeHead(302, { Location: '/secondary' }); res.end(); return; }
+    if (mode === 'body-timeout') { res.writeHead(200); res.write('{"ip":'); return; }
+    res.writeHead(mode === 'failure' ? 503 : 200);
+    res.end(mode === 'invalid' ? '{"ip":"invalid"}' : mode === 'oversize' ? 'x'.repeat(2000)
+      : mode === 'plain' ? expectedIp : JSON.stringify({ ip: mode === 'mismatch' ? otherIp : expectedIp, city: 'test' }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const opts = { settingsPath, url: base+'/primary', fallbackUrl: base+'/secondary', timeoutMs: 100 };
+  assert.deepEqual(await checkExternalIp(opts), { status: 'success', ip: expectedIp });
+  assert.deepEqual(calls.splice(0), ['/primary']);
+  primary = 'mismatch';
+  for (secondary of ['match', 'plain']) {
+    assert.deepEqual(await checkExternalIp(opts), { status: 'success', ip: expectedIp });
+    assert.deepEqual(calls.splice(0), ['/primary', '/secondary']);
+  }
+  for (const [mode, code] of [['mismatch','IP_MISMATCH'],['invalid','IP_LOOKUP_INVALID'],['oversize','IP_LOOKUP_INVALID'],['failure','IP_LOOKUP_FAILED'],['redirect','IP_LOOKUP_FAILED'],['timeout','IP_CHECK_TIMEOUT'],['body-timeout','IP_CHECK_TIMEOUT']]) {
+    secondary = mode;
+    await assert.rejects(checkExternalIp(opts), error => assertCheckError(error, code));
+    assert.deepEqual(calls.splice(0), ['/primary', '/secondary']);
+  }
+  secondary = 'match';
+  for (const [mode, code] of [['invalid','IP_LOOKUP_INVALID'],['failure','IP_LOOKUP_FAILED'],['timeout','IP_CHECK_TIMEOUT']]) {
+    primary = mode;
+    await assert.rejects(checkExternalIp(opts), error => assertCheckError(error, code));
+    assert.deepEqual(calls.splice(0), ['/primary']);
+  }
+  await writeFile(settingsPath, '[main]\nip_adress=invalid');
+  await assert.rejects(checkExternalIp(opts), error => assertCheckError(error, 'IP_SETTINGS_INVALID'));
+  assert.deepEqual(calls, []);
 });

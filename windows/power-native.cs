@@ -37,6 +37,7 @@ namespace ScriptFactory {
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
   [DllImport("powrprof.dll",SetLastError=true)] [return:MarshalAs(UnmanagedType.U1)] static extern bool GetPwrCapabilities([Out] byte[] data);
   [DllImport("powrprof.dll",SetLastError=true)] [return:MarshalAs(UnmanagedType.U1)] static extern bool SetSuspendState([MarshalAs(UnmanagedType.U1)] bool hibernate,[MarshalAs(UnmanagedType.U1)] bool force,[MarshalAs(UnmanagedType.U1)] bool disableWake);
+  [DllImport("advapi32.dll",CharSet=CharSet.Unicode,SetLastError=true)] [return:MarshalAs(UnmanagedType.Bool)] static extern bool InitiateSystemShutdownExW(string machine,string message,uint timeout,[MarshalAs(UnmanagedType.Bool)] bool forceAppsClosed,[MarshalAs(UnmanagedType.Bool)] bool reboot,uint reason);
   static string Text(int session,int kind) {
    IntPtr value; int bytes;
    if(!WTSQuerySessionInformationW(IntPtr.Zero,session,kind,out value,out bytes))throw new Win32Exception();
@@ -92,7 +93,7 @@ namespace ScriptFactory {
    return new PowerSnapshot{complete=true,api_account=identity.Name,excluded_sid=excludedSid,sessions=sessions.ToArray(),
     suspend_supported=capabilities[3]!=0||capabilities[4]!=0||capabilities[5]!=0||capabilities[25]!=0,hibernate_supported=capabilities[6]!=0&&capabilities[8]!=0,suspend_privilege=EnableSleepPrivilege()};
   }
-  public static string BlockReason(PowerSnapshot snapshot,int idleSeconds,bool hibernate=false) {
+  public static string BlockReason(PowerSnapshot snapshot,int idleSeconds,bool hibernate=false,bool shutdown=false) {
    if(!snapshot.complete)return "SESSION_DATA_UNAVAILABLE";
    foreach(PowerSession session in snapshot.sessions) {
     if(session.account_sid==snapshot.excluded_sid)continue;
@@ -100,14 +101,19 @@ namespace ScriptFactory {
     if(session.idle_seconds.Value<=idleSeconds)return "USER_ACTIVE";
    }
    if(hibernate) {if(!snapshot.hibernate_supported)return "HIBERNATE_UNSUPPORTED";}
-   else if(!snapshot.suspend_supported)return "SUSPEND_UNSUPPORTED";
+   else if(!shutdown&&!snapshot.suspend_supported)return "SUSPEND_UNSUPPORTED";
    if(!snapshot.suspend_privilege)return "POWER_PRIVILEGE_MISSING";
    return null;
   }
-  public static string SuspendIfIdle(string user,int idleSeconds,int ownerPid,bool hibernate=false) {
+  public static string SuspendIfIdle(string user,int idleSeconds,int ownerPid,bool hibernate=false,bool shutdown=false) {
    PowerSnapshot fresh=Inspect(user);
-   string reason=BlockReason(fresh,idleSeconds,hibernate);if(reason!=null)return reason;
+   string reason=BlockReason(fresh,idleSeconds,hibernate,shutdown);if(reason!=null)return reason;
    try {if(Process.GetProcessById(ownerPid).HasExited)return "POWER_OWNER_GONE";}catch {return "POWER_OWNER_GONE";}
+   if(shutdown) {
+    // Local, planned OS shutdown. Never force-close apps or reboot. Successful return is acceptance only.
+    if(!InitiateSystemShutdownExW(null,"Script Factory: idle workstation",0,false,false,0x80040000))throw new Win32Exception();
+    return null;
+   }
    // Explicit sleep/hibernate choice, preserve wake events. No forced logout or shutdown fallback.
    if(!SetSuspendState(hibernate,false,false))throw new Win32Exception();
    return null;
