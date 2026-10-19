@@ -169,3 +169,20 @@ test('output object template projects a dynamic number of results without leakin
   const failed = { ...base([{ action: 'fail', params: { error_code: 'ORIGINAL_ERROR' } }]), context: { results: 'bad', secret: 'private' }, output: '{{results}}' };
   await assert.rejects(executeJsonWorkflow(await options(t, failed)), error => error.code === 'ORIGINAL_ERROR' && Object.keys(error.partial_context).length === 1);
 });
+
+test('file_read is bounded, requires the selected hash, respects roots and decodes Windows text', async t => {
+  const o = await options(t, base([]));
+  const file = path.join(o.root, 'input.xml');
+  // CP1251: Cyrillic АБВ. No report or private data in this fixture.
+  await writeFile(file, Buffer.from([0xc0, 0xc1, 0xc2]));
+  const [selected] = await listWorkflowFiles(o.root, o.allowedRoots);
+  const script = base([{ action: 'file_read', params: { file: selected, encoding: 'windows-1251', max_bytes: 3 }, save_as: 'read' }]);
+  const result = await executeJsonWorkflow({ ...o, script });
+  assert.equal(result.context.read.text, 'АБВ');
+  assert.equal(result.context.read.size_bytes, 3);
+  await assert.rejects(executeJsonWorkflow({ ...o, script: base([{ action: 'file_read', params: { file: selected, max_bytes: 2 } }]) }), e => e.code === 'FILE_TOO_LARGE');
+  await assert.rejects(executeJsonWorkflow({ ...o, script: base([{ action: 'file_read', params: { file: selected, encoding: 'utf-8' } }]) }), e => e.code === 'FILE_ENCODING_ERROR');
+  await writeFile(file, 'new');
+  await assert.rejects(executeJsonWorkflow({ ...o, script }), e => e.code === 'SOURCE_CHANGED');
+  await assert.rejects(executeJsonWorkflow({ ...o, script: base([{ action: 'file_read', params: { file: { ...selected, path: path.join(o.root, '..', 'outside') } } }]) }), e => e.code === 'FILESYSTEM_ACCESS_DENIED');
+});

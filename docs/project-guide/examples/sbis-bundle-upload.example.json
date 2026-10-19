@@ -1,0 +1,14 @@
+{
+  "mode": "upload_only",
+  "submit_enabled": false,
+  "inn": "REPLACE_WITH_TAXPAYER_INN",
+  "root_dir": "C:/отчеты",
+  "loaded_dir": "C:/Отчеты_загруженные",
+  "authority_prefixes": [
+    {
+      "authority": "FNS",
+      "prefixes": ["NO_NDS_", "NO_NDS.8_", "NO_NDS.9_"],
+      "bundle_files": true
+    }
+  ]
+}

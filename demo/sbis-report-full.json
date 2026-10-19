@@ -1,7 +1,7 @@
 {
   "format": "json-workflow",
   "title": "СБИС: ФНС, СФР и Росстат из JSON",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "default_step_timeout_ms": 60000,
   "context": {
     "mode": "validate_only",
@@ -249,7 +249,11 @@
       "sent_status_texts": [
         "Отчет отправлен, но еще не считается сданным",
         "Отчет сдан"
-      ]
+      ],
+      "bundle_checkbox_selector": ".js-controls-ListView__itemCheckBox",
+      "bundle_selected_row_selector": ".controls-ListView__item__multiSelected",
+      "bundle_import_selector": "[data-name=\"FolderBrowserComponent__StartLoadButton\"]",
+      "upload_bundle_steps": []
     },
     "authority_prefixes": [
       {
@@ -670,12 +674,54 @@
       {
         "action": "compute",
         "title": "Сформировать плоские результаты каждого отчета",
-        "description": "Стабильный Rezult_N на каждый выбранный самостоятельный XML. Сохраняет отправленный статус предыдущих отчетов при последующих ошибках. Коллекции и внутренние ключи не публикуются. section_name заполняется после подтверждения импорта.",
+        "description": "Один плоский Rezult_N на отчет, включая комплект: file_count, file_name_1..N и sha256_1..N. Коллекций в результате нет.",
         "params": {
-          "expression": "(() => {\n const names={FNS:'ФНС',SFR:'СФР',ROSSTAT:'Росстат'},out={};\n for(const [index,r] of (context.reports||[]).entries()) {\n  const active=r.path===context.active_report_path;\n  const error=context.error||null;\n  const affected=!!error&&error.code!=='VALIDATION_ERROR'&&(active||context.active_report_path==null);\n  const quote=r.license_quote||(active?context.license_quote:null)||null;\n  let state;\n  if(['sent','archived'].includes(r.state))state='sent';\n  else if(r.state==='submission_unknown')state='requires_reconciliation';\n  else if(r.state==='validation_failed')state='validation_failed';\n  else if(affected&&error.code!=='VALIDATION_ERROR')state=active?(context.result_state||'failed'):'not_processed';\n  else if(context.mode==='preflight'&&!error)state='preflight_completed';\n  else state=r.state==='validated'?'validated_not_sent':'not_processed';\n  out['Rezult_'+(index+1)]={state,report_state:r.state,inn:context.inn,authority:r.authority,\n   section_name:r.load_datetime?(names[r.authority]||r.authority):null,mode:context.mode,\n   file_name:r.filename,sha256:r.sha256,load_datetime:r.load_datetime||null,\n   validation_result:r.validation_result||null,file_selection_verified:!!r.file_selection_verified,\n   report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,\n   sbis_status:r.sbis_status||null,archived_path:r.archived_path||null,\n   error_code:r.state==='validation_failed'?'VALIDATION_ERROR':affected?error.code:null,\n   error_message:r.state==='validation_failed'?'СБИС обнаружил ошибки отчетности':affected?error.message:null,\n   license_requires_confirmation:quote?.requires_confirmation??null,\n   license_amount:quote?.amount??null,license_currency:quote?.currency??null,\n   license_continuation:quote?.continuation??null};\n }\n return out;\n})()"
+          "expression": "(() => {\n const names={FNS:'ФНС',SFR:'СФР',ROSSTAT:'Росстат'},out={};\n for(const [index,r] of (context.reports||[]).entries()) {\n  const active=r.path===context.active_report_path;\n  const error=context.error||null;\n  const affected=!!error&&error.code!=='VALIDATION_ERROR'&&(active||context.active_report_path==null);\n  const quote=r.license_quote||(active?context.license_quote:null)||null;\n  let state;\n  if(['sent','archived'].includes(r.state))state='sent';\n  else if(r.state==='submission_unknown')state='requires_reconciliation';\n  else if(r.state==='validation_failed')state='validation_failed';\n  else if(affected&&error.code!=='VALIDATION_ERROR')state=active?(context.result_state||'failed'):'not_processed';\n  else if(context.mode==='preflight'&&!error)state='preflight_completed';\n  else state=r.state==='validated'?'validated_not_sent':r.state==='uploaded'?'uploaded_not_sent':'not_processed';\n  out['Rezult_'+(index+1)]={state,report_state:r.state,inn:context.inn,authority:r.authority,\n   section_name:r.load_datetime?(names[r.authority]||r.authority):null,mode:context.mode,\n   file_name:r.filename,sha256:r.sha256,load_datetime:r.load_datetime||null,\n   validation_result:r.validation_result||null,file_selection_verified:!!r.file_selection_verified,\n   report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,\n   sbis_status:r.sbis_status||null,archived_path:r.archived_path||null,\n   error_code:r.state==='validation_failed'?'VALIDATION_ERROR':affected?error.code:null,\n   error_message:r.state==='validation_failed'?'СБИС обнаружил ошибки отчетности':affected?error.message:null,\n   license_requires_confirmation:quote?.requires_confirmation??null,\n   license_amount:quote?.amount??null,license_currency:quote?.currency??null,\n   license_continuation:quote?.continuation??null,file_count:(r.files||[r]).length,bundle_verified:!!r.bundle_verified};\n  for(const [i,file] of (r.files||[r]).entries()){out['Rezult_'+(index+1)]['file_name_'+(i+1)]=file.filename;out['Rezult_'+(index+1)]['sha256_'+(i+1)]=file.sha256;}\n }\n return out;\n})()"
         },
         "save_as": "report_results",
         "private": true
+      }
+    ],
+    "prepare_bundle": [
+      {
+        "action": "file_read",
+        "title": "Прочитать ограниченный основной XML для ссылок комплекта",
+        "description": "Прочитать ограниченный основной XML для ссылок комплекта",
+        "params": {
+          "file": "{{report}}",
+          "encoding": "windows-1251",
+          "max_bytes": 1048576
+        },
+        "private": true,
+        "save_as": "bundle_source"
+      },
+      {
+        "action": "compute",
+        "title": "Подобрать части только по точным ссылкам основного XML",
+        "description": "Подобрать части только по точным ссылкам основного XML",
+        "params": {
+          "expression": "(() => {\n const values=[...context.bundle_source.text.matchAll(/=\\s*[\"']([^\"']+)[\"']/g)].map(m=>m[1]);\n const files=[context.report.files[0]],seen=new Set([context.report.path.toLowerCase()]);\n for(const prefix of context.report.bundle_prefixes){\n  const names=[...new Set(values.filter(v=>v.startsWith(prefix)&&v.toLowerCase().endsWith('.xml')))];\n  if(!names.length)throw Object.assign(new Error('В основном XML нет ссылки на обязательную часть '+prefix),{code:'BUNDLE_REFERENCE_MISSING'});\n  for(const name of names){\n   if(/[\\\\/]/.test(name))throw Object.assign(new Error('Ссылка комплекта должна быть именем файла'),{code:'BUNDLE_REFERENCE_INVALID'});\n   const matches=context.directory_files.filter(f=>f.filename.toLowerCase()===name.toLowerCase());\n   if(matches.length!==1)throw Object.assign(new Error('Не найдена единственная часть комплекта '+name),{code:'BUNDLE_PART_MISSING'});\n   const f=matches[0],key=f.path.toLowerCase();\n   if(seen.has(key))throw Object.assign(new Error('Повторная часть комплекта'),{code:'BUNDLE_REFERENCE_INVALID'});\n   if(context.reports.some(r=>r.path!==context.report.path&&(r.files||[r]).some(a=>a.path.toLowerCase()===key)))throw Object.assign(new Error('Часть выбрана для другого отчета'),{code:'AUTHORITY_FILE_CONFLICT'});\n   seen.add(key);files.push(f);\n  }\n }\n if(files.length>100)throw Object.assign(new Error('Слишком большой комплект'),{code:'WORKFLOW_LIMIT'});\n return {...context.report,files,bundle_verified:true};\n})()"
+        },
+        "private": true,
+        "save_as": "report"
+      },
+      {
+        "action": "set",
+        "title": "Удалить исходный XML из рабочего контекста",
+        "description": "Удалить исходный XML из рабочего контекста",
+        "params": {
+          "bundle_source": null
+        },
+        "private": true
+      },
+      {
+        "action": "call",
+        "title": "Сохранить выбранный комплект",
+        "description": "Сохранить выбранный комплект",
+        "params": {},
+        "private": true,
+        "routine": "store_report",
+        "timeout_ms": "{{control_timeout_ms}}"
       }
     ]
   },
@@ -701,7 +747,7 @@
       "title": "Проверить параметры и UI-привязки всех ведомств до запуска",
       "description": "Проверить параметры и UI-привязки всех ведомств до запуска",
       "params": {
-        "expression": "(() => {\n const bad = message => { throw Object.assign(new Error(message),{code:'MISSING_PARAMETER'}); };\n if (!['preflight','validate_only','send'].includes(context.mode)) bad('Некорректный mode');\n if (!/^\\d{10}(\\d{2})?$/.test(context.inn||'')) bad('Требуется полный ИНН организации');\n if (context.certificate_inn != null && !/^\\d{10}(\\d{2})?$/.test(context.certificate_inn)) bad('Некорректный certificate_inn');\n const plans=context.authority_prefixes == null ? [{authority:context.authority,prefixes:context.prefixes}] : context.authority_prefixes;\n if (!Array.isArray(plans) || !plans.length || plans.length>3) bad('Требуется от одного до трёх ведомств');\n if(typeof context.license_debt_enabled!=='boolean')bad('license_debt_enabled должен быть Boolean');\n if(context.license_debt_enabled&&(!Number.isFinite(context.license_debt_expected_amount)||context.license_debt_expected_amount<=0))bad('Для В долг нужна явно разрешенная положительная сумма');\n if(!Number.isInteger(context.control_timeout_ms)||context.control_timeout_ms<1000||context.control_timeout_ms>900000)bad('Некорректный control_timeout_ms');\n const seen=new Set();\n return plans.map(plan=>{\n  if (!['FNS','SFR','ROSSTAT'].includes(plan.authority) || seen.has(plan.authority)) bad('Неизвестное или повторное ведомство');\n  seen.add(plan.authority);\n  if (!Array.isArray(plan.prefixes) || !plan.prefixes.length || plan.prefixes.some(p=>typeof p!=='string'||!p.trim())) bad('Не заданы префиксы файлов');\n  const ui={...context.ui,...(plan.ui||{})};\n  const required=['organization_selector','report_scope_selector','report_key_expression','validation_status_selector','protocol_selector','validation_success_text','validation_failure_text'];\n  if(context.mode==='send'&&context.submit_enabled===true)required.push('sent_status_selector','current_card_scope_selector');\n  const missing=context.mode==='preflight'?[]:required.filter(k=>!ui[k]);\n  if(context.mode!=='preflight')for(const k of ['upload_steps','validate_steps',...(context.mode==='send'&&context.submit_enabled===true?['reopen_steps','submit_steps']:[])])if(!Array.isArray(ui[k])||!ui[k].length)missing.push(k);\n  if(!ui.authority_paths?.[plan.authority])missing.push('authority_paths');\n  if(missing.length)throw Object.assign(new Error('Не настроены UI-привязки: '+missing.join(', ')),{code:'UI_BINDING_REQUIRED'});\n  return {...plan,ui};\n });\n})()"
+        "expression": "(() => {\n const bad = message => { throw Object.assign(new Error(message),{code:'MISSING_PARAMETER'}); };\n if (!['preflight','upload_only','validate_only','send'].includes(context.mode)) bad('Некорректный mode');\n if (!/^\\d{10}(\\d{2})?$/.test(context.inn||'')) bad('Требуется полный ИНН организации');\n if (context.certificate_inn != null && !/^\\d{10}(\\d{2})?$/.test(context.certificate_inn)) bad('Некорректный certificate_inn');\n const plans=context.authority_prefixes == null ? [{authority:context.authority,prefixes:context.prefixes}] : context.authority_prefixes;\n if (!Array.isArray(plans) || !plans.length || plans.length>3) bad('Требуется от одного до трёх ведомств');\n if(typeof context.license_debt_enabled!=='boolean')bad('license_debt_enabled должен быть Boolean');\n if(context.license_debt_enabled&&(!Number.isFinite(context.license_debt_expected_amount)||context.license_debt_expected_amount<=0))bad('Для В долг нужна явно разрешенная положительная сумма');\n if(!Number.isInteger(context.control_timeout_ms)||context.control_timeout_ms<1000||context.control_timeout_ms>900000)bad('Некорректный control_timeout_ms');\n const seen=new Set();\n return plans.map(plan=>{\n  if (!['FNS','SFR','ROSSTAT'].includes(plan.authority) || seen.has(plan.authority)) bad('Неизвестное или повторное ведомство');\n  seen.add(plan.authority);\n  if(plan.bundle_files!==undefined&&typeof plan.bundle_files!=='boolean')bad('bundle_files должен быть Boolean');\n  if(plan.bundle_files&&plan.prefixes?.length<2)bad('Для комплекта нужны основной префикс и префиксы частей');\n  if (!Array.isArray(plan.prefixes) || !plan.prefixes.length || plan.prefixes.some(p=>typeof p!=='string'||!p.trim())) bad('Не заданы префиксы файлов');\n  const ui={...context.ui,...(plan.ui||{})};\n  const required=['organization_selector','report_scope_selector','report_key_expression'];if(context.mode!=='upload_only')required.push('validation_status_selector','protocol_selector','validation_success_text','validation_failure_text');\n  if(context.mode==='send'&&context.submit_enabled===true)required.push('sent_status_selector','current_card_scope_selector');\n  const missing=context.mode==='preflight'?[]:required.filter(k=>!ui[k]);\n  if(context.mode!=='preflight')for(const k of ['upload_steps',...(context.mode==='upload_only'?[]:['validate_steps']),...(context.mode==='send'&&context.submit_enabled===true?['reopen_steps','submit_steps']:[])])if(!Array.isArray(ui[k])||!ui[k].length)missing.push(k);\n  if(!ui.authority_paths?.[plan.authority])missing.push('authority_paths');\n  if(missing.length)throw Object.assign(new Error('Не настроены UI-привязки: '+missing.join(', ')),{code:'UI_BINDING_REQUIRED'});\n  return {...plan,ui};\n });\n})()"
       },
       "save_as": "plans",
       "private": true
@@ -748,7 +794,7 @@
       "title": "Выбрать последний XML для каждого префикса всех ведомств",
       "description": "Выбрать последний XML для каждого префикса всех ведомств",
       "params": {
-        "expression": "(() => {\n const selected=new Set(),reports=[];\n for(const plan of context.plans){const current=new Map();for(const prefix of plan.prefixes){\n  const files=context.directory_files.filter(f=>f.filename.toLowerCase().endsWith('.xml')&&f.filename.startsWith(prefix)).sort((a,b)=>b.modified_ms-a.modified_ms||a.filename.localeCompare(b.filename));\n  if(!files.length)throw Object.assign(new Error('Не найден XML для заданного префикса'),{code:'FILE_NOT_FOUND'});\n  current.set(files[0].path,files[0]);\n }\n if(context.allow_multiple===false&&current.size>1)throw Object.assign(new Error('Несколько файлов при allow_multiple=false'),{code:'MULTIPLE_FILES'});\n if(context.mode==='send'&&context.submit_enabled===true&&current.size>1&&plan.ui.reopen_steps?.length===1&&plan.ui.reopen_steps[0].type==='waitForExpression'&&plan.ui.reopen_steps[0].expression==='true')throw Object.assign(new Error('Для нескольких файлов ведомства настройте повторное открытие каждой карточки'),{code:'UI_BINDING_REQUIRED'});\n for(const file of current.values()){\n  const key=/^[a-z]:[\\\\/]/i.test(file.path)?file.path.toLowerCase():file.path;\n  if(selected.has(key))throw Object.assign(new Error('Один XML выбран для разных ведомств'),{code:'AUTHORITY_FILE_CONFLICT'});\n  selected.add(key);reports.push({...file,authority:plan.authority,state:'selected',validation_result:null,sbis_status:null});\n }}return reports;\n})()"
+        "expression": "(() => {\n const selected=new Set(),reports=[];\n for(const plan of context.plans){const current=new Map();for(const prefix of (plan.bundle_files?plan.prefixes.slice(0,1):plan.prefixes)){\n  const files=context.directory_files.filter(f=>f.filename.toLowerCase().endsWith('.xml')&&f.filename.startsWith(prefix)).sort((a,b)=>b.modified_ms-a.modified_ms||a.filename.localeCompare(b.filename));\n  if(!files.length)throw Object.assign(new Error('Не найден XML для заданного префикса'),{code:'FILE_NOT_FOUND'});\n  current.set(files[0].path,files[0]);\n }\n if(context.allow_multiple===false&&current.size>1)throw Object.assign(new Error('Несколько файлов при allow_multiple=false'),{code:'MULTIPLE_FILES'});\n if(context.mode==='send'&&context.submit_enabled===true&&current.size>1&&plan.ui.reopen_steps?.length===1&&plan.ui.reopen_steps[0].type==='waitForExpression'&&plan.ui.reopen_steps[0].expression==='true')throw Object.assign(new Error('Для нескольких файлов ведомства настройте повторное открытие каждой карточки'),{code:'UI_BINDING_REQUIRED'});\n for(const file of current.values()){\n  const key=/^[a-z]:[\\\\/]/i.test(file.path)?file.path.toLowerCase():file.path;\n  if(selected.has(key))throw Object.assign(new Error('Один XML выбран для разных ведомств'),{code:'AUTHORITY_FILE_CONFLICT'});\n  selected.add(key);reports.push({...file,files:[file],bundle_prefixes:plan.bundle_files?plan.prefixes.slice(1):[],authority:plan.authority,state:'selected',validation_result:null,sbis_status:null});\n }}return reports;\n})()"
       },
       "save_as": "reports",
       "private": true
@@ -761,6 +807,66 @@
       "params": {},
       "private": true,
       "timeout_ms": "{{control_timeout_ms}}"
+    },
+    {
+      "action": "for_each",
+      "title": "Связать части каждого комплекта до запуска браузера",
+      "description": "Связать части каждого комплекта до запуска браузера",
+      "params": {
+        "items": "{{reports}}"
+      },
+      "private": true,
+      "as": "report",
+      "steps": [
+        {
+          "action": "set",
+          "title": "Привязать ошибку комплекта к основному отчету",
+          "description": "Привязать ошибку комплекта к основному отчету",
+          "params": {
+            "active_report_path": "{{report.path}}"
+          },
+          "private": true
+        },
+        {
+          "action": "compute",
+          "title": "Определить комплект связанных XML",
+          "description": "Определить комплект связанных XML",
+          "params": {
+            "expression": "context.report.bundle_prefixes.length>0"
+          },
+          "private": true,
+          "save_as": "is_bundle"
+        },
+        {
+          "action": "if",
+          "title": "Прочитать ссылки только для комплекта",
+          "description": "Прочитать ссылки только для комплекта",
+          "params": {
+            "condition": "{{is_bundle}}"
+          },
+          "private": true,
+          "then": [
+            {
+              "action": "call",
+              "title": "Подготовить комплект из ссылок XML",
+              "description": "Подготовить комплект из ссылок XML",
+              "params": {},
+              "private": true,
+              "routine": "prepare_bundle",
+              "timeout_ms": "{{control_timeout_ms}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "action": "set",
+      "title": "Завершить предварительный выбор комплектов",
+      "description": "Завершить предварительный выбор комплектов",
+      "params": {
+        "active_report_path": null
+      },
+      "private": true
     },
     {
       "action": "compute",
@@ -793,7 +899,7 @@
           "action": "compute",
           "title": "Проверить отсутствие конфликтующих архивных XML",
           "params": {
-            "expression": "!context.reports.some(r=>context.archive_existing.some(a=>a.filename.toLowerCase()===r.filename.toLowerCase()))"
+            "expression": "!context.reports.some(r=>(r.files||[r]).some(f=>context.archive_existing.some(a=>a.filename.toLowerCase()===f.filename.toLowerCase())))"
           },
           "save_as": "archive_clear",
           "private": true
@@ -1340,13 +1446,25 @@
                   }
                 },
                 {
-                  "action": "file_verify",
-                  "title": "Проверить неизменность выбранного XML",
-                  "description": "Проверить неизменность выбранного XML",
+                  "action": "for_each",
+                  "title": "Проверить неизменность всех XML отчета",
+                  "description": "Сверяет SHA-256 основной декларации и всех связанных частей.",
                   "params": {
-                    "file": "{{report}}"
+                    "items": "{{report.files}}"
                   },
-                  "private": true
+                  "private": true,
+                  "as": "bundle_file",
+                  "steps": [
+                    {
+                      "action": "file_verify",
+                      "title": "Сверить контрольную сумму части",
+                      "description": "Сверить контрольную сумму части",
+                      "params": {
+                        "file": "{{bundle_file}}"
+                      },
+                      "private": true
+                    }
+                  ]
                 },
                 {
                   "action": "compute",
@@ -1374,7 +1492,7 @@
                   "title": "Подготовить переход по root_dir или явным шагам каталога",
                   "description": "Для локального диска C строит Recorder-шаги из root_dir. Явный upload_directory_steps имеет приоритет; другой диск требует такого переопределения. Перед выбором XML отдельно проверяются имя и полный путь.",
                   "params": {
-                    "expression": "(()=>{if(Array.isArray(context.upload_directory_steps)&&context.upload_directory_steps.length)return context.upload_directory_steps;const root=String(context.root_dir||'').replaceAll(String.fromCharCode(92),'/');if(!/^[a-z]:\\//i.test(root))return [];if(!/^c:\\//i.test(root))throw Object.assign(new Error('Для другого диска настройте upload_directory_steps'),{code:'UI_BINDING_REQUIRED'});const folders=root.split('/').slice(1).filter(Boolean);return [{type:'click',selectors:[['text/Локальный диск (C:)']],offsetX:65,offsetY:10,description:'Открывает диск C в файловом диалоге перед переходом по root_dir.'},...folders.flatMap(name=>{const selector='.FileBrowserComponent__Browser__columnName:has([data-minicard-name='+JSON.stringify(name)+']) .FileBrowserComponent__Browser__columnNameRow';return [{type:'waitForElement',selectors:[[selector]],visible:true,count:1,operator:'==',description:'Ожидает единственную строку подкаталога из root_dir.'},{type:'doubleClick',selectors:[[selector]],offsetX:45,offsetY:10,description:'Открывает следующий подкаталог из root_dir по точному имени.'}]})]})()"
+                    "expression": "(()=>{if(Array.isArray(context.upload_directory_steps)&&context.upload_directory_steps.length)return context.upload_directory_steps;const root=String(context.root_dir||'').replaceAll(String.fromCharCode(92),'/');if(!/^[a-z]:\\//i.test(root))return [];if(!/^c:\\//i.test(root))throw Object.assign(new Error('Для другого диска настройте upload_directory_steps'),{code:'UI_BINDING_REQUIRED'});const folders=root.split('/').slice(1).filter(Boolean);return [{type:'waitForElement',selectors:[['text/Локальный диск (C:)']],visible:true,description:'Ожидает загрузку дерева дисков Saby Plugin.'},{type:'click',selectors:[['text/Локальный диск (C:)']],offsetX:65,offsetY:10,description:'Открывает диск C в файловом диалоге перед переходом по root_dir.'},...folders.flatMap(name=>{const selector='.FileBrowserComponent__Browser__columnName:has([data-minicard-name='+JSON.stringify(name)+']) .FileBrowserComponent__Browser__columnNameRow';return [{type:'waitForElement',selectors:[[selector]],visible:true,count:1,operator:'==',description:'Ожидает единственную строку подкаталога из root_dir.'},{type:'doubleClick',selectors:[[selector]],offsetX:45,offsetY:10,description:'Открывает следующий подкаталог из root_dir по точному имени.'}]})]})()"
                   },
                   "save_as": "directory_navigation_steps",
                   "private": true
@@ -1416,7 +1534,7 @@
                   "title": "Сверить единственный XML по имени и полному пути",
                   "description": "Сверить единственный XML по имени и полному пути",
                   "params": {
-                    "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';\n const rows=[...document.querySelectorAll('[data-minicard-name]')].filter(e=>visible(e)&&e.getAttribute('data-minicard-name')===context.report.filename);\n const normalize=value=>{let r=String(value||'').replace(/\\\\/g,'/');if(r.startsWith('file:///')){try{r=decodeURIComponent(r.slice(7));}catch{return null;}}if(/^\\/[a-z]:\\//i.test(r))r=r.slice(1);return /^[a-z]:\\//i.test(r)?r.toLowerCase():r;};\n if(rows.length!==1||!rows[0].getAttribute('data-minicard-path')||normalize(rows[0].getAttribute('data-minicard-path'))!==normalize(context.report.path))throw Object.assign(new Error('Не подтверждён единственный файл по имени и полному пути'),{code:'FILE_SELECTION_MISMATCH'});\n return true;\n})()"
+                    "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';\n const all=[...document.querySelectorAll('[data-minicard-name]')].filter(visible);\n const normalize=value=>{let r=String(value||'').replace(/\\\\/g,'/');if(r.startsWith('file:///')){try{r=decodeURIComponent(r.slice(7));}catch{return null;}}if(/^\\/[a-z]:\\//i.test(r))r=r.slice(1);return /^[a-z]:\\//i.test(r)?r.toLowerCase():r;};\n for(const file of context.report.files){const rows=all.filter(e=>e.getAttribute('data-minicard-name')===file.filename);if(rows.length!==1||!rows[0].getAttribute('data-minicard-path')||normalize(rows[0].getAttribute('data-minicard-path'))!==normalize(file.path))throw Object.assign(new Error('Не подтверждены имя и полный путь части комплекта'),{code:'FILE_SELECTION_MISMATCH'});}\n return true;\n})()"
                   },
                   "save_as": "file_verified",
                   "private": true
@@ -1445,7 +1563,7 @@
                   "title": "Подготовить однократный выбор XML",
                   "description": "Подготовить однократный выбор XML",
                   "params": {
-                    "expression": "context.ui.upload_steps.slice(-1)"
+                    "expression": "(()=>{\n if(context.report.files.length===1)return context.ui.upload_steps.slice(-1);\n if(Array.isArray(context.ui.upload_bundle_steps)&&context.ui.upload_bundle_steps.length)return context.ui.upload_bundle_steps;\n const files=context.report.files,selected=context.ui.bundle_selected_row_selector,checkbox=context.ui.bundle_checkbox_selector,button=context.ui.bundle_import_selector;\n if(!selected||!checkbox||!button)throw Object.assign(new Error('Не настроен импорт комплекта'),{code:'UI_BINDING_REQUIRED'});\n const expected=JSON.stringify(files.map(f=>({name:f.filename,path:f.path.replaceAll(String.fromCharCode(92),'/').toLowerCase()})));\n const verify=`(()=>{const expected=${expected};const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const nodes=[...document.querySelectorAll(${JSON.stringify(selected+' [data-minicard-name]')})].filter(visible);const normalize=x=>String(x||'').replaceAll(String.fromCharCode(92),'/').toLowerCase();return nodes.length===expected.length&&expected.every(f=>nodes.filter(e=>e.getAttribute('data-minicard-name')===f.name&&normalize(e.getAttribute('data-minicard-path'))===f.path).length===1)})()`;\n return [...files.flatMap(f=>{const selector='tr:has([data-minicard-name='+JSON.stringify(f.filename)+']) '+checkbox;return [{type:'waitForElement',selectors:[['tr:has([data-minicard-name='+JSON.stringify(f.filename)+'])']],visible:true,count:1,operator:'==',description:'Ожидает чекбокс точной части комплекта.'},{type:'click',selectors:[[selector]],offsetX:7,offsetY:7,description:'Отмечает одну проверенную часть комплекта без импорта.'}]}),{type:'waitForExpression',expression:verify,description:'Проверяет точный набор отмеченных имён и полных путей без лишних файлов.'},{type:'waitForElement',selectors:[[button]],visible:true,count:1,operator:'==',description:'Ожидает единственную кнопку импорта файлового диалога.'},{type:'click',selectors:[[button]],offsetX:25,offsetY:10,description:'Однократно загружает отмеченный комплект; не подписывает и не отправляет.'}];\n})()"
                   },
                   "save_as": "select_file_steps",
                   "private": true
@@ -1492,11 +1610,33 @@
                   "timeout_ms": "{{control_timeout_ms}}"
                 },
                 {
-                  "action": "call",
-                  "title": "Проверить отчёт и сохранить текст результата",
-                  "description": "Проверить отчёт и сохранить текст результата",
-                  "params": {},
-                  "routine": "validate",
+                  "action": "compute",
+                  "title": "Определить необходимость проверки после импорта",
+                  "description": "upload_only оставляет загруженный черновик без проверки и отправки.",
+                  "params": {
+                    "expression": "context.mode!=='upload_only'"
+                  },
+                  "save_as": "validate_after_upload",
+                  "private": true
+                },
+                {
+                  "action": "if",
+                  "title": "Проверить отчет только по выбранному режиму",
+                  "description": "Не вызывает проверку в upload_only.",
+                  "params": {
+                    "condition": "{{validate_after_upload}}"
+                  },
+                  "then": [
+                    {
+                      "action": "call",
+                      "title": "Проверить отчёт и сохранить текст результата",
+                      "description": "Проверить отчёт и сохранить текст результата",
+                      "params": {},
+                      "routine": "validate",
+                      "private": true,
+                      "timeout_ms": "{{control_timeout_ms}}"
+                    }
+                  ],
                   "private": true,
                   "timeout_ms": "{{control_timeout_ms}}"
                 }
@@ -2070,22 +2210,33 @@
                           "private": true
                         },
                         {
-                          "action": "file_archive",
-                          "title": "Переместить неизменённый отправленный XML без перезаписи",
-                          "description": "Переместить неизменённый отправленный XML без перезаписи",
+                          "action": "for_each",
+                          "title": "Архивировать все части подтвержденного отчета",
+                          "description": "Перемещает только неизменённые части после подтверждённой отправки отчета.",
                           "params": {
-                            "file": "{{report}}",
-                            "directory": "{{loaded_dir}}"
+                            "items": "{{report.files}}"
                           },
-                          "save_as": "archive_path",
-                          "private": true
+                          "private": true,
+                          "as": "bundle_file",
+                          "steps": [
+                            {
+                              "action": "file_archive",
+                              "title": "Архивировать часть без перезаписи",
+                              "description": "Архивировать часть без перезаписи",
+                              "params": {
+                                "file": "{{bundle_file}}",
+                                "directory": "{{loaded_dir}}"
+                              },
+                              "private": true
+                            }
+                          ]
                         },
                         {
                           "action": "compute",
                           "title": "Зафиксировать архивирование",
                           "description": "Зафиксировать архивирование",
                           "params": {
-                            "expression": "({...context.report,state:'archived',archived_path:context.archive_path})"
+                            "expression": "({...context.report,state:'archived',archived_path:context.loaded_dir+'/'+context.report.filename})"
                           },
                           "save_as": "report",
                           "private": true

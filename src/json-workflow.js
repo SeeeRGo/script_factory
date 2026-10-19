@@ -7,7 +7,7 @@ import { InterpreterError, resolveTemplates, abortableDelay } from './interprete
 import { resolveBrowserExecutablePath, resolveBrowserUploadFiles } from './browser-replay.js';
 import { checkExternalIp } from './system-checks.js';
 import { validateWorkflow, workflowIdentifier } from './workflow-schema.js';
-import { checkedWorkflowPath, listWorkflowFiles, verifyWorkflowFile, archiveWorkflowFile, copyWorkflowFile } from './workflow-files.js';
+import { checkedWorkflowPath, listWorkflowFiles, verifyWorkflowFile, archiveWorkflowFile, copyWorkflowFile, readWorkflowFile } from './workflow-files.js';
 
 const fail = (code, message) => { throw new InterpreterError(code, message); };
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -102,6 +102,7 @@ export async function executeJsonWorkflow(options) {
       }
       case 'call': return scoped(params, () => run(script.routines[step.routine], activeSignal, depth + 1));
       case 'system_ip_check': return (options.checkIp || checkExternalIp)();
+      case 'file_read': return readWorkflowFile(params.file, allowedRoots, params);
       case 'files_list': return listWorkflowFiles(params.directory, allowedRoots, activeSignal);
       case 'file_verify': await verifyWorkflowFile(params.file, allowedRoots); return true;
       case 'file_archive': return archiveWorkflowFile(params.file, params.directory, allowedRoots, activeSignal);

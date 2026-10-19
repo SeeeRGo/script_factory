@@ -15,14 +15,14 @@ test('SBIS JSON contains generic operations only, with no server-side site actio
   const visit = steps => { for (const step of steps) { assert.notEqual(step.action, 'select_authority'); assert.notEqual(step.action, 'auth_ecp'); for (const key of ['steps', 'then', 'else']) if (step[key]) visit(step[key]); } };
   visit(template.steps); Object.values(template.routines).forEach(visit);
 });
-for (const scenario of ['validate_only', 'known_popup', 'ip_profile', 'collapsed_requisites', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed', 'license_debt_late_price', 'license_debt_contradiction', 'send', 'send_accepted', 'invalid', 'mixed_validation', 'preflight_three', 'send_three_partial', 'wrong_org', 'wrong_authority', 'wrong_file_path', 'wrong_card', 'ambiguous_certificate', 'expired_only', 'account_setup', 'duplicate', 'multiple_files', 'file_conflict', 'same_card_key', 'unknown_send']) {
+for (const scenario of ['upload_bundle_only', 'validate_only', 'known_popup', 'ip_profile', 'collapsed_requisites', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed', 'license_debt_late_price', 'license_debt_contradiction', 'send', 'send_accepted', 'invalid', 'mixed_validation', 'preflight_three', 'send_three_partial', 'wrong_org', 'wrong_authority', 'wrong_file_path', 'wrong_card', 'ambiguous_certificate', 'expired_only', 'account_setup', 'duplicate', 'multiple_files', 'file_conflict', 'same_card_key', 'unknown_send']) {
   test(`SBIS JSON on real browser fixture: ${scenario}`, async t => {
     const root = await mkdtemp(path.join(tmpdir(), 'sbis-json-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const incoming = path.join(root, 'incoming'), loaded = path.join(root, 'loaded');
     await mkdir(incoming); await mkdir(loaded);
-    const names = ['preflight_three','send_three_partial'].includes(scenario) ? ['FNS_report.xml', 'SFR_report.xml', 'STAT_report.xml'] : scenario === 'multiple_files' || scenario === 'same_card_key' || scenario === 'mixed_validation' ? ['NO_one.xml', 'AN_two.xml'] : ['NO_one.xml'];
-    for (const name of names) await writeFile(path.join(incoming, name), '<TestOnly/>');
+    const names = scenario === 'upload_bundle_only' ? ['NO_one.xml','PART8_one.xml','PART9_one.xml'] : ['preflight_three','send_three_partial'].includes(scenario) ? ['FNS_report.xml', 'SFR_report.xml', 'STAT_report.xml'] : scenario === 'multiple_files' || scenario === 'same_card_key' || scenario === 'mixed_validation' ? ['NO_one.xml', 'AN_two.xml'] : ['NO_one.xml'];
+    for (const name of names) await writeFile(path.join(incoming, name), scenario==='upload_bundle_only' && name==='NO_one.xml' ? '<TestOnly part8="PART8_one.xml" part9="PART9_one.xml"/>' : '<TestOnly/>');
     let imported = 0, submitted = 0, checked = 0, dismissed = 0, organizationOpened = 0, requisitesExpanded = 0, sendAttempts = 0;
     const server = createServer((req, res) => {
       if (scenario === 'wrong_authority' && req.url === '/report/fns') { res.writeHead(302, { Location: '/report/sfr' }); res.end(); return; }
@@ -37,7 +37,7 @@ for (const scenario of ['validate_only', 'known_popup', 'ip_profile', 'collapsed
       const reopen = new URL(req.url, origin).searchParams.get('name');
       const licenseStops = scenario === 'send_three_partial' && reopen?.startsWith('SFR_');
       const cardKey = name => scenario === 'same_card_key' ? 'same-key' : `key-${name}`;
-      const rows = names.map(name => `<div class="FileBrowserComponent__Browser__columnName"><i style="display:inline-block;width:12px;height:12px" data-minicard-name="${name}" data-minicard-path="${path.join(scenario === 'wrong_file_path' ? loaded : incoming, name)}"></i><div class="FileBrowserComponent__Browser__columnNameRow" ondblclick="document.querySelector('#picker').hidden=true;${scenario === 'duplicate' ? "document.querySelector('#duplicate').hidden=false" : `document.querySelector('#card').hidden=false;document.querySelector('#card').dataset.reportKey='${cardKey(name)}';fetch('/imported')`}">Название отчёта</div></div>`).join('');
+      const rows = scenario==='upload_bundle_only' ? '<table>'+names.map(name=>`<tr><td><span style="display:inline-block;width:20px;height:20px" class="js-controls-ListView__itemCheckBox" onclick="this.closest('tr').classList.toggle('controls-ListView__item__multiSelected')">□</span></td><td class="FileBrowserComponent__Browser__columnName"><i style="display:inline-block;width:12px;height:12px" data-minicard-name="${name}" data-minicard-path="${path.join(incoming,name)}"></i><div class="FileBrowserComponent__Browser__columnNameRow">Часть отчёта</div></td></tr>`).join('')+`</table><button data-name="FolderBrowserComponent__StartLoadButton" onclick="document.querySelector('#picker').hidden=true;document.querySelector('#card').hidden=false;document.querySelector('#card').dataset.reportKey='key-NO_one.xml';fetch('/imported')">Загрузить комплект</button>` : names.map(name => `<div class="FileBrowserComponent__Browser__columnName"><i style="display:inline-block;width:12px;height:12px" data-minicard-name="${name}" data-minicard-path="${path.join(scenario === 'wrong_file_path' ? loaded : incoming, name)}"></i><div class="FileBrowserComponent__Browser__columnNameRow" ondblclick="document.querySelector('#picker').hidden=true;${scenario === 'duplicate' ? "document.querySelector('#duplicate').hidden=false" : `document.querySelector('#card').hidden=false;document.querySelector('#card').dataset.reportKey='${cardKey(name)}';fetch('/imported')`}">Название отчёта</div></div>`).join('');
       const usable = scenario === 'expired_only' ? '' : `<div class="cert" onclick="location.href='${scenario === 'account_setup' ? '/setup' : '/cabinet'}'">ИНН ${inn}</div>`;
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.end(`<html><head><title>Отчеты</title></head><body>
@@ -84,9 +84,9 @@ for (const scenario of ['validate_only', 'known_popup', 'ip_profile', 'collapsed
       current_card_scope_selector:'#card', sent_scope_selector:'#card', sent_status_selector: '#sent', sent_status_text: 'Отправлено' };
     const authority_prefixes = ['preflight_three','send_three_partial'].includes(scenario) ? [{ authority: 'FNS', prefixes: ['FNS_'] }, { authority: 'SFR', prefixes: ['SFR_'] }, { authority: 'ROSSTAT', prefixes: ['STAT_'] }]
       : scenario === 'file_conflict' ? [{ authority: 'FNS', prefixes: ['NO_'] }, { authority: 'SFR', prefixes: ['NO_'] }]
-      : [{ authority: 'FNS', prefixes: names.length === 2 ? ['NO_', 'AN_'] : ['NO_'] }];
+      : scenario==='upload_bundle_only' ? [{authority:'FNS',prefixes:['NO_','PART8_','PART9_'],bundle_files:true}] : [{ authority: 'FNS', prefixes: names.length === 2 ? ['NO_', 'AN_'] : ['NO_'] }];
     const events = [];
-    const opts = { onEvent: event => events.push(event), script, context: { mode: scenario === 'preflight_three' ? 'preflight' : ['send', 'send_accepted', 'unknown_send', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed','license_debt_late_price','license_debt_contradiction','send_three_partial'].includes(scenario) ? 'send' : 'validate_only',
+    const opts = { onEvent: event => events.push(event), script, context: { mode: scenario==='upload_bundle_only' ? 'upload_only' : scenario === 'preflight_three' ? 'preflight' : ['send', 'send_accepted', 'unknown_send', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed','license_debt_late_price','license_debt_contradiction','send_three_partial'].includes(scenario) ? 'send' : 'validate_only',
       submit_enabled: ['send', 'send_accepted', 'unknown_send', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed','license_debt_late_price','license_debt_contradiction','send_three_partial'].includes(scenario), inn, certificate_inn: inn, certificate_selection_required: true,
       login_url: `${origin}/login`, report_url: `${origin}/report`, authenticated_url: `${origin}/cabinet`, root_dir: incoming, loaded_dir: loaded, license_debt_enabled:['license_debt_allowed','license_debt_price_changed','license_debt_late_price'].includes(scenario), license_debt_expected_amount:scenario==='license_debt_price_changed'?1000:2500, authority_prefixes, ui },
       allowedRoots: [root], artifactDirectory: path.join(root, 'artifacts'), publicArtifactBasePath: '/artifacts/test', jobId: `job-${scenario}`, checkIp: async () => ({ ip_matches_expected: true }) };
@@ -129,11 +129,12 @@ for (const scenario of ['validate_only', 'known_popup', 'ip_profile', 'collapsed
       if(scenario==='send_accepted') assert.equal(result.context.Rezult_1.sbis_status,'Отчет сдан');
       if(scenario==='license_debt_allowed'){assert.equal(result.context.Rezult_1.license_requires_confirmation,false);assert.equal(result.context.Rezult_1.license_continuation,'debt');}
       await checkSavedResult(result.context);
-      assert.equal(result.context.Rezult_1.state, ['send','send_accepted','license_debt_allowed'].includes(scenario) ? 'sent' : scenario === 'preflight_three' ? 'preflight_completed' : 'validated_not_sent');
-      assert.equal(Object.keys(result.context).filter(k=>/^Rezult_/.test(k)).length,names.length);
+      assert.equal(result.context.Rezult_1.state, ['send','send_accepted','license_debt_allowed'].includes(scenario) ? 'sent' : scenario === 'preflight_three' ? 'preflight_completed' : scenario==='upload_bundle_only' ? 'uploaded_not_sent' : 'validated_not_sent');
+      assert.equal(Object.keys(result.context).filter(k=>/^Rezult_/.test(k)).length,scenario==='upload_bundle_only'?1:names.length);
       for(const record of Object.values(result.context).filter(r=>r?.file_name))assert.equal(record.section_name,scenario==='preflight_three'?null:'ФНС');
       assert.equal(submitted, ['send','send_accepted','license_debt_allowed'].includes(scenario) ? 1 : 0);
-      assert.equal(imported, scenario === 'preflight_three' ? 0 : names.length);
+      assert.equal(imported, scenario === 'preflight_three' ? 0 : scenario==='upload_bundle_only'?1:names.length);
+      if(scenario==='upload_bundle_only'){assert.equal(checked,0);assert.equal(result.context.Rezult_1.file_count,3);assert.equal((await readdir(incoming)).length,3);assert.deepEqual(await readdir(loaded),[]);}
       if (scenario === 'collapsed_requisites') assert.equal(requisitesExpanded, 1);
       if (scenario === 'known_popup') assert.ok(dismissed >= 2);
       if (scenario === 'ip_profile') { assert.ok(organizationOpened > 0); assert.ok(dismissed > 0); }

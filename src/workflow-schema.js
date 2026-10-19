@@ -1,7 +1,7 @@
 export const WORKFLOW_ACTIONS = Object.freeze([
   'set', 'compute', 'assert', 'fail', 'if', 'for_each', 'call', 'wait',
   'system_ip_check', 'files_list', 'file_verify', 'file_archive', 'file_copy',
-  'artifact_write', 'browser_launch', 'browser_steps', 'browser_eval', 'browser_wait', 'browser_screenshot'
+  'file_read', 'artifact_write', 'browser_launch', 'browser_steps', 'browser_eval', 'browser_wait', 'browser_screenshot'
 ]);
 const timeoutTemplate = value => typeof value === 'string' && /^\{\{\s*[\w.]+\s*\}\}$/.test(value);
 const identifier = value => typeof value === 'string' && /^[A-Za-z_]\w*$/.test(value)

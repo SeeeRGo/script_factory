@@ -100,6 +100,7 @@ node docs/project-guide/tools/convert-recorder.mjs recording.json workflow.json
 | Обойти массив | `for_each` |
 | Переиспользовать блок JSON | `call` + корневой `routines` |
 | Перечислить файлы / проверить SHA | `files_list` / `file_verify` |
+| Прочитать текст выбранного файла | `file_read`: file с path/sha256 из files_list, encoding=utf-8 или windows-1251, max_bytes=1..4194304 (по умолчанию 65536); API 0.8.0+ |
 | Архивировать подтверждённую обработку | `file_archive` |
 | Сохранить текст / снимок | `artifact_write` / `browser_screenshot` |
 | Сделать фиксированную паузу | `wait` |

@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { copyFile, readFile, readdir, realpath, stat, unlink } from 'node:fs/promises';
+import { copyFile, readFile, readdir, realpath, stat, unlink, open } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { InterpreterError } from './interpreter.js';
@@ -56,4 +56,27 @@ export async function copyWorkflowFile(source, destination, roots, signal) {
   signal?.throwIfAborted();
   await copyFile(source, target, constants.COPYFILE_EXCL);
   return target;
+}
+
+// Bounded, verified text input for JSON workflows; business parsing stays in the JSON script.
+export async function readWorkflowFile(file, roots, { max_bytes = 65536, encoding = 'utf-8' } = {}) {
+  if (!Number.isInteger(max_bytes) || max_bytes < 1 || max_bytes > 4 * 1024 * 1024) fail('INVALID_PARAMETER', 'max_bytes: требуется 1..4194304');
+  if (!['utf-8', 'windows-1251'].includes(encoding)) fail('INVALID_PARAMETER', 'encoding: требуется utf-8 или windows-1251');
+  const source = await checkedWorkflowPath(file?.path, roots);
+  if (!/^[0-9a-f]{64}$/i.test(file?.sha256 || '')) fail('SOURCE_CHANGED', 'Требуется контрольная сумма выбранного файла');
+  const handle = await open(source, 'r');
+  let content;
+  try {
+    const buffer = Buffer.alloc(max_bytes + 1); let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (length > max_bytes) fail('FILE_TOO_LARGE', 'Файл превышает max_bytes');
+    content = buffer.subarray(0, length);
+  } finally { await handle.close(); }
+  if (createHash('sha256').update(content).digest('hex').toLowerCase() !== file.sha256.toLowerCase()) fail('SOURCE_CHANGED', 'Файл изменён после выбора');
+  try { return { text: new TextDecoder(encoding, { fatal: true }).decode(content), encoding, size_bytes: content.length }; }
+  catch { fail('FILE_ENCODING_ERROR', 'Файл не соответствует заданной кодировке'); }
 }

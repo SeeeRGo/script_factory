@@ -37,7 +37,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Windows preflight завершился с ош
 
 if (-not $SkipDependencyInstall) {
   $env:PUPPETEER_SKIP_DOWNLOAD = 'true'
-  npm ci --omit=dev
+  & npm.cmd ci --omit=dev
   if ($LASTEXITCODE -ne 0) { throw 'npm ci завершился с ошибкой' }
 }
 
