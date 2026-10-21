@@ -1,5 +1,5 @@
 import test from 'node:test';
-import { readdirSync } from 'node:fs';
+import { readdirSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { executeJsonWorkflow } from '../src/json-workflow.js';
 import { validateScript } from '../src/interpreter.js';
+import { listWorkflowFiles } from '../src/workflow-files.js';
 const template = JSON.parse(await readFile(new URL('../demo/sbis-report-full.json', import.meta.url), 'utf8'));
 const click = selector => ({ type: 'click', selectors: [[selector]], offsetX: 10, offsetY: 10 });
 const inn = '642265347300';
@@ -16,14 +17,15 @@ test('SBIS JSON contains generic operations only, with no server-side site actio
   const visit = steps => { for (const step of steps) { assert.notEqual(step.action, 'select_authority'); assert.notEqual(step.action, 'auth_ecp'); for (const key of ['steps', 'then', 'else']) if (step[key]) visit(step[key]); } };
   visit(template.steps); Object.values(template.routines).forEach(visit);
 });
-for (const scenario of ['validation_two_reports','validation_full_panel','validation_delayed_details','validation_header_only','send_multiple_tabs', 'send_multiple_tab_mismatch', 'workstation_not_ready', 'send_missing_prefixes', 'upload_bundle_only', 'validate_only', 'known_popup', 'ip_profile', 'collapsed_requisites', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed', 'license_debt_late_price', 'license_debt_contradiction', 'send', 'send_accepted', 'invalid', 'mixed_validation', 'preflight_three', 'send_three_partial', 'wrong_org', 'wrong_authority', 'wrong_file_path', 'wrong_card', 'ambiguous_certificate', 'expired_only', 'account_setup', 'duplicate', 'multiple_files', 'file_conflict', 'same_card_key', 'unknown_send']) {
+for (const scenario of ['validation_archive_conflict','validation_bundle_error','validation_two_reports','validation_full_panel','validation_delayed_details','validation_header_only','send_multiple_tabs', 'send_multiple_tab_mismatch', 'workstation_not_ready', 'send_missing_prefixes', 'upload_bundle_only', 'validate_only', 'known_popup', 'ip_profile', 'collapsed_requisites', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed', 'license_debt_late_price', 'license_debt_contradiction', 'send', 'send_accepted', 'invalid', 'mixed_validation', 'preflight_three', 'send_three_partial', 'wrong_org', 'wrong_authority', 'wrong_file_path', 'wrong_card', 'ambiguous_certificate', 'expired_only', 'account_setup', 'duplicate', 'multiple_files', 'file_conflict', 'same_card_key', 'unknown_send']) {
   test(`SBIS JSON on real browser fixture: ${scenario}`, async t => {
     const root = await mkdtemp(path.join(tmpdir(), 'sbis-json-'));
     t.after(() => rm(root, { recursive: true, force: true }));
-    const incoming = path.join(root, 'incoming'), loaded = path.join(root, 'loaded');
-    await mkdir(incoming); await mkdir(loaded);
-    const names = scenario.startsWith('send_multiple_') ? ['NO_one.xml', 'NO_two.xml', 'NO_three.xml'] : scenario === 'upload_bundle_only' ? ['NO_one.xml','PART8_one.xml','PART9_one.xml'] : ['preflight_three','send_three_partial'].includes(scenario) ? ['FNS_report.xml', 'SFR_report.xml', 'STAT_report.xml'] : scenario === 'multiple_files' || scenario === 'same_card_key' || scenario === 'mixed_validation' || scenario==='validation_two_reports' ? ['NO_one.xml', 'AN_two.xml'] : ['NO_one.xml'];
-    for (const name of names) await writeFile(path.join(incoming, name), scenario==='upload_bundle_only' && name==='NO_one.xml' ? '<TestOnly part8="PART8_one.xml" part9="PART9_one.xml"/>' : '<TestOnly/>');
+    const incoming = path.join(root, 'incoming'), loaded = path.join(root, 'loaded'), errors = path.join(root, 'errors');
+    await mkdir(incoming); await mkdir(loaded); await mkdir(errors);
+    const names = scenario.startsWith('send_multiple_') ? ['NO_one.xml', 'NO_two.xml', 'NO_three.xml'] : ['upload_bundle_only','validation_bundle_error'].includes(scenario) ? ['NO_one.xml','PART8_one.xml','PART9_one.xml'] : ['preflight_three','send_three_partial'].includes(scenario) ? ['FNS_report.xml', 'SFR_report.xml', 'STAT_report.xml'] : scenario === 'multiple_files' || scenario === 'same_card_key' || scenario === 'mixed_validation' || scenario==='validation_two_reports' ? ['NO_one.xml', 'AN_two.xml'] : ['NO_one.xml'];
+    for (const name of names) await writeFile(path.join(incoming, name), ['upload_bundle_only','validation_bundle_error'].includes(scenario) && name==='NO_one.xml' ? '<TestOnly part8="PART8_one.xml" part9="PART9_one.xml"/>' : '<TestOnly/>');
+    if(scenario==='validation_archive_conflict')await writeFile(path.join(errors,names[0]),'KEEP EXISTING');
     const submittedKeys = []; let importsAtFirstSend;
     let imported = 0, submitted = 0, checked = 0, dismissed = 0, organizationOpened = 0, requisitesExpanded = 0, sendAttempts = 0;
     const server = createServer((req, res) => {
@@ -39,7 +41,7 @@ for (const scenario of ['validation_two_reports','validation_full_panel','valida
       const reopen = new URL(req.url, origin).searchParams.get('name');
       const licenseStops = scenario === 'send_three_partial' && reopen?.startsWith('SFR_');
       const cardKey = name => scenario === 'same_card_key' ? 'same-key' : `key-${name}`;
-      const rows = scenario==='upload_bundle_only' ? '<table>'+names.map(name=>`<tr><td><span style="display:inline-block;width:20px;height:20px" class="js-controls-ListView__itemCheckBox" onclick="this.closest('tr').classList.toggle('controls-ListView__item__multiSelected')">□</span></td><td class="FileBrowserComponent__Browser__columnName"><i style="display:inline-block;width:12px;height:12px" data-minicard-name="${name}" data-minicard-path="${path.join(incoming,name)}"></i><div class="FileBrowserComponent__Browser__columnNameRow">Часть отчёта</div></td></tr>`).join('')+`</table><button data-name="FolderBrowserComponent__StartLoadButton" onclick="document.querySelector('#picker').hidden=true;document.querySelector('#card').hidden=false;document.querySelector('#card').dataset.reportKey='key-NO_one.xml';fetch('/imported')">Загрузить комплект</button>` : names.map(name => `<div class="FileBrowserComponent__Browser__columnName"><i style="display:inline-block;width:12px;height:12px" data-minicard-name="${name}" data-minicard-path="${path.join(scenario === 'wrong_file_path' ? loaded : incoming, name)}"></i><div class="FileBrowserComponent__Browser__columnNameRow" ondblclick="document.querySelector('#picker').hidden=true;${scenario === 'duplicate' ? "document.querySelector('#duplicate').hidden=false" : `document.querySelector('#card').hidden=false;document.querySelector('#card').dataset.reportKey='${cardKey(name)}';fetch('/imported')`}">Название отчёта</div></div>`).join('');
+      const rows = ['upload_bundle_only','validation_bundle_error'].includes(scenario) ? '<table>'+names.map(name=>`<tr><td><span style="display:inline-block;width:20px;height:20px" class="js-controls-ListView__itemCheckBox" onclick="this.closest('tr').classList.toggle('controls-ListView__item__multiSelected')">□</span></td><td class="FileBrowserComponent__Browser__columnName"><i style="display:inline-block;width:12px;height:12px" data-minicard-name="${name}" data-minicard-path="${path.join(incoming,name)}"></i><div class="FileBrowserComponent__Browser__columnNameRow">Часть отчёта</div></td></tr>`).join('')+`</table><button data-name="FolderBrowserComponent__StartLoadButton" onclick="document.querySelector('#picker').hidden=true;document.querySelector('#card').hidden=false;document.querySelector('#card').dataset.reportKey='key-NO_one.xml';fetch('/imported')">Загрузить комплект</button>` : names.map(name => `<div class="FileBrowserComponent__Browser__columnName"><i style="display:inline-block;width:12px;height:12px" data-minicard-name="${name}" data-minicard-path="${path.join(scenario === 'wrong_file_path' ? loaded : incoming, name)}"></i><div class="FileBrowserComponent__Browser__columnNameRow" ondblclick="document.querySelector('#picker').hidden=true;${scenario === 'duplicate' ? "document.querySelector('#duplicate').hidden=false" : `document.querySelector('#card').hidden=false;document.querySelector('#card').dataset.reportKey='${cardKey(name)}';fetch('/imported')`}">Название отчёта</div></div>`).join('');
       const protocolCase=scenario.startsWith('validation_');
       const protocolDetails='Главная\nНекорректно указано лицо, подписывающее документ\nДля отчёта ИП удалите ФИО руководителя';
       const usable = scenario === 'expired_only' ? '' : `<div class="cert" onclick="location.href='${scenario === 'account_setup' ? '/setup' : '/cabinet'}'">ИНН ${inn}</div>`;
@@ -55,7 +57,7 @@ for (const scenario of ['validation_two_reports','validation_full_panel','valida
         <div class="controls-Popup__lastItem"><div id="card" class="report-theme__contrastWrapper" ${reopen ? '' : 'hidden'} data-report-key="${reopen ? cardKey(reopen) : 'before'}">${scenario === 'collapsed_requisites' ? `<input id="card-inn" readonly hidden value="${inn}"><button onclick="if(event.isTrusted){document.querySelector('#card-inn').hidden=false;this.textContent='Свернуть';fetch('/expanded')}">Развернуть</button>` : inn}
         <button id="validate" title="Проверить" onclick="fetch('/checked');document.querySelector('#validation-panel').hidden=false;document.querySelector('#validation').textContent=${scenario === 'mixed_validation' ? "(document.querySelector('#card').dataset.reportKey==='key-NO_one.xml'?'Найденные ошибки':'Ошибок не обнаружено')" : (scenario === 'invalid' || protocolCase ? "'Найденные ошибки'" : "'Ошибок не обнаружено'")};${scenario==='validation_two_reports'?"document.querySelector('#protocol-details').textContent=document.querySelector('#card').dataset.reportKey.includes('NO_one')?'Главная: ошибка первого файла':'Раздел 2: ошибка второго файла'":''};${scenario==='validation_delayed_details'?"setTimeout(()=>document.querySelector('#protocol-details').textContent='Главная\\nНекорректно указано лицо, подписывающее документ\\nДля отчёта ИП удалите ФИО руководителя',150)":''};${scenario === 'wrong_card' ? "document.querySelector('#card').dataset.reportKey='other-card'" : ''}">Проверить</button>
         <button id="send" onclick="${scenario.startsWith('license_debt') ? "document.querySelector('#license-debt-block').hidden=false;fetch('/send-attempted')" : (['license_required','license_wrong_card'].includes(scenario)||licenseStops) ? `document.querySelector('#license-block').hidden=false;${scenario === 'license_wrong_card' ? "document.querySelector('#card').dataset.reportKey='other-card';" : ''}fetch('/send-attempted')` : `fetch('/submitted?key='+encodeURIComponent(document.querySelector('#card').dataset.reportKey)).then(()=>document.querySelector('#sent').textContent='${scenario === 'unknown_send' ? 'Отправляется' : scenario === 'send_accepted' ? 'Отчет сдан' : 'Отправлено'}')`}">Отправить</button>${((['license_required','license_wrong_card'].includes(scenario)||licenseStops)||scenario.startsWith('license_debt')) ? `<div class="np-StickerTab__main">Отчет создан</div><aside id="license-block" hidden>Но нет лицензии &quot;Отчетность&quot;</aside>` : ''}<div id="sent"></div></div></div>
-        ${scenario.startsWith('license_debt') ? "<aside id='license-debt-block' hidden><span>Вы используете &quot;Отчетность&quot; в долг</span><button class='licenseRestriction-buttonBlock__refuseButton' title='В долг' onclick=\"fetch('/submitted').then(()=>document.querySelector('#sent').textContent='Отправлено')\">В долг</button><button class='licenseRestriction-buttonBlock__payButton'>Оплатить 2 500 ₽</button></aside>" : ''}${protocolCase ? `<div id="validation-panel" class="journal-react__view journal-react__background_pink" hidden><div class="tw-box-border tw-h-full tw-flex tw-flex-col controls-padding_bottom-m"><div id="validation" class="controls-Header__caption"></div><div>1</div><div>21 окт'26 14:41</div></div><div class="journalReact-Folder__title">Отчёт НДС, разделы проверки</div><div id="protocol-details" data-qa="journal_check_result">${scenario==='validation_full_panel'?protocolDetails:''}</div><div hidden>Старая скрытая ошибка</div></div>` : '<div id="validation-panel" hidden><div id="validation"></div><div id="protocol">Текст тестовой проверки</div></div>'}
+        ${scenario.startsWith('license_debt') ? "<aside id='license-debt-block' hidden><span>Вы используете &quot;Отчетность&quot; в долг</span><button class='licenseRestriction-buttonBlock__refuseButton' title='В долг' onclick=\"fetch('/submitted').then(()=>document.querySelector('#sent').textContent='Отправлено')\">В долг</button><button class='licenseRestriction-buttonBlock__payButton'>Оплатить 2 500 ₽</button></aside>" : ''}${protocolCase ? `<div id="validation-panel" class="journal-react__view journal-react__background_pink" hidden><div class="tw-box-border tw-h-full tw-flex tw-flex-col controls-padding_bottom-m"><div id="validation" class="controls-Header__caption"></div><div>1</div><div>21 окт'26 14:41</div></div><div class="journalReact-Folder__title">Отчёт НДС, разделы проверки</div><div id="protocol-details" data-qa="journal_check_result">${['validation_archive_conflict','validation_bundle_error','validation_full_panel'].includes(scenario)?protocolDetails:''}</div><div hidden>Старая скрытая ошибка</div></div>` : '<div id="validation-panel" hidden><div id="validation"></div><div id="protocol">Текст тестовой проверки</div></div>'}
         ${scenario === 'license_debt_late_price' ? `<script>document.querySelector('.licenseRestriction-buttonBlock__refuseButton').addEventListener('pointerdown',()=>{document.querySelector('.licenseRestriction-buttonBlock__payButton').textContent='Оплатить 3 000 ₽'})</script>` : ''}
         ${scenario === 'license_debt_contradiction' ? `<script>document.querySelector('#send').addEventListener('click',()=>{document.querySelector('#sent').textContent='Отчет сдан'})</script>` : ''}
         ${scenario === 'known_popup' && req.url.startsWith('/report') ? `<div class="controls-ConfirmationTemplate" style="position:fixed;inset:0;z-index:999;background:white">
@@ -89,7 +91,7 @@ for (const scenario of ['validation_two_reports','validation_full_panel','valida
       current_card_scope_selector:'#card', sent_scope_selector:'#card', sent_status_selector: '#sent', sent_status_text: 'Отправлено' };
     const authority_prefixes = scenario === 'send_missing_prefixes' ? [{authority:'FNS',prefixes:['NO_', 'ABSENT_']},{authority:'SFR',prefixes:['POVD'],ui:{organization_selector:null}}] : ['preflight_three','send_three_partial'].includes(scenario) ? [{ authority: 'FNS', prefixes: ['FNS_'] }, { authority: 'SFR', prefixes: ['SFR_'] }, { authority: 'ROSSTAT', prefixes: ['STAT_'] }]
       : scenario === 'file_conflict' ? [{ authority: 'FNS', prefixes: ['NO_'] }, { authority: 'SFR', prefixes: ['NO_'] }]
-      : scenario==='upload_bundle_only' ? [{authority:'FNS',prefixes:['NO_','PART8_','PART9_'],bundle_files:true}] : [{ authority: 'FNS', prefixes: names.length === 2 ? ['NO_', 'AN_'] : ['NO_'] }];
+      : ['upload_bundle_only','validation_bundle_error'].includes(scenario) ? [{authority:'FNS',prefixes:['NO_','PART8_','PART9_'],bundle_files:true}] : [{ authority: 'FNS', prefixes: names.length === 2 ? ['NO_', 'AN_'] : ['NO_'] }];
     if (scenario === 'workstation_not_ready') {
       const wait = script.steps.find(s => s.id === 'sbis_run_reports').then.find(s => s.save_as === 'auth_choice_ready');
       wait.params.timeout_ms = 250;
@@ -105,9 +107,9 @@ for (const scenario of ['validation_two_reports','validation_full_panel','valida
       submit_enabled: ['send_multiple_tabs', 'send_multiple_tab_mismatch', 'send_missing_prefixes', 'send', 'send_accepted', 'unknown_send', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed','license_debt_late_price','license_debt_contradiction','send_three_partial'].includes(scenario), inn, certificate_inn: inn, certificate_selection_required: true,
       // The fixture picker already displays incoming, including on Windows drive C.
       upload_directory_steps: [{ type: 'waitForExpression', expression: 'true' }],
-      login_url: `${origin}/login`, report_url: `${origin}/report`, authenticated_url: `${origin}/cabinet`, root_dir: incoming, loaded_dir: loaded, license_debt_enabled:['license_debt_allowed','license_debt_price_changed','license_debt_late_price'].includes(scenario), license_debt_expected_amount:scenario==='license_debt_price_changed'?1000:2500, authority_prefixes, ui },
+      login_url: `${origin}/login`, report_url: `${origin}/report`, authenticated_url: `${origin}/cabinet`, root_dir: incoming, loaded_dir: loaded, error_dir: errors, license_debt_enabled:['license_debt_allowed','license_debt_price_changed','license_debt_late_price'].includes(scenario), license_debt_expected_amount:scenario==='license_debt_price_changed'?1000:2500, authority_prefixes, ui },
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, headless: process.env.BROWSER_HEADLESS !== 'false', allowedRoots: [root], artifactDirectory: path.join(root, 'artifacts'), publicArtifactBasePath: '/artifacts/test', jobId: `job-${scenario}`, checkIp: async () => ({ ip_matches_expected: true }) };
-    const codes = { validation_two_reports:'VALIDATION_ERROR', validation_full_panel:'VALIDATION_ERROR',validation_delayed_details:'VALIDATION_ERROR',validation_header_only:'VALIDATION_PROTOCOL_NOT_READY', send_multiple_tab_mismatch:'REPORT_IDENTITY_MISMATCH', workstation_not_ready:'WORKFLOW_ERROR', mixed_validation:'VALIDATION_ERROR', send_three_partial:'REPORTING_LICENSE_REQUIRED', license_debt_late_price:'LICENSE_PRICE_CHANGED',license_debt_contradiction:'REQUIRES_RECONCILIATION', license_debt_denied:'REPORTING_LICENSE_CONFIRMATION_REQUIRED',license_debt_price_changed:'LICENSE_PRICE_CHANGED', license_wrong_card:'REPORT_IDENTITY_MISMATCH', license_required: 'REPORTING_LICENSE_REQUIRED', invalid: 'VALIDATION_ERROR', wrong_org: 'ORGANIZATION_NOT_VERIFIED', wrong_authority: 'AUTHORITY_NOT_VERIFIED', wrong_file_path: 'FILE_SELECTION_MISMATCH', wrong_card: 'REPORT_IDENTITY_MISMATCH', ambiguous_certificate: 'CERTIFICATE_AMBIGUOUS', expired_only: 'CERTIFICATE_NOT_FOUND', account_setup: 'AUTH_ACCOUNT_SETUP_REQUIRED', duplicate: 'REPORT_ALREADY_IMPORTED', file_conflict: 'AUTHORITY_FILE_CONFLICT', same_card_key: 'REPORT_BUNDLE_REQUIRED', unknown_send: 'WORKFLOW_ERROR' };
+    const codes = {validation_archive_conflict:'ERROR_ARCHIVE_CONFLICT',validation_bundle_error:'VALIDATION_ERROR', validation_two_reports:'VALIDATION_ERROR', validation_full_panel:'VALIDATION_ERROR',validation_delayed_details:'VALIDATION_ERROR',validation_header_only:'VALIDATION_PROTOCOL_NOT_READY', send_multiple_tab_mismatch:'REPORT_IDENTITY_MISMATCH', workstation_not_ready:'WORKFLOW_ERROR', mixed_validation:'VALIDATION_ERROR', send_three_partial:'REPORTING_LICENSE_REQUIRED', license_debt_late_price:'LICENSE_PRICE_CHANGED',license_debt_contradiction:'REQUIRES_RECONCILIATION', license_debt_denied:'REPORTING_LICENSE_CONFIRMATION_REQUIRED',license_debt_price_changed:'LICENSE_PRICE_CHANGED', license_wrong_card:'REPORT_IDENTITY_MISMATCH', license_required: 'REPORTING_LICENSE_REQUIRED', invalid: 'VALIDATION_ERROR', wrong_org: 'ORGANIZATION_NOT_VERIFIED', wrong_authority: 'AUTHORITY_NOT_VERIFIED', wrong_file_path: 'FILE_SELECTION_MISMATCH', wrong_card: 'REPORT_IDENTITY_MISMATCH', ambiguous_certificate: 'CERTIFICATE_AMBIGUOUS', expired_only: 'CERTIFICATE_NOT_FOUND', account_setup: 'AUTH_ACCOUNT_SETUP_REQUIRED', duplicate: 'REPORT_ALREADY_IMPORTED', file_conflict: 'AUTHORITY_FILE_CONFLICT', same_card_key: 'REPORT_BUNDLE_REQUIRED', unknown_send: 'WORKFLOW_ERROR' };
     const checkSavedResult = async projection => {
       const files = projection.artifacts.filter(a => /^result-\d+\.json$/.test(a.filename));
       assert.ok(files.length);
@@ -129,7 +131,7 @@ for (const scenario of ['validation_two_reports','validation_full_panel','valida
         }
         const report=Object.values(e.partial_context).find(r=>r?.error_code===codes[scenario]);
         if(scenario==='file_conflict')assert.equal(report,undefined);else assert.ok(report,'An error after selection must preserve the affected report result');
-        if(report)assert.equal(report.state, scenario==='license_debt_contradiction'?'requires_reconciliation':scenario.startsWith('license_debt')?'license_confirmation_required':['license_required','send_three_partial'].includes(scenario) ? 'license_required' : ['invalid','mixed_validation','validation_full_panel','validation_delayed_details','validation_two_reports'].includes(scenario) ? 'validation_failed' : ['unknown_send','license_wrong_card'].includes(scenario) ? 'requires_reconciliation' : ['workstation_not_ready','wrong_org','wrong_authority','ambiguous_certificate','expired_only','account_setup'].includes(scenario)?'not_processed':'failed');
+        if(report)assert.equal(report.state, scenario==='license_debt_contradiction'?'requires_reconciliation':scenario.startsWith('license_debt')?'license_confirmation_required':['license_required','send_three_partial'].includes(scenario) ? 'license_required' : ['validation_archive_conflict','validation_bundle_error','invalid','mixed_validation','validation_full_panel','validation_delayed_details','validation_two_reports'].includes(scenario) ? 'validation_failed' : ['unknown_send','license_wrong_card'].includes(scenario) ? 'requires_reconciliation' : ['workstation_not_ready','wrong_org','wrong_authority','ambiguous_certificate','expired_only','account_setup'].includes(scenario)?'not_processed':'failed');
         if (scenario === 'invalid') { assert.ok(e.partial_context.Rezult_1.validation_protocol); assert.match(e.partial_context.Rezult_1.error_message,/Текст тестовой проверки/); }
         if(['validation_full_panel','validation_delayed_details'].includes(scenario)){
           assert.match(e.message,/Некорректно указано лицо, подписывающее документ/);
@@ -151,6 +153,23 @@ for (const scenario of ['validation_two_reports','validation_full_panel','valida
         const text=await readFile(path.join(opts.artifactDirectory,proto),'utf8');
         assert.match(text,/Для отчёта ИП удалите ФИО руководителя/);
         assert.equal(text,partial.Rezult_1.error_message);
+      }
+      if(['invalid','mixed_validation','validation_full_panel','validation_delayed_details','validation_two_reports','validation_bundle_error'].includes(scenario)){
+        const failed=Object.values(partial).filter(r=>r?.state==='validation_failed');
+        for(const r of failed){
+          assert.equal(r.error_path,path.join(errors,r.file_name));
+          assert.equal(await readFile(r.error_protocol_path,'utf8'),r.error_message);
+          for(let i=1;i<=r.file_count;i++)assert.equal(await readFile(r['error_path_'+i],'utf8'),['validation_bundle_error'].includes(scenario)&&i===1?'<TestOnly part8="PART8_one.xml" part9="PART9_one.xml"/>':'<TestOnly/>');
+        }
+        assert.deepEqual((await readdir(incoming)).sort(),scenario==='mixed_validation'?['AN_two.xml']:[]);
+        assert.equal((await readdir(errors)).length,failed.reduce((n,r)=>n+r.file_count+1,0));
+      }
+      if(scenario==='validation_archive_conflict'){
+        assert.equal(await readFile(path.join(errors,names[0]),'utf8'),'KEEP EXISTING');
+        assert.deepEqual(await readdir(incoming),names);
+        assert.equal(partial.Rezult_1.error_path,null);
+        assert.equal(partial.Rezult_1.error_code,'ERROR_ARCHIVE_CONFLICT');
+        assert.match(partial.Rezult_1.error_message,/уже находится/);
       }
       if(scenario==='validation_header_only')assert.equal((await readdir(opts.artifactDirectory)).some(n=>n.startsWith('validation-')),false);
       assert.equal(submitted, ['unknown_send','send_three_partial'].includes(scenario) ? 1 : 0);
@@ -193,3 +212,44 @@ for (const scenario of ['validation_two_reports','validation_full_panel','valida
     }
   });
 }
+
+const resultFields = ['state','report_state','inn','authority','section_name','mode','file_name','sha256','load_datetime','validation_result','file_selection_verified','report_key_verified','validation_protocol','sbis_status','archived_path','error_path','error_protocol_path','error_code','error_message','license_requires_confirmation','license_amount','license_currency','license_continuation','file_count','bundle_verified'];
+test('SBIS result fields have the same fixed order for every authority and outcome', async () => {
+  for(const state of ['selected','uploaded','validated','validation_failed','archived']){
+    const reports=['FNS','SFR','ROSSTAT'].map(authority=>({authority,state,path:authority+'.xml',filename:authority+'.xml',sha256:'a'.repeat(64),load_datetime:state==='selected'?null:'2026-10-21T00:00:00Z',files:[{path:authority+'.xml',filename:authority+'.xml',sha256:'a'.repeat(64)}]}));
+    const script={format:'json-workflow',context:{reports,inn,mode:'validate_only'},routines:{project_results:template.routines.project_results},steps:[{action:'call',routine:'project_results'}],output:'{{report_results}}'};
+    const result=await executeJsonWorkflow({script});
+    for(const r of Object.values(result.context).filter(r=>r?.file_name)){
+      assert.deepEqual(Object.keys(r),[...resultFields,'file_name_1','sha256_1','error_path_1']);
+      assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(r))),Object.keys(r));
+      for(const value of Object.values(r))assert.ok(value===null||['string','boolean','number'].includes(typeof value));
+    }
+  }
+});
+
+
+test('SBIS error archive records completed moves if a later bundle member changes', async t => {
+  const root=await mkdtemp(path.join(tmpdir(),'sbis-partial-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
+  const incoming=path.join(root,'incoming'),errors=path.join(root,'errors'),protocol=path.join(root,'protocol.txt');
+  await mkdir(incoming);await mkdir(errors);await writeFile(protocol,'Validation details');
+  await writeFile(path.join(incoming,'A.xml'),'<A/>');await writeFile(path.join(incoming,'B.xml'),'<B/>');
+  const files=(await listWorkflowFiles(incoming,[root])).sort((a,b)=>a.filename.localeCompare(b.filename));
+  const report={...files[0],authority:'FNS',state:'validation_failed',validation_error_text:'Validation details',files,protocol:{local_path:protocol}};
+  const script={format:'json-workflow',context:{report,reports:[report],error_dir:errors,active_report_path:report.path,inn,mode:'validate_only',control_timeout_ms:30000},
+    routines:{archive_validation_failure:template.routines.archive_validation_failure,store_report:template.routines.store_report,project_results:template.routines.project_results},
+    steps:[{action:'call',routine:'archive_validation_failure'}],on_error:[{action:'call',routine:'project_results'}],output:'{{report_results}}'};
+  let moves=0;
+  await assert.rejects(executeJsonWorkflow({script,allowedRoots:[root],onEvent:event=>{
+    if(event.type==='step_started'&&event.step_id==='sbis_error_move_file'&&++moves===2)writeFileSync(files[1].path,'changed');
+  }}),e=>{
+    assert.equal(e.code,'SOURCE_CHANGED');
+    assert.equal(e.partial_context.Rezult_1.error_path_1,path.join(errors,'A.xml'));
+    assert.equal(e.partial_context.Rezult_1.error_path_2,null);
+    assert.equal(e.partial_context.Rezult_1.error_code,'SOURCE_CHANGED');
+    assert.match(e.partial_context.Rezult_1.error_message,/Validation details[\s\S]*Файл изменён/);
+    return true;
+  });
+  assert.deepEqual(await readdir(incoming),['B.xml']);
+  assert.equal(await readFile(path.join(errors,'A.xml'),'utf8'),'<A/>');
+});

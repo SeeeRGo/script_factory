@@ -63,13 +63,15 @@ Copy-Item выполняется только при первой установ
 | CALLBACK_ALLOWED_ORIGINS | Origin 1С по HTTP или HTTPS (0.9.2+), например `http://1c-test.local:8080`, без пути обработчика; несколько адресов разделяются запятыми |
 | NOVNC_ENABLED | Для Windows/RDP обычно `false` |
 
+Для JSON-сценария СБИС 3.5.0 заранее создайте `C:/Отчеты_с_ошибками` (или свой `error_dir`) и разрешите доступ к нему пользователю worker. После изменения `.env` перезапустите worker при пустой очереди.
+
 Пример только несекретных строк:
 
 ```dotenv
 HOST=0.0.0.0
 PORT=33001
 DATA_DIR=C:/ScriptFactoryData
-FILESYSTEM_ALLOWED_ROOTS=C:/отчеты;C:/Отчеты_загруженные;C:/ScriptFactoryData
+FILESYSTEM_ALLOWED_ROOTS=C:/отчеты;C:/Отчеты_загруженные;C:/Отчеты_с_ошибками;C:/ScriptFactoryData
 PUPPETEER_EXECUTABLE_PATH=C:/Program Files/Yandex/YandexBrowser/Application/browser.exe
 BROWSER_PRODUCT=yandex
 BROWSER_HEADLESS=false

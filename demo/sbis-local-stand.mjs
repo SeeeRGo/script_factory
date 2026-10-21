@@ -128,7 +128,7 @@ try {
       uid: 'LOCAL-STAND-' + scenario + '-' + randomUUID(), timeout_ms: 180000, retry_policy: { max_attempts: 1 },
       callback: { url: origin + '/callback' }, context: { mode: 'send', submit_enabled: true, inn, certificate_inn: inn, certificate_selection_required: true,
         login_url: `${origin}/${scenario}/login`, report_url: `${origin}/${scenario}/report`, authenticated_url: `${origin}/${scenario}/cabinet`,
-        root_dir: incoming, loaded_dir: loaded, ui, upload_directory_steps: [{ type: 'waitForExpression', expression: 'true' }],
+        root_dir: incoming, loaded_dir: loaded, error_dir: loaded, ui, upload_directory_steps: [{ type: 'waitForExpression', expression: 'true' }],
         validation_timeout_ms: 10000, submit_timeout_ms: 1000,
         authority_prefixes: [{ authority: 'FNS', prefixes: ['FNS_'] }, { authority: 'SFR', prefixes: ['SFR_'] }, { authority: 'ROSSTAT', prefixes: ['STAT_'] }] }
     }, script_text: JSON.stringify(template) }) })).json();

@@ -246,4 +246,23 @@ result-N.json содержит объект всех Rezult_N без масси�
 С API 0.7.0 доступен POST /api/v2/system/power/suspend с пустым JSON-объектом. Ответ 202 подтверждает только принятие вызова, а не переход в сон; job_id, Rezult_N и callback для этого метода не создаются. Очередь, пользователи и порог бездействия проверяются после ответа. Настройки сохраняются на УН через PATCH /api/v2/system/power/config. Подробности: [спящий режим и массовое внедрение](09-power-management.md).
 
 
-Сценарий СБИС 3.4.0 возвращает текст ошибок внутренней проверки в Rezult_N.error_message. Это одна строка, допускающая переводы строк; в ней сохраняются названия разделов, описания и пояснения СБИС. Полный текст также сохраняется в TXT по validation_protocol и доступен среди result.artifacts. При нескольких отчётах описание относится только к своему Rezult_N. В job.error.message собраны описания всех отчётов с ошибками. Callback содержит те же error и result, что GET /api/v2/jobs/{job_id}; это не квитанция ведомства. Старые задания сохраняют прежние результаты.
+Начиная с версии 3.4.0 сценарий СБИС возвращает текст ошибок внутренней проверки в Rezult_N.error_message. Это одна строка, допускающая переводы строк; в ней сохраняются названия разделов, описания и пояснения СБИС. Полный текст также сохраняется в TXT по validation_protocol и доступен среди result.artifacts. При нескольких отчётах описание относится только к своему Rezult_N. В job.error.message собраны описания всех отчётов с ошибками. Callback содержит те же error и result, что GET /api/v2/jobs/{job_id}; это не квитанция ведомства. Старые задания сохраняют прежние результаты.
+
+
+## Порядок полей отчёта
+
+JSON-сценарий 3.5.0 формирует одинаковую последовательность общих полей каждого `Rezult_N` для ФНС, СФР и Росстата, при успехе и при ошибках:
+
+```text
+state, report_state, inn, authority, section_name, mode,
+file_name, sha256, load_datetime, validation_result,
+file_selection_verified, report_key_verified, validation_protocol,
+sbis_status, archived_path, error_path, error_protocol_path,
+error_code, error_message, license_requires_confirmation,
+license_amount, license_currency, license_continuation,
+file_count, bundle_verified
+```
+
+Затем идут `file_name_1, sha256_1, error_path_1`, затем те же поля для 2 и далее до `file_count`. Неприменимые значения общих полей всегда присутствуют как null либо false. Порядок сохранён в экспортируемом JSON; по стандарту JSON ключи объекта не упорядочены, поэтому в 1С надёжнее обращаться по именам, а не по позициям.
+
+После ошибки проверки XML перемещаются в `context.error_dir` (по умолчанию `C:/Отчеты_с_ошибками`; при явном null — в `loaded_dir`), статус остаётся `validation_failed`. `error_path`, `error_protocol_path` и `error_path_N` показывают фактическое расположение файлов; `validation_protocol` остаётся ссылкой на скачиваемый API-артефакт. При сбое переноса смотрите также `job.error` и `Rezult_N.error_code/error_message`.

@@ -24,12 +24,13 @@
           "validation_success_text": "Ошибки не найдены"
         }
       }
-    ]
+    ],
+    "error_dir": "C:/Отчеты_с_ошибками"
   },
   "script": {
     "format": "json-workflow",
     "title": "СБИС: ФНС, СФР и Росстат из JSON",
-    "version": "3.4.0",
+    "version": "3.5.0",
     "default_step_timeout_ms": 60000,
     "context": {
       "mode": "validate_only",
@@ -343,7 +344,8 @@
       "browser_ignore_default_args": true,
       "control_timeout_ms": 900000,
       "license_debt_enabled": false,
-      "license_debt_expected_amount": null
+      "license_debt_expected_amount": null,
+      "error_dir": "C:/Отчеты_с_ошибками"
     },
     "routines": {
       "browser": [
@@ -644,6 +646,39 @@
           "private": true,
           "timeout_ms": "{{control_timeout_ms}}",
           "id": "sbis_validate_8"
+        },
+        {
+          "id": "sbis_validation_has_errors",
+          "action": "compute",
+          "title": "Определить ошибку проверки отчёта",
+          "description": "Определить ошибку проверки отчёта",
+          "params": {
+            "expression": "context.report.state==='validation_failed'"
+          },
+          "private": true,
+          "save_as": "validation_has_errors"
+        },
+        {
+          "id": "sbis_move_invalid",
+          "action": "if",
+          "title": "Перенести отчёт с подтверждёнными ошибками проверки",
+          "description": "Перенести отчёт с подтверждёнными ошибками проверки",
+          "params": {
+            "condition": "{{validation_has_errors}}"
+          },
+          "private": true,
+          "then": [
+            {
+              "id": "sbis_move_invalid_call",
+              "action": "call",
+              "title": "Сохранить комплект с ошибками и протокол",
+              "description": "Сохранить комплект с ошибками и протокол",
+              "params": {},
+              "private": true,
+              "routine": "archive_validation_failure",
+              "timeout_ms": "{{control_timeout_ms}}"
+            }
+          ]
         }
       ],
       "result": [
@@ -739,7 +774,7 @@
           "title": "Сформировать плоские результаты каждого отчета",
           "description": "Один плоский Rezult_N на отчет, включая комплект: file_count, file_name_1..N и sha256_1..N. Коллекций в результате нет.",
           "params": {
-            "expression": "(() => {\n const names={FNS:'ФНС',SFR:'СФР',ROSSTAT:'Росстат'},out={};\n for(const [index,r] of (context.reports||[]).entries()) {\n  const active=r.path===context.active_report_path;\n  const error=context.error||null;\n  const affected=!!error&&error.code!=='VALIDATION_ERROR'&&(active||context.active_report_path==null);\n  const quote=r.license_quote||(active?context.license_quote:null)||null;\n  let state;\n  if(['sent','archived'].includes(r.state))state='sent';\n  else if(r.state==='submission_unknown')state='requires_reconciliation';\n  else if(r.state==='validation_failed')state='validation_failed';\n  else if(affected&&error.code!=='VALIDATION_ERROR')state=active?(context.result_state||'failed'):'not_processed';\n  else if(context.mode==='preflight'&&!error)state='preflight_completed';\n  else state=r.state==='validated'?'validated_not_sent':r.state==='uploaded'?'uploaded_not_sent':'not_processed';\n  out['Rezult_'+(index+1)]={state,report_state:r.state,inn:context.inn,authority:r.authority,\n   section_name:r.load_datetime?(names[r.authority]||r.authority):null,mode:context.mode,\n   file_name:r.filename,sha256:r.sha256,load_datetime:r.load_datetime||null,\n   validation_result:r.validation_result||null,file_selection_verified:!!r.file_selection_verified,\n   report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,\n   sbis_status:r.sbis_status||null,archived_path:r.archived_path||null,\n   error_code:r.state==='validation_failed'?'VALIDATION_ERROR':affected?error.code:null,\n   error_message:r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности'):affected?error.message:null,\n   license_requires_confirmation:quote?.requires_confirmation??null,\n   license_amount:quote?.amount??null,license_currency:quote?.currency??null,\n   license_continuation:quote?.continuation??null,file_count:(r.files||[r]).length,bundle_verified:!!r.bundle_verified};\n  for(const [i,file] of (r.files||[r]).entries()){out['Rezult_'+(index+1)]['file_name_'+(i+1)]=file.filename;out['Rezult_'+(index+1)]['sha256_'+(i+1)]=file.sha256;}\n }\n return out;\n})()"
+            "expression": "(() => {\n const names={FNS:'ФНС',SFR:'СФР',ROSSTAT:'Росстат'},out={};\n for(const [index,r] of (context.reports||[]).entries()) {\n  const active=r.path===context.active_report_path;\n  const error=context.error||null;\n  const affected=!!error&&error.code!=='VALIDATION_ERROR'&&(active||context.active_report_path==null);\n  const quote=r.license_quote||(active?context.license_quote:null)||null;\n  let state;\n  if(['sent','archived'].includes(r.state))state='sent';\n  else if(r.state==='submission_unknown')state='requires_reconciliation';\n  else if(r.state==='validation_failed')state='validation_failed';\n  else if(affected&&error.code!=='VALIDATION_ERROR')state=active?(context.result_state||'failed'):'not_processed';\n  else if(context.mode==='preflight'&&!error)state='preflight_completed';\n  else state=r.state==='validated'?'validated_not_sent':r.state==='uploaded'?'uploaded_not_sent':'not_processed';\n  out['Rezult_'+(index+1)]={state,report_state:r.state,inn:context.inn,authority:r.authority,\n   section_name:r.load_datetime?(names[r.authority]||r.authority):null,mode:context.mode,\n   file_name:r.filename,sha256:r.sha256,load_datetime:r.load_datetime||null,\n   validation_result:r.validation_result||null,file_selection_verified:!!r.file_selection_verified,\n   report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,\n   sbis_status:r.sbis_status||null,archived_path:r.archived_path||null,\n   error_path:r.error_path||null,error_protocol_path:r.error_protocol_path||null,\n   error_code:affected?error.code:r.state==='validation_failed'?'VALIDATION_ERROR':null,\n   error_message:affected?(r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности')+'\\nОшибка сохранения отчёта: '+error.message:error.message):r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности'):null,\n   license_requires_confirmation:quote?.requires_confirmation??null,\n   license_amount:quote?.amount??null,license_currency:quote?.currency??null,\n   license_continuation:quote?.continuation??null,file_count:(r.files||[r]).length,bundle_verified:!!r.bundle_verified};\n  for(const [i,file] of (r.files||[r]).entries()){out['Rezult_'+(index+1)]['file_name_'+(i+1)]=file.filename;out['Rezult_'+(index+1)]['sha256_'+(i+1)]=file.sha256;out['Rezult_'+(index+1)]['error_path_'+(i+1)]=r.error_paths?.[file.path]||null;}\n }\n return out;\n})()"
           },
           "save_as": "report_results",
           "private": true,
@@ -790,6 +825,165 @@
           "routine": "store_report",
           "timeout_ms": "{{control_timeout_ms}}",
           "id": "sbis_prepare_bundle_4"
+        }
+      ],
+      "archive_validation_failure": [
+        {
+          "id": "sbis_error_destination",
+          "action": "compute",
+          "title": "Определить каталог отчётов с ошибками",
+          "description": "Определить каталог отчётов с ошибками",
+          "params": {
+            "expression": "context.error_dir||context.loaded_dir"
+          },
+          "private": true,
+          "save_as": "validation_error_dir"
+        },
+        {
+          "id": "sbis_error_list",
+          "action": "files_list",
+          "title": "Проверить каталог отчётов с ошибками",
+          "description": "Проверить каталог отчётов с ошибками",
+          "params": {
+            "directory": "{{validation_error_dir}}"
+          },
+          "private": true,
+          "save_as": "validation_error_existing"
+        },
+        {
+          "id": "sbis_error_clear",
+          "action": "compute",
+          "title": "Проверить весь комплект перед переносом",
+          "description": "Проверить весь комплект перед переносом",
+          "params": {
+            "expression": "!context.report.files.some(f=>context.validation_error_existing.some(a=>a.filename.toLowerCase()===f.filename.toLowerCase()))"
+          },
+          "private": true,
+          "save_as": "validation_error_clear"
+        },
+        {
+          "id": "sbis_error_conflict",
+          "action": "assert",
+          "title": "Запретить перезапись файлов с ошибками",
+          "description": "Запретить перезапись файлов с ошибками",
+          "params": {
+            "condition": "{{validation_error_clear}}",
+            "error_code": "ERROR_ARCHIVE_CONFLICT",
+            "message": "XML с таким именем уже находится в каталоге отчётов с ошибками; исходный комплект сохранён"
+          },
+          "private": true
+        },
+        {
+          "id": "sbis_error_verify_all",
+          "action": "for_each",
+          "title": "Перепроверить все части до первого переноса",
+          "description": "Перепроверить все части до первого переноса",
+          "params": {
+            "items": "{{report.files}}"
+          },
+          "private": true,
+          "steps": [
+            {
+              "id": "sbis_error_verify_file",
+              "action": "file_verify",
+              "title": "Проверить контрольную сумму части",
+              "description": "Проверить контрольную сумму части",
+              "params": {
+                "file": "{{error_file}}"
+              },
+              "private": true
+            }
+          ],
+          "as": "error_file"
+        },
+        {
+          "id": "sbis_error_protocol_path",
+          "action": "compute",
+          "title": "Сформировать путь протокола ошибки",
+          "description": "Сформировать путь протокола ошибки",
+          "params": {
+            "expression": "context.validation_error_dir+'/'+context.report.filename+'.'+context.job_id+'.validation.txt'"
+          },
+          "private": true,
+          "save_as": "validation_error_protocol_path"
+        },
+        {
+          "id": "sbis_error_protocol_copy",
+          "action": "file_copy",
+          "title": "Скопировать протокол ошибки без перезаписи",
+          "description": "Скопировать протокол ошибки без перезаписи",
+          "params": {
+            "source": "{{report.protocol.local_path}}",
+            "destination": "{{validation_error_protocol_path}}"
+          },
+          "private": true
+        },
+        {
+          "id": "sbis_error_protocol_saved",
+          "action": "compute",
+          "title": "Зафиксировать сохранение протокола ошибки",
+          "description": "Зафиксировать сохранение протокола ошибки",
+          "params": {
+            "expression": "({...context.report,error_protocol_path:context.validation_error_protocol_path})"
+          },
+          "private": true,
+          "save_as": "report"
+        },
+        {
+          "id": "sbis_error_protocol_store",
+          "action": "call",
+          "title": "Сохранить состояние перемещения отчёта",
+          "description": "Сохранить состояние перемещения отчёта",
+          "params": {},
+          "private": true,
+          "routine": "store_report",
+          "timeout_ms": "{{control_timeout_ms}}"
+        },
+        {
+          "id": "sbis_error_move_all",
+          "action": "for_each",
+          "title": "Переместить все части отчёта с ошибками",
+          "description": "Переместить все части отчёта с ошибками",
+          "params": {
+            "items": "{{report.files}}"
+          },
+          "private": true,
+          "steps": [
+            {
+              "id": "sbis_error_move_file",
+              "action": "file_archive",
+              "title": "Переместить неизменённую часть без перезаписи",
+              "description": "Переместить неизменённую часть без перезаписи",
+              "params": {
+                "file": "{{error_file}}",
+                "directory": "{{validation_error_dir}}"
+              },
+              "private": true,
+              "save_as": "moved_error_path"
+            },
+            {
+              "id": "sbis_error_record_file",
+              "action": "compute",
+              "title": "Зафиксировать путь перемещённой части",
+              "description": "Зафиксировать путь перемещённой части",
+              "params": {
+                "expression": "({...context.report,error_paths:{...(context.report.error_paths||{}),[context.error_file.path]:context.moved_error_path},error_path:context.error_file.path===context.report.path?context.moved_error_path:context.report.error_path})"
+              },
+              "private": true,
+              "save_as": "report"
+            },
+            {
+              "id": "sbis_error_store_file",
+              "action": "call",
+              "title": "Сохранить состояние перемещения отчёта",
+              "description": "Сохранить состояние перемещения отчёта",
+              "params": {},
+              "private": true,
+              "routine": "store_report",
+              "timeout_ms": "{{control_timeout_ms}}"
+            }
+          ],
+          "as": "error_file"
         }
       ]
     },
@@ -1044,6 +1238,74 @@
             "timeout_ms": "{{control_timeout_ms}}",
             "private": true,
             "id": "sbis_run_reports_then_7"
+          },
+          {
+            "id": "sbis_needs_error_destination",
+            "action": "compute",
+            "title": "Определить необходимость каталога ошибок",
+            "description": "Определить необходимость каталога ошибок",
+            "params": {
+              "expression": "['validate_only','send'].includes(context.mode)"
+            },
+            "private": true,
+            "save_as": "needs_error_destination"
+          },
+          {
+            "id": "sbis_check_error_destination",
+            "action": "if",
+            "title": "Проверить каталог ошибок до импорта",
+            "description": "Проверить каталог ошибок до импорта",
+            "params": {
+              "condition": "{{needs_error_destination}}"
+            },
+            "private": true,
+            "then": [
+              {
+                "id": "sbis_resolve_error_dir",
+                "action": "compute",
+                "title": "Определить каталог ошибок",
+                "description": "Определить каталог ошибок",
+                "params": {
+                  "expression": "context.error_dir||context.loaded_dir"
+                },
+                "private": true,
+                "save_as": "validation_error_dir"
+              },
+              {
+                "id": "sbis_error_dir_available",
+                "action": "files_list",
+                "title": "Проверить доступность каталога ошибок",
+                "description": "Проверить доступность каталога ошибок",
+                "params": {
+                  "directory": "{{validation_error_dir}}"
+                },
+                "private": true,
+                "save_as": "validation_error_existing"
+              },
+              {
+                "id": "sbis_error_dir_distinct",
+                "action": "compute",
+                "title": "Исключить перенос во входящий каталог",
+                "description": "Исключить перенос во входящий каталог",
+                "params": {
+                  "expression": "String(context.validation_error_dir).replaceAll('\\\\','/').replace(/\\/+$/,'').toLowerCase()!==String(context.root_dir).replaceAll('\\\\','/').replace(/\\/+$/,'').toLowerCase()"
+                },
+                "private": true,
+                "save_as": "error_dir_distinct"
+              },
+              {
+                "id": "sbis_error_dir_assert",
+                "action": "assert",
+                "title": "Проверить отдельный каталог ошибок",
+                "description": "Проверить отдельный каталог ошибок",
+                "params": {
+                  "condition": "{{error_dir_distinct}}",
+                  "error_code": "INVALID_ERROR_DIRECTORY",
+                  "message": "Каталог ошибок должен отличаться от root_dir"
+                },
+                "private": true
+              }
+            ]
           },
           {
             "action": "browser_launch",
