@@ -92,6 +92,7 @@ node docs/project-guide/tools/convert-recorder.mjs recording.json workflow.json
 | Задача | Операция |
 | --- | --- |
 | Клик / ввод / переход из Recorder | `browser_steps` |
+| Создать, выбрать, закрыть именованную вкладку | `browser_tab` (API 0.9.4+) |
 | Прочитать DOM, получить данные | `browser_eval` |
 | Ждать конкретное состояние DOM | `browser_wait` |
 | Посчитать значение без браузера | `compute` |

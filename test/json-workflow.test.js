@@ -122,6 +122,46 @@ test('recursive calls are bounded rather than exhausting the process', async t =
   await assert.rejects(executeJsonWorkflow(await options(t, script)), { code: 'WORKFLOW_LIMIT' });
 });
 
+test('named browser tabs preserve independent documents, share cookies and inherit initialization', async t => {
+  const server = createServer((_req, res) => res.end('<html><body>fixture</body></html>'));
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const navigate = { action: 'browser_steps', params: { steps: [{ type: 'navigate', url: `http://127.0.0.1:${server.address().port}` }] } };
+  const tab = (operation, name) => ({ action: 'browser_tab', params: { operation, name } });
+  const script = { ...base([
+    { action: 'browser_launch', params: { init_scripts: ['window.initialized = true'] } }, navigate,
+    { action: 'browser_eval', params: { expression: "(document.cookie='session=shared;path=/',document.body.textContent='main',true)" } },
+    tab('open', 'first'), navigate,
+    { action: 'browser_eval', params: { expression: "(document.body.textContent='first',true)" } },
+    tab('open', 'second'), navigate,
+    { action: 'browser_eval', params: { expression: "(document.body.textContent='second',true)" } },
+    tab('select', 'first'),
+    { action: 'browser_eval', params: { expression: '({text:document.body.textContent,cookie:document.cookie,initialized:window.initialized})' }, save_as: 'first' },
+    tab('close', 'first'),
+    { action: 'browser_eval', params: { expression: 'document.body.textContent' }, save_as: 'main' },
+    tab('select', 'second'),
+    { action: 'browser_eval', params: { expression: 'document.body.textContent' }, save_as: 'second' },
+    tab('close', 'second')
+  ]), output: { first: '{{first}}', main: '{{main}}', second: '{{second}}' } };
+  const { context } = await executeJsonWorkflow(await options(t, script));
+  assert.deepEqual(context.first, { text: 'first', cookie: 'session=shared', initialized: true });
+  assert.equal(context.main, 'main'); assert.equal(context.second, 'second');
+});
+
+test('named tabs reject missing, closed, duplicate and invalid targets instead of selecting another page', async t => {
+  const tab = (operation, name) => ({ action: 'browser_tab', params: { operation, name } });
+  for (const [steps, code] of [
+    [[tab('select', 'main')], 'BROWSER_NOT_STARTED'],
+    [[{ action: 'browser_launch' }, tab('select', 'missing')], 'BROWSER_TAB_NOT_FOUND'],
+    [[{ action: 'browser_launch' }, tab('open', 'main')], 'BROWSER_TAB_EXISTS'],
+    [[{ action: 'browser_launch' }, tab('close', 'main')], 'INVALID_BROWSER_TAB'],
+    [[{ action: 'browser_launch' }, tab('open', 'first'), tab('close', 'first'), tab('select', 'first')], 'BROWSER_TAB_NOT_FOUND'],
+    [[{ action: 'browser_launch' }, tab('open', '{{invalid_name}}')], 'INVALID_BROWSER_TAB']
+  ]) await assert.rejects(executeJsonWorkflow(await options(t, { ...base(steps), context: { invalid_name: 5 } })), { code });
+  assert.ok(validateScript(base([tab('unknown', 'first')])).length);
+  assert.ok(validateScript(base([tab('open', '')])).length);
+});
+
 test('minimal launch keeps headless mode and automation while replaying multiple pages', async t => {
   const script = { ...base([
     { action: 'browser_launch', params: { ignore_default_args: '{{minimal}}' } },

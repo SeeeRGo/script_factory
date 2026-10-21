@@ -1,7 +1,7 @@
 export const WORKFLOW_ACTIONS = Object.freeze([
   'set', 'compute', 'assert', 'fail', 'if', 'for_each', 'call', 'wait',
   'system_ip_check', 'files_list', 'file_verify', 'file_archive', 'file_copy',
-  'file_read', 'artifact_write', 'browser_launch', 'browser_steps', 'browser_eval', 'browser_wait', 'browser_screenshot'
+  'file_read', 'artifact_write', 'browser_launch', 'browser_tab', 'browser_steps', 'browser_eval', 'browser_wait', 'browser_screenshot'
 ]);
 const timeoutTemplate = value => typeof value === 'string' && /^\{\{\s*[\w.]+\s*\}\}$/.test(value);
 const identifier = value => typeof value === 'string' && /^[A-Za-z_]\w*$/.test(value)
@@ -41,6 +41,10 @@ export function validateWorkflow(script) {
       if (step.action === 'browser_launch' && step.params?.ignore_default_args !== undefined
         && typeof step.params.ignore_default_args !== 'boolean' && !timeoutTemplate(step.params.ignore_default_args)) {
         add(`${at}.params.ignore_default_args`, 'Требуется boolean или шаблон переменной');
+      }
+      if (step.action === 'browser_tab') {
+        if (!['open', 'select', 'close'].includes(step.params?.operation) && !timeoutTemplate(step.params?.operation)) add(`${at}.params.operation`, 'Укажите open, select или close');
+        if (typeof step.params?.name !== 'string' || !step.params.name.trim() || step.params.name.length > 1024) add(`${at}.params.name`, 'Укажите непустое имя вкладки длиной до 1024 символов');
       }
     });
   };

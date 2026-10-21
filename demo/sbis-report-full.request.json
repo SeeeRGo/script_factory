@@ -29,7 +29,7 @@
   "script": {
     "format": "json-workflow",
     "title": "СБИС: ФНС, СФР и Росстат из JSON",
-    "version": "3.2.1",
+    "version": "3.3.0",
     "default_step_timeout_ms": 60000,
     "context": {
       "mode": "validate_only",
@@ -180,7 +180,7 @@
           {
             "type": "waitForExpression",
             "expression": "true",
-            "description": "Оставляет текущую карточку открытой. Следующая проверка сверяет ИНН и сохранённый ключ. Для нескольких файлов одного ведомства требуется свой профиль повторного открытия."
+            "description": "Оставляет сохранённую карточку открытой в её вкладке. При нескольких XML send возвращается в отдельную вкладку каждого отчёта; затем заново сверяет ИНН и ключ."
           }
         ],
         "submit_steps": [
@@ -194,7 +194,7 @@
             "visible": true,
             "count": 1,
             "operator": "==",
-            "description": "Ожидает единственную кнопку перехода к отправке подтвержденной карточки. Этот переход проверен для РСВ; кабинет пока блокирует дальнейшую отправку лицензией."
+            "description": "Ожидает единственную кнопку перехода к отправке подтвержденной карточки. Дальнейшие шаги отдельно проверяют лицензионные ограничения и статус отправки."
           },
           {
             "type": "click",
@@ -205,7 +205,7 @@
             ],
             "offsetX": 20,
             "offsetY": 10,
-            "description": "Переходит к отправке текущего отчёта. Полный диалог подписи и конечный статус ещё не проверены; пустые обязательные reopen_steps и sent_status_selector блокируют рабочий send."
+            "description": "Переходит к отправке текущего отчёта. Перед действием обязательны повторная проверка отчёта и сверка ИНН и ключа карточки."
           },
           {
             "type": "waitForExpression",
@@ -857,7 +857,7 @@
         "title": "Найти все XML по переданным префиксам",
         "description": "Выбирает все XML непосредственно в root_dir. Отсутствующие префиксы пропускает; совпадения путей внутри ведомства исключает. Для комплекта выбирает основные файлы по первому префиксу, части сверяет по ссылкам XML отдельно.",
         "params": {
-          "expression": "(() => {\n const selected=new Set(),reports=[];\n for(const plan of context.plans){const current=new Map();for(const prefix of (plan.bundle_files?plan.prefixes.slice(0,1):plan.prefixes)){\n  const files=context.directory_files.filter(f=>f.filename.toLowerCase().endsWith('.xml')&&f.filename.startsWith(prefix)).sort((a,b)=>b.modified_ms-a.modified_ms||a.filename.localeCompare(b.filename));\n  for(const file of files)current.set(file.path,file);\n }\n if(context.allow_multiple===false&&current.size>1)throw Object.assign(new Error('Несколько файлов при allow_multiple=false'),{code:'MULTIPLE_FILES'});\n if(context.mode==='send'&&context.submit_enabled===true&&current.size>1&&plan.ui.reopen_steps?.length===1&&plan.ui.reopen_steps[0].type==='waitForExpression'&&plan.ui.reopen_steps[0].expression==='true')throw Object.assign(new Error('Для нескольких файлов ведомства настройте повторное открытие каждой карточки'),{code:'UI_BINDING_REQUIRED'});\n for(const file of current.values()){\n  const key=/^[a-z]:[\\\\/]/i.test(file.path)?file.path.toLowerCase():file.path;\n  if(selected.has(key))throw Object.assign(new Error('Один XML выбран для разных ведомств'),{code:'AUTHORITY_FILE_CONFLICT'});\n  selected.add(key);reports.push({...file,files:[file],bundle_prefixes:plan.bundle_files?plan.prefixes.slice(1):[],authority:plan.authority,state:'selected',validation_result:null,sbis_status:null});\n }}return reports;\n})()"
+          "expression": "(() => {\n const selected=new Set(),reports=[];\n for(const plan of context.plans){const current=new Map();for(const prefix of (plan.bundle_files?plan.prefixes.slice(0,1):plan.prefixes)){\n  const files=context.directory_files.filter(f=>f.filename.toLowerCase().endsWith('.xml')&&f.filename.startsWith(prefix)).sort((a,b)=>b.modified_ms-a.modified_ms||a.filename.localeCompare(b.filename));\n  for(const file of files)current.set(file.path,file);\n }\n if(context.allow_multiple===false&&current.size>1)throw Object.assign(new Error('Несколько файлов при allow_multiple=false'),{code:'MULTIPLE_FILES'});\n for(const file of current.values()){\n  const key=/^[a-z]:[\\\\/]/i.test(file.path)?file.path.toLowerCase():file.path;\n  if(selected.has(key))throw Object.assign(new Error('Один XML выбран для разных ведомств'),{code:'AUTHORITY_FILE_CONFLICT'});\n  selected.add(key);reports.push({...file,files:[file],bundle_prefixes:plan.bundle_files?plan.prefixes.slice(1):[],authority:plan.authority,state:'selected',validation_result:null,sbis_status:null});\n }}return reports;\n})()"
         },
         "save_as": "reports",
         "private": true,
@@ -1515,6 +1515,17 @@
                     "id": "sbis_run_reports_then_23_steps_14_then_1"
                   },
                   {
+                    "id": "sbis_keep_report_tabs",
+                    "action": "compute",
+                    "title": "Сохранить карточки нескольких отчётов в отдельных вкладках",
+                    "description": "В send сохраняет по вкладке на отчёт до завершения проверки всех XML ведомства. Вкладки используют общую авторизованную сессию.",
+                    "params": {
+                      "expression": "context.mode==='send'&&context.submit_enabled===true&&context.current_reports.length>1"
+                    },
+                    "save_as": "keep_report_tabs",
+                    "private": true
+                  },
+                  {
                     "action": "for_each",
                     "title": "Загрузить и проверить каждый самостоятельный XML",
                     "description": "Загрузить и проверить каждый самостоятельный XML",
@@ -1544,6 +1555,29 @@
                         },
                         "private": true,
                         "id": "sbis_run_reports_then_23_steps_14_then_2_steps_2"
+                      },
+                      {
+                        "id": "sbis_report_tab_open",
+                        "action": "if",
+                        "title": "Открыть отдельную вкладку для текущего отчёта",
+                        "description": "Открыть отдельную вкладку для текущего отчёта",
+                        "params": {
+                          "condition": "{{keep_report_tabs}}"
+                        },
+                        "then": [
+                          {
+                            "id": "sbis_report_tab_open_action",
+                            "action": "browser_tab",
+                            "title": "Открыть отдельную вкладку для текущего отчёта",
+                            "description": "Именованная вкладка связана с полным путём XML. Выбор отсутствующей или закрытой вкладки завершается ошибкой без отправки.",
+                            "params": {
+                              "operation": "open",
+                              "name": "{{report.path}}"
+                            },
+                            "private": true
+                          }
+                        ],
+                        "private": true
                       },
                       {
                         "action": "call",
@@ -1893,9 +1927,32 @@
                             "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_2"
                           },
                           {
+                            "id": "sbis_report_tab_select",
+                            "action": "if",
+                            "title": "Вернуться во вкладку проверенного отчёта",
+                            "description": "Вернуться во вкладку проверенного отчёта",
+                            "params": {
+                              "condition": "{{keep_report_tabs}}"
+                            },
+                            "then": [
+                              {
+                                "id": "sbis_report_tab_select_action",
+                                "action": "browser_tab",
+                                "title": "Вернуться во вкладку проверенного отчёта",
+                                "description": "Именованная вкладка связана с полным путём XML. Выбор отсутствующей или закрытой вкладки завершается ошибкой без отправки.",
+                                "params": {
+                                  "operation": "select",
+                                  "name": "{{report.path}}"
+                                },
+                                "private": true
+                              }
+                            ],
+                            "private": true
+                          },
+                          {
                             "action": "call",
-                            "title": "Повторно открыть нужную карточку",
-                            "description": "Повторно открыть нужную карточку",
+                            "title": "Подготовить сохранённую карточку к повторной проверке",
+                            "description": "Вкладка текущего XML уже выбрана. Необязательные ui.reopen_steps выполняются в ней; далее обязательно сверяются ИНН и сохранённый ключ карточки.",
                             "params": {
                               "flow_steps": "{{ui.reopen_steps}}"
                             },
@@ -2368,6 +2425,29 @@
                             "private": true,
                             "timeout_ms": "{{control_timeout_ms}}",
                             "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_21"
+                          },
+                          {
+                            "id": "sbis_report_tab_close",
+                            "action": "if",
+                            "title": "Закрыть вкладку после подтверждённой отправки и архивирования",
+                            "description": "Закрыть вкладку после подтверждённой отправки и архивирования",
+                            "params": {
+                              "condition": "{{keep_report_tabs}}"
+                            },
+                            "then": [
+                              {
+                                "id": "sbis_report_tab_close_action",
+                                "action": "browser_tab",
+                                "title": "Закрыть вкладку после подтверждённой отправки и архивирования",
+                                "description": "Именованная вкладка связана с полным путём XML. Выбор отсутствующей или закрытой вкладки завершается ошибкой без отправки.",
+                                "params": {
+                                  "operation": "close",
+                                  "name": "{{report.path}}"
+                                },
+                                "private": true
+                              }
+                            ],
+                            "private": true
                           }
                         ],
                         "index_as": "report_index",

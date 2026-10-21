@@ -46,6 +46,8 @@ export async function executeJsonWorkflow(options) {
   context.job_id = jobId;
   const startedAt = Date.now();
   let browser, page, count = 0, completed = 0;
+  const tabs = new Map();
+  let initScripts = [];
   const artifacts = [];
   const identifiedErrors = new WeakSet();
   const assign = (key, value) => { if (!workflowIdentifier(key)) fail('INVALID_VARIABLE', 'Неверное имя переменной'); context[key] = value; };
@@ -121,10 +123,44 @@ export async function executeJsonWorkflow(options) {
           ignoreDefaultArgs: minimal, args });
         if (activeSignal?.aborted) { await browser.close(); throw activeSignal.reason; }
         page = (await browser.pages())[0] || await browser.newPage();
+        tabs.set('main', page);
         await page.bringToFront();
         page.on('pageerror', () => {});
-        for (const expression of params.init_scripts || []) await page.evaluateOnNewDocument(expression);
+        initScripts = params.init_scripts || [];
+        for (const expression of initScripts) await page.evaluateOnNewDocument(expression);
         return { browser_launched: true };
+      }
+      case 'browser_tab': {
+        if (!browser) fail('BROWSER_NOT_STARTED', 'Браузер не запущен');
+        const { name, operation } = params;
+        if (typeof name !== 'string' || !name.trim() || name.length > 1024 || !['open', 'select', 'close'].includes(operation)) fail('INVALID_BROWSER_TAB', 'Неверная операция или имя вкладки');
+        if (operation === 'open') {
+          if (tabs.has(name)) fail('BROWSER_TAB_EXISTS', 'Вкладка с таким именем уже существует');
+          const opened = await browser.newPage();
+          tabs.set(name, opened);
+          activeSignal?.throwIfAborted();
+          opened.on('pageerror', () => {});
+          for (const expression of initScripts) await opened.evaluateOnNewDocument(expression);
+          page = opened;
+          await page.bringToFront();
+        } else {
+          const target = tabs.get(name);
+          if (!target || target.isClosed()) fail('BROWSER_TAB_NOT_FOUND', 'Именованная вкладка отсутствует или закрыта');
+          if (operation === 'select') {
+            page = target;
+            await page.bringToFront();
+          } else {
+            if (name === 'main') fail('INVALID_BROWSER_TAB', 'Основную вкладку нельзя закрыть этой операцией');
+            await target.close();
+            tabs.delete(name);
+            if (page === target) {
+              page = tabs.get('main');
+              requirePage();
+              await page.bringToFront();
+            }
+          }
+        }
+        return { name, operation };
       }
       case 'browser_eval': {
         requirePage();
