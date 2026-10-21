@@ -186,3 +186,43 @@ test('file_read is bounded, requires the selected hash, respects roots and decod
   await assert.rejects(executeJsonWorkflow({ ...o, script }), e => e.code === 'SOURCE_CHANGED');
   await assert.rejects(executeJsonWorkflow({ ...o, script: base([{ action: 'file_read', params: { file: { ...selected, path: path.join(o.root, '..', 'outside') } } }]) }), e => e.code === 'FILESYSTEM_ACCESS_DENIED');
 });
+
+
+test('nested and repeated steps expose stable JSON source paths and identity on failure', async t => {
+  const script = { ...base([{ action: 'for_each', as: 'item', params: { items: [1, 2] }, steps: [
+    { action: 'call', routine: 'check' }
+  ] }]), routines: { check: [
+    { id: 'check_item', title: 'Check current item', description: 'Must be the first item', action: 'assert',
+      params: { condition: '{{ok}}', error_code: 'CHECK_FAILED' } }
+  ] } };
+  // Run the same source twice with different dynamic indices, then verify failure identity.
+  script.routines.check.unshift({ action: 'compute', params: { expression: 'context.item === 1' }, save_as: 'ok' });
+  const events = [];
+  await assert.rejects(executeJsonWorkflow({ ...await options(t, script), onEvent: e => events.push(e) }), e => {
+    assert.equal(e.step_id, 'check_item'); assert.equal(e.source_path, 'routines.check[1]');
+    assert.equal(e.message, 'Шаг «Check current item»: Условие не выполнено'); return true;
+  });
+  const repeated = events.filter(e => e.type === 'step_started' && e.step_id === 'check_item');
+  assert.equal(repeated.length, 2); assert.notEqual(repeated[0].step_index, repeated[1].step_index);
+  assert.ok(repeated.every(e => e.source_path === 'routines.check[1]'));
+  const failure = events.find(e => e.type === 'step_failed' && e.step_id === 'check_item');
+  assert.equal(failure.title, 'Check current item'); assert.equal(failure.description, 'Must be the first item');
+  assert.equal(failure.source_path, 'routines.check[1]');
+  const errors = events.filter(e => e.type === 'step_failed');
+  assert.ok(errors.every(e => e.error.message === 'Шаг «Check current item»: Условие не выполнено'));
+});
+
+
+test('step titles preserve custom error codes and causes; untitled failures do not inherit a parent title', async t => {
+  for (const titled of [true, false]) {
+    const script = { ...base([{ action: 'call', title: 'Outer call', routine: 'failure' }]), routines: {
+      failure: [{ action: 'fail', ...(titled ? { title: '  Check report  ' } : {}),
+        params: { error_code: 'REPORT_ERROR', message: 'Original reason' } }]
+    } };
+    await assert.rejects(executeJsonWorkflow(await options(t, script)), error => {
+      assert.equal(error.code, 'REPORT_ERROR');
+      assert.equal(error.message, titled ? 'Шаг «Check report»: Original reason' : 'Original reason');
+      return true;
+    });
+  }
+});

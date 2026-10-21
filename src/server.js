@@ -998,6 +998,8 @@ function serializeJobError(error) {
     message: error?.message || 'Непредвиденная ошибка выполнения',
     retryable: Boolean(error?.retryable),
     ...(Number.isInteger(error?.step_index) ? { step_index: error.step_index } : {}),
+    ...(error?.step_id ? { step_id: error.step_id } : {}),
+    ...(error?.source_path ? { source_path: error.source_path } : {}),
     ...(typeof error?.action === 'string' ? { action: error.action } : {}),
     ...(error?.details === undefined ? {} : { details: error.details })
   };
@@ -1019,9 +1021,8 @@ function parseCallbackUrl(value) {
   if ([...url.searchParams.keys()].some((key) => /^(?:callback_)?(?:auth(?:entication|orization)?|(?:auth_)?(?:user(?:name)?|password|token)|access_token|api_key)$/i.test(key))) {
     throw createApiError('INVALID_CALLBACK', 'Учётные данные callback разрешены только в переменных окружения', 400, false);
   }
-  const literalLoopback = /^(127\.0\.0\.1|\[::1\])(?::\d+)?$/.test(authority);
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && literalLoopback)) {
-    throw createApiError('INVALID_CALLBACK', 'callback.url требует HTTPS, кроме literal loopback 127.0.0.1 или [::1]', 400, false);
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw createApiError('INVALID_CALLBACK', 'callback.url должен использовать HTTP или HTTPS', 400, false);
   }
   return url;
 }
@@ -1032,7 +1033,7 @@ function normalizeCallbackAllowedOrigin(value) {
     if (url.pathname !== '/' || url.search || url.hash || /[?#]/.test(value)) throw new Error();
     return url.origin;
   } catch {
-    throw new Error('CALLBACK_ALLOWED_ORIGINS должен содержать только HTTPS origins без учётных данных; HTTP разрешён для 127.0.0.1 и [::1]');
+    throw new Error('CALLBACK_ALLOWED_ORIGINS должен содержать HTTP или HTTPS origins без пути, параметров и учётных данных');
   }
 }
 
@@ -1259,7 +1260,7 @@ function applyInterpreterEvent(job, event) {
 
   if (event.type === 'step_added') {
     const added = createExecution({ steps: [event.step] }).steps[0];
-    execution.steps[event.step_index] = { ...added, index: event.step_index, id: event.step.id || `step_${event.step_index + 1}` };
+    execution.steps[event.step_index] = { ...added, index: event.step_index, id: event.step.id || `step_${event.step_index + 1}`, source_path: event.source_path ?? null };
     execution.total_steps = execution.steps.length;
     execution.percent = Math.round(execution.completed_steps / execution.total_steps * 100);
     return;
@@ -1281,11 +1282,15 @@ function applyInterpreterEvent(job, event) {
       });
       logJob(job, 'info', `Шаг ${event.step_index + 1}/${execution.total_steps} запущен`, {
         action: event.action,
-        step_id: event.step_id
+        step_id: event.step_id,
+        step_title: event.title ?? step.title,
+        source_path: event.source_path ?? step.source_path
       });
       logJob(job, 'debug', `Параметры шага ${event.step_index + 1}/${execution.total_steps} подготовлены`, {
         action: event.action,
         step_id: event.step_id,
+        step_title: event.title ?? step.title,
+        source_path: event.source_path ?? step.source_path,
         attempt: job.attempts,
         params: event.params
       });
@@ -1303,11 +1308,15 @@ function applyInterpreterEvent(job, event) {
       logJob(job, 'info', `Шаг ${event.step_index + 1}/${execution.total_steps} завершён`, {
         action: event.action,
         step_id: event.step_id,
+        step_title: event.title ?? step.title,
+        source_path: event.source_path ?? step.source_path,
         duration_ms: event.duration_ms
       });
       logJob(job, 'debug', `Результат шага ${event.step_index + 1}/${execution.total_steps} сохранён`, {
         action: event.action,
         step_id: event.step_id,
+        step_title: event.title ?? step.title,
+        source_path: event.source_path ?? step.source_path,
         duration_ms: event.duration_ms,
         output: event.output,
         completed_steps: execution.completed_steps,
@@ -1324,6 +1333,8 @@ function applyInterpreterEvent(job, event) {
       logJob(job, 'error', `Ошибка шага ${event.step_index + 1}/${execution.total_steps}`, {
         action: event.action,
         step_id: event.step_id,
+        step_title: event.title ?? step.title,
+        source_path: event.source_path ?? step.source_path,
         duration_ms: event.duration_ms,
         error: event.error
       });

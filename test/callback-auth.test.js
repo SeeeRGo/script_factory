@@ -173,7 +173,35 @@ test('redirects fail without forwarding authorization or making a second request
   assert.equal(targetRequests, 0);
 });
 
-test('rejects URL credentials, unsafe schemes, nonliteral HTTP loopback, and unlisted origins before accepting jobs', async (t) => {
+test('delivers an authenticated HTTP callback to an allowlisted hostname', async (t) => {
+  const received = [];
+  const boundOrigin = await receiver(t, async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    received.push({ authorization: req.headers.authorization, body: JSON.parse(body) });
+    res.end('accepted');
+  });
+  const origin = boundOrigin.replace('127.0.0.1', 'localhost');
+  const app = await service(t, { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: origin });
+  const job = await completed(app, await submit(app, { url: `${origin}/callback` }));
+  assert.equal(job.callback_delivery.status, 'delivered');
+  assert.equal(job.callback_delivery.last_response_body, 'accepted');
+  assert.equal(received.length, 1);
+  assert.equal(received[0].authorization, `Bearer ${token}`);
+  assert.equal(received[0].body.job.job_id, job.job_id);
+});
+
+test('starts with customer-configured HTTP domain and private-IP callback origins', async (t) => {
+  const app = await service(t, {
+    CALLBACK_AUTH_TOKEN: token,
+    CALLBACK_ALLOWED_ORIGINS: 'http://callback.example,http://192.168.1.10:8080,http://10.0.0.1:8080,https://callback.example'
+  });
+  const response = await app.request('/health');
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).ready, true);
+});
+
+test('rejects URL credentials, unsupported schemes and unlisted origins before accepting jobs', async (t) => {
   const app = await service(t, { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example' });
   for (const url of [
     'https://user:password@callback.example/callback',
@@ -253,7 +281,9 @@ test('fails startup on ambiguous, partial, unsafe or unallowlisted auth configur
     { CALLBACK_AUTH_PASSWORD: password },
     { CALLBACK_AUTH_TOKEN: token },
     { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password },
-    { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'http://callback.example' },
+    { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'ftp://callback.example' },
+    { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'http://user:password@callback.example' },
+    { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'http://callback.example/path' },
     { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'https://user:password@callback.example' },
     { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example/path' },
     { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example?token=secret' },

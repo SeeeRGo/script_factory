@@ -47,6 +47,7 @@ export async function executeJsonWorkflow(options) {
   const startedAt = Date.now();
   let browser, page, count = 0, completed = 0;
   const artifacts = [];
+  const identifiedErrors = new WeakSet();
   const assign = (key, value) => { if (!workflowIdentifier(key)) fail('INVALID_VARIABLE', 'Неверное имя переменной'); context[key] = value; };
   const emit = event => onEvent({ ts: new Date().toISOString(), ...event });
   const close = () => { void browser?.close().catch(() => {}); };
@@ -79,7 +80,7 @@ export async function executeJsonWorkflow(options) {
     try { for (const [key, value] of Object.entries(values)) assign(key, value); return await fn(); }
     finally { for (const [key, old] of previous) { if (old) context[key] = old.value; else delete context[key]; } }
   };
-  async function operation(step, params, activeSignal, depth) {
+  async function operation(step, params, activeSignal, depth, sourcePath) {
     activeSignal?.throwIfAborted();
     switch (step.action) {
       case 'set': for (const [key, value] of Object.entries(params)) assign(key, value); return null;
@@ -89,18 +90,18 @@ export async function executeJsonWorkflow(options) {
       case 'wait': await abortableDelay(params.duration_ms || 0, activeSignal); return true;
       case 'if':
         if (typeof params.condition !== 'boolean') fail('INVALID_CONDITION', 'params.condition должен разрешаться в Boolean');
-        await run(params.condition ? step.then || [] : step.else || [], activeSignal, depth + 1);
+        await run(params.condition ? step.then || [] : step.else || [], activeSignal, depth + 1, `${sourcePath}.${params.condition ? 'then' : 'else'}`);
         return null;
       case 'for_each': {
         if (!Array.isArray(params.items)) fail('INVALID_ITERATION', 'items должен быть массивом');
         if (params.items.length > 1000) fail('WORKFLOW_LIMIT', 'Слишком много итераций');
         for (const [index, item] of params.items.entries()) {
           activeSignal?.throwIfAborted();
-          await scoped({ [step.as]: item, ...(step.index_as ? { [step.index_as]: index } : {}) }, () => run(step.steps, activeSignal, depth + 1));
+          await scoped({ [step.as]: item, ...(step.index_as ? { [step.index_as]: index } : {}) }, () => run(step.steps, activeSignal, depth + 1, `${sourcePath}.steps`));
         }
         return null;
       }
-      case 'call': return scoped(params, () => run(script.routines[step.routine], activeSignal, depth + 1));
+      case 'call': return scoped(params, () => run(script.routines[step.routine], activeSignal, depth + 1, `routines.${step.routine}`));
       case 'system_ip_check': return (options.checkIp || checkExternalIp)();
       case 'file_read': return readWorkflowFile(params.file, allowedRoots, params);
       case 'files_list': return listWorkflowFiles(params.directory, allowedRoots, activeSignal);
@@ -166,16 +167,19 @@ export async function executeJsonWorkflow(options) {
       default: fail('UNKNOWN_ACTION', 'Неизвестная операция');
     }
   }
-  async function run(steps, parentSignal, depth = 0) {
+  async function run(steps, parentSignal, depth = 0, sourceBase = 'steps') {
     if (depth > 25) fail('WORKFLOW_LIMIT', 'Слишком глубокий вызов подпрограмм');
-    for (const step of steps) {
+    for (const [sourceIndex, step] of steps.entries()) {
       parentSignal?.throwIfAborted();
       if (count >= 10000) fail('WORKFLOW_LIMIT', 'Превышен лимит шагов');
       const index = count++, start = Date.now();
+      const sourcePath = `${sourceBase}[${sourceIndex}]`;
+      const identity = { step_id: step.id || `step_${index + 1}`, title: step.title ?? null,
+        description: step.description ?? null, source_path: sourcePath };
       const params = resolveTemplates(step.params || {}, context);
       const privateStep = step.private === true;
-      await emit({ type: 'step_added', step_index: index, step: { ...step, params: undefined, steps: undefined, then: undefined, else: undefined } });
-      await emit({ type: 'step_started', step_index: index, step_id: step.id || `step_${index + 1}`, action: step.action, params: privateStep ? { redacted: true } : params });
+      await emit({ type: 'step_added', step_index: index, ...identity, step: { ...step, params: undefined, steps: undefined, then: undefined, else: undefined } });
+      await emit({ type: 'step_started', step_index: index, ...identity, action: step.action, params: privateStep ? { redacted: true } : params });
       const controller = new AbortController();
       const abort = () => controller.abort(parentSignal.reason);
       parentSignal?.addEventListener('abort', abort, { once: true });
@@ -189,18 +193,27 @@ export async function executeJsonWorkflow(options) {
       const aborted = new Promise((_, reject) => { rejectAbort = () => reject(controller.signal.reason); controller.signal.addEventListener('abort', rejectAbort, { once: true }); });
       try {
         if (timeout !== null && (!Number.isInteger(timeout) || timeout < 1)) fail('INVALID_TIMEOUT', 'Неверный тайм-аут шага');
-        const output = await Promise.race([operation(step, params, controller.signal, depth), aborted]);
+        const output = await Promise.race([operation(step, params, controller.signal, depth, sourcePath), aborted]);
         controller.signal.throwIfAborted();
         if (step.save_as) assign(step.save_as, output);
         completed++;
-        await emit({ type: 'step_completed', step_index: index, step_id: step.id || `step_${index + 1}`, action: step.action,
+        await emit({ type: 'step_completed', step_index: index, ...identity, action: step.action,
           duration_ms: Date.now() - start, output: privateStep ? { redacted: true } : output });
       } catch (raw) {
         const error = raw instanceof InterpreterError ? raw : new InterpreterError(raw?.code || 'WORKFLOW_ERROR', raw?.message || 'Ошибка выполнения');
+        // Attribute the error once, to its originating step, not enclosing calls/loops.
+        if (!identifiedErrors.has(error)) {
+          identifiedErrors.add(error);
+          if (typeof step.title === 'string' && step.title.trim()) {
+            error.message = `Шаг «${step.title.trim()}»: ${error.message}`;
+          }
+        }
         error.retryable = false;
         error.step_index ??= index + 1;
         error.action ??= step.action;
-        await emit({ type: 'step_failed', step_index: index, action: step.action, duration_ms: Date.now() - start,
+        error.step_id ??= identity.step_id;
+        error.source_path ??= sourcePath;
+        await emit({ type: 'step_failed', step_index: index, ...identity, action: step.action, duration_ms: Date.now() - start,
           error: { code: error.code, message: error.message, retryable: false } });
         throw error;
       } finally {
@@ -220,7 +233,7 @@ export async function executeJsonWorkflow(options) {
   } catch (error) {
     context.error = { code: error.code || 'WORKFLOW_ERROR', message: error.message || 'Ошибка выполнения' };
     // An aborted job must never execute further browser or file actions.
-    if (!signal?.aborted && script.on_error) { try { await run(script.on_error, signal); } catch { /* Preserve the original error. */ } }
+    if (!signal?.aborted && script.on_error) { try { await run(script.on_error, signal, 0, 'on_error'); } catch { /* Preserve the original error. */ } }
     try { if (page && !page.isClosed()) await screenshot('workflow-error.png'); } catch { /* Preserve the original error. */ }
     error.partial_context = projection();
     error.retryable = false;

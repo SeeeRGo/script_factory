@@ -151,11 +151,13 @@ foreach ($rel in $files) {
     Copy-Item -LiteralPath $source -Destination $target -Force
   }
 }
+Export-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Set-Content (Join-Path $backup 'task.xml') -Encoding UTF8
 $manifest = @{ old_version=$before.version; new_version=$ExpectedVersion; project_path=$ProjectPath; env_file=$configurationFile; data_dir=$dataPath; task_name=$TaskName; task_path=$TaskPath; archive_sha256=$ExpectedSha256; dependencies_changed=$changeDependencies; files=$files }
 [IO.File]::WriteAllText((Join-Path $backup 'manifest.json'),($manifest|ConvertTo-Json -Depth 10),(New-Object Text.UTF8Encoding($false)))
 $stopped = $false
 $codeChanged = $false
 $dependencyMoved = $false
+$taskChanged = $false
 try {
   $lastHealth = Read-Health
   if ($lastHealth.queue.running -ne 0 -or $lastHealth.queue.queued -ne 0) { throw 'Queue changed before stopping' }
@@ -174,6 +176,25 @@ try {
     if (Test-Path "$ProjectPath\node_modules") { Move-Item "$ProjectPath\node_modules" "$backup\node_modules" }
     $dependencyMoved = $true
     Move-Item "$app\node_modules" "$ProjectPath\node_modules"
+  }
+  # Migrate the standard interactive task to hidden process supervision.
+  # Preserve its user, triggers and other settings; restore XML on rollback.
+  $startScript = Join-Path $ProjectPath 'windows\start-worker.ps1'
+  if ((Get-Content $startScript -Raw -Encoding UTF8).Contains('[switch]$RestartOnExit')) {
+    if (@($task.Actions).Count -ne 1 -or -not $task.Actions[0].Arguments.Contains($startScript) -or [string]$task.Principal.LogonType -ne 'Interactive') {
+      throw 'Automatic supervision migration requires the standard interactive worker task'
+    }
+    $arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$startScript`" -ProjectPath `"$ProjectPath`" -EnvFile `"$configurationFile`" -RestartOnExit"
+    $action = New-ScheduledTaskAction -Execute (Get-Command powershell.exe).Source -Argument $arguments -WorkingDirectory $ProjectPath
+    $settings = $task.Settings
+    $settings.RestartCount = 3
+    $settings.RestartInterval = 'PT1M'
+    $settings.MultipleInstances = 2 # TASK_INSTANCES_IGNORE_NEW
+    $settings.StartWhenAvailable = $true
+    $settings.DisallowStartIfOnBatteries = $false
+    $settings.StopIfGoingOnBatteries = $false
+    $taskChanged = $true
+    Set-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Action $action -Settings $settings | Out-Null
   }
   Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
   $after = Wait-Ready $ExpectedVersion
@@ -206,6 +227,9 @@ try {
     if ($dependencyMoved) {
       if (Test-Path "$ProjectPath\node_modules") { Move-Item "$ProjectPath\node_modules" "$stage\failed-node_modules" }
       if (Test-Path "$backup\node_modules") { Move-Item "$backup\node_modules" "$ProjectPath\node_modules" }
+    }
+    if ($taskChanged) {
+      Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Xml (Get-Content (Join-Path $backup 'task.xml') -Raw -Encoding UTF8) -Force | Out-Null
     }
     # DATA_DIR is deliberately not restored over any new jobs; see manual rollback instructions.
     Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath

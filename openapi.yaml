@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.9.0
+  version: 0.9.3
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
@@ -241,6 +241,7 @@ components:
         url:
           type: string
           format: uri
+          description: Полный HTTP или HTTPS адрес обработчика 1С. Протокол выбирает клиент; origin должен соответствовать CALLBACK_ALLOWED_ORIGINS, если список задан.
           example: http://1c-test.local/script-factory/result
         max_attempts:
           type: integer
@@ -318,6 +319,10 @@ components:
     ExecutionStep:
       type: object
       properties:
+        source_path:
+          type: string
+          nullable: true
+          description: Путь к исходному шагу JSON workflow, например routines.identity[0]; API 0.9.3+.
         index:
           type: integer
         id:
@@ -396,11 +401,18 @@ components:
           example: VALIDATION_ERROR
         message:
           type: string
+          description: В API 0.9.3 ошибка именованного шага JSON workflow содержит префикс «Шаг …» и исходную причину; код ошибки сохраняется.
         retryable:
           type: boolean
         step_index:
           type: integer
-          description: Номер шага, начиная с 1.
+          description: Динамический номер выполнения шага, начиная с 1.
+        step_id:
+          type: string
+          description: ID исходного шага JSON workflow; API 0.9.3+.
+        source_path:
+          type: string
+          description: Путь к исходному шагу JSON workflow; API 0.9.3+.
         action:
           type: string
         details:
