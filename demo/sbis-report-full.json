@@ -1,7 +1,7 @@
 {
   "format": "json-workflow",
   "title": "СБИС: ФНС, СФР и Росстат из JSON",
-  "version": "3.3.1",
+  "version": "3.4.0",
   "default_step_timeout_ms": 60000,
   "context": {
     "mode": "validate_only",
@@ -145,7 +145,7 @@
         }
       ],
       "validation_status_selector": ".controls-Header__caption",
-      "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m, .journal-react__background_green .journal-react__first-errorGroup:not(.tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m *)",
+      "protocol_selector": ".journal-react__view:is(.journal-react__background_green,.journal-react__background_pink)",
       "validation_success_text": "Ошибки не найдены",
       "validation_failure_text": "Найденные ошибки",
       "reopen_steps": [
@@ -253,7 +253,8 @@
       "bundle_checkbox_selector": ".js-controls-ListView__itemCheckBox",
       "bundle_selected_row_selector": ".controls-ListView__item__multiSelected",
       "bundle_import_selector": "[data-name=\"FolderBrowserComponent__StartLoadButton\"]",
-      "upload_bundle_steps": []
+      "upload_bundle_steps": [],
+      "validation_error_selector": "[data-qa=\"journal_check_result\"]"
     },
     "authority_prefixes": [
       {
@@ -262,7 +263,7 @@
         "ui": {
           "validation_scope_selector": ".journal-react__view:is(.journal-react__background_green,.journal-react__background_pink)",
           "validation_status_selector": ".controls-Header__caption",
-          "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m, .journal-react__background_green .journal-react__first-errorGroup:not(.tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m *)",
+          "protocol_selector": ".journal-react__view:is(.journal-react__background_green,.journal-react__background_pink)",
           "validation_failure_text": "Найденные ошибки",
           "validation_success_text": "Ошибки не найдены"
         }
@@ -273,7 +274,7 @@
         "ui": {
           "validation_scope_selector": ".journal-react__view:is(.journal-react__background_green,.journal-react__background_pink)",
           "validation_status_selector": ".controls-Header__caption",
-          "protocol_selector": ".tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m, .journal-react__background_green .journal-react__first-errorGroup:not(.tw-box-border.tw-h-full.tw-flex.tw-flex-col.controls-padding_bottom-m *)",
+          "protocol_selector": ".journal-react__view:is(.journal-react__background_green,.journal-react__background_pink)",
           "validation_success_text": "Ошибки не найдены",
           "validation_failure_text": "Найденные ошибки"
         }
@@ -547,10 +548,12 @@
       {
         "action": "browser_wait",
         "title": "Дождаться единственного результата и непустого текста проверки",
-        "description": "Дождаться единственного результата и непустого текста проверки",
+        "description": "Сохраняет весь выбранный блок протокола, включая сам validation_scope_selector, описания ошибок и разделы. Не принимает один заголовок со счётчиком и датой за полноценный протокол ошибки.",
         "params": {
-          "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden', roots=[...document.querySelectorAll(context.ui.validation_scope_selector||context.ui.report_scope_selector)].filter(visible);\n if(roots.length!==1)return false;\n const matches=[...roots[0].querySelectorAll(context.ui.validation_status_selector)].filter(e=>visible(e)&&[context.ui.validation_success_text,context.ui.validation_failure_text].includes(e.innerText.trim()));\n if(matches.length!==1)return false;\n const protocols=[...roots[0].querySelectorAll(context.ui.protocol_selector)].filter(visible);\n if(protocols.length!==1||!protocols[0].innerText.trim())return false;\n return {status:matches[0].innerText.trim(),protocol:protocols[0].innerText};\n})()",
-          "timeout_ms": "{{validation_timeout_ms}}"
+          "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden', roots=[...document.querySelectorAll(context.ui.validation_scope_selector||context.ui.report_scope_selector)].filter(visible);\n if(roots.length!==1)return false;\n const root=roots[0],matches=[...root.querySelectorAll(context.ui.validation_status_selector)].filter(e=>visible(e)&&[context.ui.validation_success_text,context.ui.validation_failure_text].includes(e.innerText.trim()));\n if(matches.length!==1)return false;\n const selector=context.ui.protocol_selector,protocols=[...(root.matches(selector)?[root]:[]),...root.querySelectorAll(selector)].filter(visible);\n if(protocols.length!==1)return false;\n const status=matches[0].innerText.trim(),protocol=protocols[0].innerText.trim();\n if(!protocol)return false;\n if(status===context.ui.validation_failure_text){\n  if(context.ui.validation_error_selector){\n   const errors=[...root.querySelectorAll(context.ui.validation_error_selector)].filter(visible);\n   if(!errors.length||errors.some(e=>!e.innerText.trim()))return false;\n  }\n  const details=protocol.replace(status,'').split(/\\n/).map(line=>line.trim()).filter(line=>line&&!/^\\d+$/.test(line)&&!/^\\d{1,2}\\s+[а-яёa-z]{3,}[’']?\\d{2,4}\\s+\\d{1,2}:\\d{2}$/i.test(line));\n  if(!details.length)return false;\n }\n return {status,protocol};\n})()",
+          "timeout_ms": "{{validation_timeout_ms}}",
+          "error_code": "VALIDATION_PROTOCOL_NOT_READY",
+          "message": "Не удалось получить результат проверки и полный текст протокола СБИС"
         },
         "save_as": "validation_data",
         "timeout_ms": "{{validation_step_timeout_ms}}",
@@ -598,7 +601,7 @@
         "title": "Сохранить результат проверки",
         "description": "Сохранить результат проверки",
         "params": {
-          "expression": "({...context.report,validation_result:context.validation_data.status,protocol:context.protocol_artifact,state:context.validation_data.status===context.ui.validation_success_text?'validated':'validation_failed'})"
+          "expression": "({...context.report,validation_result:context.validation_data.status,protocol:context.protocol_artifact,validation_error_text:context.validation_data.status===context.ui.validation_failure_text?context.validation_data.protocol:null,state:context.validation_data.status===context.ui.validation_success_text?'validated':'validation_failed'})"
         },
         "save_as": "report",
         "private": true,
@@ -708,7 +711,7 @@
         "title": "Сформировать плоские результаты каждого отчета",
         "description": "Один плоский Rezult_N на отчет, включая комплект: file_count, file_name_1..N и sha256_1..N. Коллекций в результате нет.",
         "params": {
-          "expression": "(() => {\n const names={FNS:'ФНС',SFR:'СФР',ROSSTAT:'Росстат'},out={};\n for(const [index,r] of (context.reports||[]).entries()) {\n  const active=r.path===context.active_report_path;\n  const error=context.error||null;\n  const affected=!!error&&error.code!=='VALIDATION_ERROR'&&(active||context.active_report_path==null);\n  const quote=r.license_quote||(active?context.license_quote:null)||null;\n  let state;\n  if(['sent','archived'].includes(r.state))state='sent';\n  else if(r.state==='submission_unknown')state='requires_reconciliation';\n  else if(r.state==='validation_failed')state='validation_failed';\n  else if(affected&&error.code!=='VALIDATION_ERROR')state=active?(context.result_state||'failed'):'not_processed';\n  else if(context.mode==='preflight'&&!error)state='preflight_completed';\n  else state=r.state==='validated'?'validated_not_sent':r.state==='uploaded'?'uploaded_not_sent':'not_processed';\n  out['Rezult_'+(index+1)]={state,report_state:r.state,inn:context.inn,authority:r.authority,\n   section_name:r.load_datetime?(names[r.authority]||r.authority):null,mode:context.mode,\n   file_name:r.filename,sha256:r.sha256,load_datetime:r.load_datetime||null,\n   validation_result:r.validation_result||null,file_selection_verified:!!r.file_selection_verified,\n   report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,\n   sbis_status:r.sbis_status||null,archived_path:r.archived_path||null,\n   error_code:r.state==='validation_failed'?'VALIDATION_ERROR':affected?error.code:null,\n   error_message:r.state==='validation_failed'?'СБИС обнаружил ошибки отчетности':affected?error.message:null,\n   license_requires_confirmation:quote?.requires_confirmation??null,\n   license_amount:quote?.amount??null,license_currency:quote?.currency??null,\n   license_continuation:quote?.continuation??null,file_count:(r.files||[r]).length,bundle_verified:!!r.bundle_verified};\n  for(const [i,file] of (r.files||[r]).entries()){out['Rezult_'+(index+1)]['file_name_'+(i+1)]=file.filename;out['Rezult_'+(index+1)]['sha256_'+(i+1)]=file.sha256;}\n }\n return out;\n})()"
+          "expression": "(() => {\n const names={FNS:'ФНС',SFR:'СФР',ROSSTAT:'Росстат'},out={};\n for(const [index,r] of (context.reports||[]).entries()) {\n  const active=r.path===context.active_report_path;\n  const error=context.error||null;\n  const affected=!!error&&error.code!=='VALIDATION_ERROR'&&(active||context.active_report_path==null);\n  const quote=r.license_quote||(active?context.license_quote:null)||null;\n  let state;\n  if(['sent','archived'].includes(r.state))state='sent';\n  else if(r.state==='submission_unknown')state='requires_reconciliation';\n  else if(r.state==='validation_failed')state='validation_failed';\n  else if(affected&&error.code!=='VALIDATION_ERROR')state=active?(context.result_state||'failed'):'not_processed';\n  else if(context.mode==='preflight'&&!error)state='preflight_completed';\n  else state=r.state==='validated'?'validated_not_sent':r.state==='uploaded'?'uploaded_not_sent':'not_processed';\n  out['Rezult_'+(index+1)]={state,report_state:r.state,inn:context.inn,authority:r.authority,\n   section_name:r.load_datetime?(names[r.authority]||r.authority):null,mode:context.mode,\n   file_name:r.filename,sha256:r.sha256,load_datetime:r.load_datetime||null,\n   validation_result:r.validation_result||null,file_selection_verified:!!r.file_selection_verified,\n   report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,\n   sbis_status:r.sbis_status||null,archived_path:r.archived_path||null,\n   error_code:r.state==='validation_failed'?'VALIDATION_ERROR':affected?error.code:null,\n   error_message:r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности'):affected?error.message:null,\n   license_requires_confirmation:quote?.requires_confirmation??null,\n   license_amount:quote?.amount??null,license_currency:quote?.currency??null,\n   license_continuation:quote?.continuation??null,file_count:(r.files||[r]).length,bundle_verified:!!r.bundle_verified};\n  for(const [i,file] of (r.files||[r]).entries()){out['Rezult_'+(index+1)]['file_name_'+(i+1)]=file.filename;out['Rezult_'+(index+1)]['sha256_'+(i+1)]=file.sha256;}\n }\n return out;\n})()"
         },
         "save_as": "report_results",
         "private": true,
@@ -2608,12 +2611,23 @@
           },
           "then": [
             {
+              "id": "sbis_validation_failure_message",
+              "action": "compute",
+              "title": "Собрать описания ошибок отчётности для 1С",
+              "description": "Включает ведомство, исходное имя XML и сохранённый текст проверки каждого отчёта с ошибками. Индивидуальный error_message остаётся в своём плоском Rezult_N.",
+              "params": {
+                "expression": "'СБИС обнаружил ошибки отчётности:\\n'+context.reports.filter(r=>r.state==='validation_failed').map(r=>r.authority+', '+r.filename+':\\n'+(r.validation_error_text||'Описание не получено; смотрите протокол')).join('\\n\\n')"
+              },
+              "save_as": "validation_failure_message",
+              "private": true
+            },
+            {
               "action": "fail",
               "title": "Вернуть ошибки проверки без отправки",
               "description": "Вернуть ошибки проверки без отправки",
               "params": {
                 "error_code": "VALIDATION_ERROR",
-                "message": "СБИС обнаружил ошибки отчётности"
+                "message": "{{validation_failure_message}}"
               },
               "id": "sbis_run_reports_then_27_then_1"
             }
