@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { readdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -91,8 +92,14 @@ for (const scenario of ['send_multiple_tabs', 'send_multiple_tab_mismatch', 'wor
       const wait = script.steps.find(s => s.id === 'sbis_run_reports').then.find(s => s.save_as === 'auth_choice_ready');
       wait.params.timeout_ms = 250;
     }
-    const events = [];
-    const opts = { onEvent: event => events.push(event), script, context: { mode: scenario==='upload_bundle_only' ? 'upload_only' : scenario === 'preflight_three' ? 'preflight' : ['send_multiple_tabs', 'send_multiple_tab_mismatch', 'send_missing_prefixes', 'send', 'send_accepted', 'unknown_send', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed','license_debt_late_price','license_debt_contradiction','send_three_partial'].includes(scenario) ? 'send' : 'validate_only',
+    const events = []; let closedReportTabs = 0;
+    const opts = { onEvent: event => {
+      events.push(event);
+      if(scenario==='send_multiple_tabs'&&event.type==='step_started'&&event.step_id==='sbis_report_tab_close_action'){
+        closedReportTabs++;
+        assert.equal(readdirSync(loaded).filter(name=>name.endsWith('.xml')).length,closedReportTabs,'The report must be archived before its tab is closed');
+      }
+    }, script, context: { mode: scenario==='upload_bundle_only' ? 'upload_only' : scenario === 'preflight_three' ? 'preflight' : ['send_multiple_tabs', 'send_multiple_tab_mismatch', 'send_missing_prefixes', 'send', 'send_accepted', 'unknown_send', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed','license_debt_late_price','license_debt_contradiction','send_three_partial'].includes(scenario) ? 'send' : 'validate_only',
       submit_enabled: ['send_multiple_tabs', 'send_multiple_tab_mismatch', 'send_missing_prefixes', 'send', 'send_accepted', 'unknown_send', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed','license_debt_late_price','license_debt_contradiction','send_three_partial'].includes(scenario), inn, certificate_inn: inn, certificate_selection_required: true,
       // The fixture picker already displays incoming, including on Windows drive C.
       upload_directory_steps: [{ type: 'waitForExpression', expression: 'true' }],

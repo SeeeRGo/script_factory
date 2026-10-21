@@ -1,7 +1,7 @@
 {
   "format": "json-workflow",
   "title": "СБИС: ФНС, СФР и Росстат из JSON",
-  "version": "3.3.0",
+  "version": "3.3.1",
   "default_step_timeout_ms": 60000,
   "context": {
     "mode": "validate_only",
@@ -2397,29 +2397,6 @@
                           "private": true,
                           "timeout_ms": "{{control_timeout_ms}}",
                           "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_21"
-                        },
-                        {
-                          "id": "sbis_report_tab_close",
-                          "action": "if",
-                          "title": "Закрыть вкладку после подтверждённой отправки и архивирования",
-                          "description": "Закрыть вкладку после подтверждённой отправки и архивирования",
-                          "params": {
-                            "condition": "{{keep_report_tabs}}"
-                          },
-                          "then": [
-                            {
-                              "id": "sbis_report_tab_close_action",
-                              "action": "browser_tab",
-                              "title": "Закрыть вкладку после подтверждённой отправки и архивирования",
-                              "description": "Именованная вкладка связана с полным путём XML. Выбор отсутствующей или закрытой вкладки завершается ошибкой без отправки.",
-                              "params": {
-                                "operation": "close",
-                                "name": "{{report.path}}"
-                              },
-                              "private": true
-                            }
-                          ],
-                          "private": true
                         }
                       ],
                       "index_as": "report_index",
@@ -2543,6 +2520,29 @@
                               "private": true,
                               "timeout_ms": "{{control_timeout_ms}}",
                               "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_6"
+                            },
+                            {
+                              "id": "sbis_report_tab_close",
+                              "action": "if",
+                              "title": "Закрыть вкладку после подтверждённой отправки и архивирования",
+                              "description": "Закрыть вкладку после подтверждённой отправки и архивирования",
+                              "params": {
+                                "condition": "{{keep_report_tabs}}"
+                              },
+                              "then": [
+                                {
+                                  "id": "sbis_report_tab_close_action",
+                                  "action": "browser_tab",
+                                  "title": "Закрыть вкладку после подтверждённой отправки и архивирования",
+                                  "description": "Именованная вкладка связана с полным путём XML. Выбор отсутствующей или закрытой вкладки завершается ошибкой без отправки.",
+                                  "params": {
+                                    "operation": "close",
+                                    "name": "{{report.path}}"
+                                  },
+                                  "private": true
+                                }
+                              ],
+                              "private": true
                             }
                           ],
                           "private": true,
