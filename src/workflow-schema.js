@@ -1,5 +1,5 @@
 export const WORKFLOW_ACTIONS = Object.freeze([
-  'set', 'compute', 'assert', 'fail', 'if', 'for_each', 'call', 'wait',
+  'try', 'set', 'compute', 'assert', 'fail', 'if', 'for_each', 'call', 'wait',
   'system_ip_check', 'files_list', 'file_verify', 'file_archive', 'file_copy',
   'file_read', 'artifact_write', 'browser_launch', 'browser_tab', 'browser_steps', 'browser_eval', 'browser_wait', 'browser_screenshot'
 ]);
@@ -24,6 +24,12 @@ export function validateWorkflow(script) {
       if (step.params != null && (typeof step.params !== 'object' || Array.isArray(step.params))) add(`${at}.params`, 'params должен быть объектом');
       if (step.save_as !== undefined && !identifier(step.save_as)) add(`${at}.save_as`, 'save_as должен быть безопасным именем переменной');
       if (step.timeout_ms !== undefined && !timeoutTemplate(step.timeout_ms) && (!Number.isInteger(step.timeout_ms) || step.timeout_ms < 1)) add(`${at}.timeout_ms`, 'Требуется положительный тайм-аут');
+      if (step.action === 'try') {
+        if (!identifier(step.error_as)) add(`${at}.error_as`, 'Укажите имя переменной ошибки');
+        if (!Array.isArray(step.error_codes) || !step.error_codes.length || step.error_codes.some(c => typeof c !== 'string' || !c.trim())) add(`${at}.error_codes`, 'Укажите явный список кодов перехватываемых ошибок');
+        visit(step.steps, `${at}.steps`, depth + 1);
+        visit(step.catch, `${at}.catch`, depth + 1);
+      }
       if (step.action === 'for_each') {
         if (!identifier(step.as)) add(`${at}.as`, 'Укажите имя переменной цикла');
         if (step.index_as !== undefined && !identifier(step.index_as)) add(`${at}.index_as`, 'Неверное имя индекса');

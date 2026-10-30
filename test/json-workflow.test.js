@@ -266,3 +266,16 @@ test('step titles preserve custom error codes and causes; untitled failures do n
     });
   }
 });
+
+test('try catches only listed errors and continues with scoped error metadata', async t => {
+  const script={format:'json-workflow',steps:[{action:'try',error_as:'local_error',error_codes:['LOCAL'],steps:[{action:'fail',title:'Origin',params:{error_code:'LOCAL',message:'reason'}}],catch:[{action:'set',params:{caught:'{{local_error.code}}'}}]},{action:'set',params:{continued:true}}],output:{caught:'{{caught}}',continued:'{{continued}}'}};
+  const r=await executeJsonWorkflow({...await options(t,script)});assert.equal(r.context.caught,'LOCAL');assert.equal(r.context.continued,true);
+  script.steps[0].error_codes=['OTHER'];await assert.rejects(executeJsonWorkflow({...await options(t,script)}),{code:'LOCAL'});
+});
+
+test('try cannot swallow cancellation or timeouts, and catch failures propagate', async t => {
+  const script={format:'json-workflow',steps:[{action:'try',error_as:'err',error_codes:['TIMEOUT_ERROR'],steps:[{action:'wait',params:{duration_ms:1000},timeout_ms:10}],catch:[{action:'set',params:{swallowed:true}}]}]};
+  await assert.rejects(executeJsonWorkflow({...await options(t,script)}),e=>{assert.equal(e.code,'TIMEOUT_ERROR');assert.equal(e.partial_context.swallowed,undefined);return true;});
+  script.steps[0].error_codes=['LOCAL'];script.steps[0].steps=[{action:'fail',params:{error_code:'LOCAL',message:'local'}}];script.steps[0].catch=[{action:'fail',params:{error_code:'CATCH_FAILED',message:'handler failed'}}];
+  await assert.rejects(executeJsonWorkflow({...await options(t,script)}),{code:'CATCH_FAILED'});
+});

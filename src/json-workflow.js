@@ -103,6 +103,15 @@ export async function executeJsonWorkflow(options) {
         }
         return null;
       }
+      case 'try': {
+        try { await run(step.steps, activeSignal, depth + 1, `${sourcePath}.steps`); }
+        catch (error) {
+          if (activeSignal?.aborted || ['CANCELLED','TIMEOUT_ERROR'].includes(error.code) || !step.error_codes.includes(error.code)) throw error;
+          await scoped({[step.error_as]: {code:error.code,message:error.message,step_id:error.step_id,source_path:error.source_path}},
+            () => run(step.catch, activeSignal, depth + 1, `${sourcePath}.catch`));
+        }
+        return null;
+      }
       case 'call': return scoped(params, () => run(script.routines[step.routine], activeSignal, depth + 1, `routines.${step.routine}`));
       case 'system_ip_check': return (options.checkIp || checkExternalIp)();
       case 'file_read': return readWorkflowFile(params.file, allowedRoots, params);
@@ -220,7 +229,7 @@ export async function executeJsonWorkflow(options) {
       const abort = () => controller.abort(parentSignal.reason);
       parentSignal?.addEventListener('abort', abort, { once: true });
       if (parentSignal?.aborted) abort();
-      const control = ['if', 'for_each', 'call'].includes(step.action);
+      const control = ['try', 'if', 'for_each', 'call'].includes(step.action);
       const timeout = step.timeout_ms === undefined ? (control ? null : script.default_step_timeout_ms || 60000) : resolveTemplates(step.timeout_ms, context);
       const timer = Number.isInteger(timeout) && timeout > 0 ? setTimeout(() => controller.abort(new InterpreterError('TIMEOUT_ERROR', 'Шаг превысил тайм-аут', { statusCode: 408 })), timeout) : null;
       const abortBrowser = () => close();

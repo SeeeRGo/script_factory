@@ -1,7 +1,7 @@
 {
   "format": "json-workflow",
   "title": "СБИС: ФНС, СФР и Росстат из JSON",
-  "version": "3.5.0",
+  "version": "3.6.0",
   "default_step_timeout_ms": 60000,
   "context": {
     "mode": "validate_only",
@@ -745,7 +745,7 @@
         "title": "Сформировать плоские результаты каждого отчета",
         "description": "Один плоский Rezult_N на отчет, включая комплект: file_count, file_name_1..N и sha256_1..N. Коллекций в результате нет.",
         "params": {
-          "expression": "(() => {\n const names={FNS:'ФНС',SFR:'СФР',ROSSTAT:'Росстат'},out={};\n for(const [index,r] of (context.reports||[]).entries()) {\n  const active=r.path===context.active_report_path;\n  const error=context.error||null;\n  const affected=!!error&&error.code!=='VALIDATION_ERROR'&&(active||context.active_report_path==null);\n  const quote=r.license_quote||(active?context.license_quote:null)||null;\n  let state;\n  if(['sent','archived'].includes(r.state))state='sent';\n  else if(r.state==='submission_unknown')state='requires_reconciliation';\n  else if(r.state==='validation_failed')state='validation_failed';\n  else if(affected&&error.code!=='VALIDATION_ERROR')state=active?(context.result_state||'failed'):'not_processed';\n  else if(context.mode==='preflight'&&!error)state='preflight_completed';\n  else state=r.state==='validated'?'validated_not_sent':r.state==='uploaded'?'uploaded_not_sent':'not_processed';\n  out['Rezult_'+(index+1)]={state,report_state:r.state,inn:context.inn,authority:r.authority,\n   section_name:r.load_datetime?(names[r.authority]||r.authority):null,mode:context.mode,\n   file_name:r.filename,sha256:r.sha256,load_datetime:r.load_datetime||null,\n   validation_result:r.validation_result||null,file_selection_verified:!!r.file_selection_verified,\n   report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,\n   sbis_status:r.sbis_status||null,archived_path:r.archived_path||null,\n   error_path:r.error_path||null,error_protocol_path:r.error_protocol_path||null,\n   error_code:affected?error.code:r.state==='validation_failed'?'VALIDATION_ERROR':null,\n   error_message:affected?(r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности')+'\\nОшибка сохранения отчёта: '+error.message:error.message):r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности'):null,\n   license_requires_confirmation:quote?.requires_confirmation??null,\n   license_amount:quote?.amount??null,license_currency:quote?.currency??null,\n   license_continuation:quote?.continuation??null,file_count:(r.files||[r]).length,bundle_verified:!!r.bundle_verified};\n  for(const [i,file] of (r.files||[r]).entries()){out['Rezult_'+(index+1)]['file_name_'+(i+1)]=file.filename;out['Rezult_'+(index+1)]['sha256_'+(i+1)]=file.sha256;out['Rezult_'+(index+1)]['error_path_'+(i+1)]=r.error_paths?.[file.path]||null;}\n }\n return out;\n})()"
+          "expression": "(() => {\n const names={FNS:'ФНС',SFR:'СФР',ROSSTAT:'Росстат'},out={};\n for(const [index,r] of (context.reports||[]).entries()) {\n  const active=r.path===context.active_report_path;\n  const error=context.error?.code==='REPORTS_FAILED'?null:(context.error||null);\n  const affected=!!error&&error.code!=='VALIDATION_ERROR'&&(active||context.active_report_path==null);\n  const quote=r.license_quote||(active?context.license_quote:null)||null;\n  let state;\n  if(['sent','archived'].includes(r.state))state='sent';\n  else if(r.state==='submission_unknown')state='requires_reconciliation';\n  else if(r.state==='validation_failed')state='validation_failed';\n  else if(r.processing_error)state=['REPORTING_LICENSE_REQUIRED','REPORTING_LICENSE_CONFIRMATION_REQUIRED','LICENSE_PRICE_CHANGED'].includes(r.processing_error.code)?(r.processing_error.code==='REPORTING_LICENSE_REQUIRED'?'license_required':'license_confirmation_required'):'failed';\n  else if(affected&&error.code!=='VALIDATION_ERROR')state=active?(context.result_state||'failed'):'not_processed';\n  else if(context.mode==='preflight'&&!error)state='preflight_completed';\n  else state=r.state==='validated'?'validated_not_sent':r.state==='uploaded'?'uploaded_not_sent':'not_processed';\n  out['Rezult_'+(index+1)]={state,report_state:r.state,inn:context.inn,authority:r.authority,\n   section_name:r.load_datetime?(names[r.authority]||r.authority):null,mode:context.mode,\n   file_name:r.filename,sha256:r.sha256,load_datetime:r.load_datetime||null,\n   validation_result:r.validation_result||null,file_selection_verified:!!r.file_selection_verified,\n   report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,\n   sbis_status:r.sbis_status||null,archived_path:r.archived_path||null,\n   error_path:r.error_path||null,error_protocol_path:r.error_protocol_path||null,\n   error_code:r.processing_error?r.processing_error.code:affected?error.code:r.state==='validation_failed'?'VALIDATION_ERROR':null,\n   error_message:r.processing_error?r.processing_error.message:affected?(r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности')+'\\nОшибка сохранения отчёта: '+error.message:error.message):r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности'):null,\n   license_requires_confirmation:quote?.requires_confirmation??null,\n   license_amount:quote?.amount??null,license_currency:quote?.currency??null,\n   license_continuation:quote?.continuation??null,file_count:(r.files||[r]).length,bundle_verified:!!r.bundle_verified};\n  for(const [i,file] of (r.files||[r]).entries()){out['Rezult_'+(index+1)]['file_name_'+(i+1)]=file.filename;out['Rezult_'+(index+1)]['sha256_'+(i+1)]=file.sha256;out['Rezult_'+(index+1)]['error_path_'+(i+1)]=r.error_paths?.[file.path]||null;}\n }\n return out;\n})()"
         },
         "save_as": "report_results",
         "private": true,
@@ -955,6 +955,163 @@
           }
         ],
         "as": "error_file"
+      }
+    ],
+    "record_report_failure": [
+      {
+        "id": "sbis_check_recoverable",
+        "action": "compute",
+        "params": {
+          "expression": "context.report_error.code!=='WORKFLOW_ERROR'||context.report.state==='submission_unknown'"
+        },
+        "save_as": "recoverable_report_error",
+        "private": true,
+        "title": "Проверить возможность продолжения после ошибки",
+        "description": "Проверить возможность продолжения после ошибки"
+      },
+      {
+        "id": "sbis_rethrow_fatal",
+        "action": "if",
+        "params": {
+          "condition": "{{recoverable_report_error}}"
+        },
+        "then": [],
+        "else": [
+          {
+            "action": "fail",
+            "params": {
+              "error_code": "{{report_error.code}}",
+              "message": "{{report_error.message}}"
+            },
+            "title": "Вернуть ошибку, запрещающую продолжение",
+            "description": "Вернуть ошибку, запрещающую продолжение"
+          }
+        ],
+        "title": "Остановить задание при общей технической ошибке",
+        "description": "Остановить задание при общей технической ошибке"
+      },
+      {
+        "id": "sbis_local_error_record",
+        "action": "compute",
+        "title": "Зафиксировать ошибку отдельного отчёта",
+        "params": {
+          "expression": "({...context.report,state:['sent','archived','submission_unknown','validated','uploaded'].includes(context.report.state)?context.report.state:context.report.state==='validation_failed'?'validation_failed':'failed',processing_error:context.report_error})"
+        },
+        "private": true,
+        "save_as": "report",
+        "description": "Зафиксировать ошибку отдельного отчёта"
+      },
+      {
+        "id": "sbis_local_error_store",
+        "action": "call",
+        "title": "Сохранить результат ошибочного отчёта",
+        "params": {},
+        "private": true,
+        "routine": "store_report",
+        "timeout_ms": "{{control_timeout_ms}}",
+        "description": "Сохранить результат ошибочного отчёта"
+      },
+      {
+        "id": "sbis_duplicate_detected",
+        "action": "compute",
+        "title": "Определить повторную загрузку",
+        "params": {
+          "expression": "context.report_error.code==='REPORT_ALREADY_IMPORTED'"
+        },
+        "private": true,
+        "save_as": "duplicate_detected",
+        "description": "Определить повторную загрузку"
+      },
+      {
+        "id": "sbis_duplicate_archive",
+        "action": "if",
+        "title": "Перенести ранее загруженный комплект",
+        "params": {
+          "condition": "{{duplicate_detected}}"
+        },
+        "private": true,
+        "then": [
+          {
+            "id": "sbis_duplicate_protocol",
+            "action": "artifact_write",
+            "title": "Сохранить описание повторной загрузки",
+            "params": {
+              "filename": "duplicate-{{plan.authority}}-{{report_index}}-{{job_id}}.txt",
+              "text": "{{report_error.message}}",
+              "mime_type": "text/plain"
+            },
+            "private": true,
+            "save_as": "duplicate_protocol",
+            "description": "Сохранить описание повторной загрузки"
+          },
+          {
+            "id": "sbis_duplicate_protocol_record",
+            "action": "compute",
+            "title": "Связать отчёт с протоколом повторной загрузки",
+            "params": {
+              "expression": "({...context.report,protocol:context.duplicate_protocol})"
+            },
+            "private": true,
+            "save_as": "report",
+            "description": "Связать отчёт с протоколом повторной загрузки"
+          },
+          {
+            "id": "sbis_duplicate_store",
+            "action": "call",
+            "title": "Сохранить причину повторной загрузки",
+            "params": {},
+            "private": true,
+            "routine": "store_report",
+            "timeout_ms": "{{control_timeout_ms}}",
+            "description": "Сохранить причину повторной загрузки"
+          },
+          {
+            "id": "sbis_duplicate_move_guard",
+            "action": "try",
+            "title": "Сохранить ошибку переноса дубля и продолжить",
+            "error_as": "archive_error",
+            "error_codes": [
+              "ERROR_ARCHIVE_CONFLICT",
+              "ARCHIVE_CONFLICT",
+              "EEXIST",
+              "EACCES",
+              "EPERM",
+              "SOURCE_CHANGED"
+            ],
+            "steps": [
+              {
+                "id": "sbis_duplicate_move",
+                "action": "call",
+                "title": "Перенести комплект ранее загруженного отчёта",
+                "params": {},
+                "private": true,
+                "routine": "archive_validation_failure",
+                "timeout_ms": "{{control_timeout_ms}}",
+                "description": "Перенести комплект ранее загруженного отчёта"
+              }
+            ],
+            "catch": [
+              {
+                "action": "compute",
+                "params": {
+                  "expression": "({...context.report,processing_error:{...context.report_error,message:context.report_error.message+'\\nОшибка переноса: '+context.archive_error.message}})"
+                },
+                "save_as": "report",
+                "private": true,
+                "title": "Сохранить сведения об ошибке переноса",
+                "description": "Сохранить сведения об ошибке переноса"
+              },
+              {
+                "action": "call",
+                "routine": "store_report",
+                "title": "Сохранить результат отчёта",
+                "description": "Сохранить результат отчёта"
+              }
+            ],
+            "description": "Сохранить ошибку переноса дубля и продолжить"
+          }
+        ],
+        "description": "Перенести ранее загруженный комплект"
       }
     ]
   },
@@ -1183,27 +1340,8 @@
               },
               "save_as": "archive_existing",
               "private": true,
-              "id": "sbis_run_reports_then_7_then_1"
-            },
-            {
-              "action": "compute",
-              "title": "Проверить отсутствие конфликтующих архивных XML",
-              "params": {
-                "expression": "!context.reports.some(r=>(r.files||[r]).some(f=>context.archive_existing.some(a=>a.filename.toLowerCase()===f.filename.toLowerCase())))"
-              },
-              "save_as": "archive_clear",
-              "private": true,
-              "id": "sbis_run_reports_then_7_then_2"
-            },
-            {
-              "action": "assert",
-              "title": "Запретить отправку при конфликте архива",
-              "params": {
-                "condition": "{{archive_clear}}",
-                "error_code": "ARCHIVE_CONFLICT",
-                "message": "XML с таким именем уже находится в архиве"
-              },
-              "id": "sbis_run_reports_then_7_then_3"
+              "id": "sbis_run_reports_then_7_then_1",
+              "description": "Проверить доступность каталога архива"
             }
           ],
           "timeout_ms": "{{control_timeout_ms}}",
@@ -1771,329 +1909,368 @@
                   "as": "report",
                   "steps": [
                     {
-                      "action": "set",
-                      "title": "Отметить текущий отчет для отдельного результата",
-                      "description": "Привязывает ошибку и финансовые условия только к текущему XML.",
-                      "params": {
-                        "active_report_path": "{{report.path}}",
-                        "license_quote": "{{report.license_quote}}"
-                      },
+                      "id": "sbis_run_reports_then_23_steps_14_then_2_isolated",
+                      "action": "try",
+                      "title": "Обработать отдельный отчёт и сохранить его ошибку",
+                      "params": {},
                       "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_1"
-                    },
-                    {
-                      "action": "set",
-                      "title": "Обновить переменные сценария",
-                      "description": "Обновить переменные сценария",
-                      "params": {
-                        "file_name": "{{report.filename}}",
-                        "file_path": "{{report.path}}"
-                      },
-                      "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_2"
-                    },
-                    {
-                      "id": "sbis_report_tab_open",
-                      "action": "if",
-                      "title": "Открыть отдельную вкладку для текущего отчёта",
-                      "description": "Открыть отдельную вкладку для текущего отчёта",
-                      "params": {
-                        "condition": "{{keep_report_tabs}}"
-                      },
-                      "then": [
-                        {
-                          "id": "sbis_report_tab_open_action",
-                          "action": "browser_tab",
-                          "title": "Открыть отдельную вкладку для текущего отчёта",
-                          "description": "Именованная вкладка связана с полным путём XML. Выбор отсутствующей или закрытой вкладки завершается ошибкой без отправки.",
-                          "params": {
-                            "operation": "open",
-                            "name": "{{report.path}}"
-                          },
-                          "private": true
-                        }
-                      ],
-                      "private": true
-                    },
-                    {
-                      "action": "call",
-                      "title": "Открыть раздел перед каждым самостоятельным XML",
-                      "description": "Открыть раздел перед каждым самостоятельным XML",
-                      "params": {
-                        "flow_steps": [
-                          {
-                            "type": "navigate",
-                            "url": "{{authority_url}}"
-                          }
-                        ]
-                      },
-                      "routine": "browser",
-                      "private": true,
-                      "timeout_ms": "{{control_timeout_ms}}",
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_3"
-                    },
-                    {
-                      "action": "call",
-                      "title": "Дождаться раздела перед импортом",
-                      "description": "Дождаться раздела перед импортом",
-                      "params": {
-                        "flow_steps": "{{ui.authority_steps}}"
-                      },
-                      "routine": "browser",
-                      "private": true,
-                      "timeout_ms": "{{control_timeout_ms}}",
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_4"
-                    },
-                    {
-                      "action": "browser_wait",
-                      "title": "Подтвердить адрес выбранного ведомства",
-                      "description": "Сравнивает origin и pathname с authority_url; не допускает перенаправления в другой раздел перед импортом.",
-                      "params": {
-                        "expression": "location.origin === new URL(context.authority_url).origin && location.pathname === new URL(context.authority_url).pathname",
-                        "timeout_ms": 30000,
-                        "error_code": "AUTHORITY_NOT_VERIFIED",
-                        "message": "Не подтверждён адрес выбранного ведомства"
-                      },
-                      "save_as": "reports_section_verified",
-                      "timeout_ms": 35000,
-                      "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_5"
-                    },
-                    {
-                      "action": "browser_eval",
-                      "title": "Проверить отсутствие открытой карточки",
-                      "description": "Проверить отсутствие открытой карточки",
-                      "params": {
-                        "expression": "![...document.querySelectorAll(context.ui.report_scope_selector)].some(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')"
-                      },
-                      "save_as": "no_open_card",
-                      "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_6"
-                    },
-                    {
-                      "action": "assert",
-                      "title": "Перед импортом не должно быть открытой карточки",
-                      "description": "Перед импортом не должно быть открытой карточки",
-                      "params": {
-                        "condition": "{{no_open_card}}",
-                        "error_code": "REPORT_IDENTITY_MISMATCH",
-                        "message": "Перед импортом не должно быть открытой карточки"
-                      },
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_7"
-                    },
-                    {
-                      "action": "for_each",
-                      "title": "Проверить неизменность всех XML отчета",
-                      "description": "Сверяет SHA-256 основной декларации и всех связанных частей.",
-                      "params": {
-                        "items": "{{report.files}}"
-                      },
-                      "private": true,
-                      "as": "bundle_file",
                       "steps": [
                         {
-                          "action": "file_verify",
-                          "title": "Сверить контрольную сумму части",
-                          "description": "Сверить контрольную сумму части",
+                          "action": "set",
+                          "title": "Отметить текущий отчет для отдельного результата",
+                          "description": "Привязывает ошибку и финансовые условия только к текущему XML.",
                           "params": {
-                            "file": "{{bundle_file}}"
+                            "active_report_path": "{{report.path}}",
+                            "license_quote": "{{report.license_quote}}"
                           },
                           "private": true,
-                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_8_steps_1"
-                        }
-                      ],
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_8"
-                    },
-                    {
-                      "action": "compute",
-                      "title": "Подготовить шаги открытия файлового диалога",
-                      "description": "Подготовить шаги открытия файлового диалога",
-                      "params": {
-                        "expression": "context.ui.upload_steps.slice(0,-2)"
-                      },
-                      "save_as": "picker_steps",
-                      "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_9"
-                    },
-                    {
-                      "action": "call",
-                      "title": "Открыть папку загрузки",
-                      "description": "Открыть папку загрузки",
-                      "params": {
-                        "flow_steps": "{{picker_steps}}"
-                      },
-                      "routine": "browser",
-                      "private": true,
-                      "timeout_ms": "{{control_timeout_ms}}",
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_10"
-                    },
-                    {
-                      "action": "compute",
-                      "title": "Подготовить переход по root_dir или явным шагам каталога",
-                      "description": "Для локального диска C строит Recorder-шаги из root_dir. Явный upload_directory_steps имеет приоритет; другой диск требует такого переопределения. Перед выбором XML отдельно проверяются имя и полный путь.",
-                      "params": {
-                        "expression": "(()=>{if(Array.isArray(context.upload_directory_steps)&&context.upload_directory_steps.length)return context.upload_directory_steps;const root=String(context.root_dir||'').replaceAll(String.fromCharCode(92),'/');if(!/^[a-z]:\\//i.test(root))return [];if(!/^c:\\//i.test(root))throw Object.assign(new Error('Для другого диска настройте upload_directory_steps'),{code:'UI_BINDING_REQUIRED'});const folders=root.split('/').slice(1).filter(Boolean);return [{type:'waitForElement',selectors:[['text/Локальный диск (C:)']],visible:true,description:'Ожидает загрузку дерева дисков Saby Plugin.'},{type:'click',selectors:[['text/Локальный диск (C:)']],offsetX:65,offsetY:10,description:'Открывает диск C в файловом диалоге перед переходом по root_dir.'},...folders.flatMap(name=>{const selector='.FileBrowserComponent__Browser__columnName:has([data-minicard-name='+JSON.stringify(name)+']) .FileBrowserComponent__Browser__columnNameRow';return [{type:'waitForElement',selectors:[[selector]],visible:true,count:1,operator:'==',description:'Ожидает единственную строку подкаталога из root_dir.'},{type:'doubleClick',selectors:[[selector]],offsetX:45,offsetY:10,description:'Открывает следующий подкаталог из root_dir по точному имени.'}]})]})()"
-                      },
-                      "save_as": "directory_navigation_steps",
-                      "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_11"
-                    },
-                    {
-                      "action": "call",
-                      "title": "Перейти в заданный подкаталог файлового диалога",
-                      "description": "Перейти в заданный подкаталог файлового диалога",
-                      "params": {
-                        "flow_steps": "{{directory_navigation_steps}}"
-                      },
-                      "routine": "browser",
-                      "private": true,
-                      "timeout_ms": "{{control_timeout_ms}}",
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_12"
-                    },
-                    {
-                      "action": "compute",
-                      "title": "Подготовить ожидание строки XML",
-                      "description": "Подготовить ожидание строки XML",
-                      "params": {
-                        "expression": "context.ui.upload_steps.slice(-2,-1)"
-                      },
-                      "save_as": "file_row_wait_steps",
-                      "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_13"
-                    },
-                    {
-                      "action": "call",
-                      "title": "Дождаться выбранного XML в текущей папке",
-                      "description": "Дождаться выбранного XML в текущей папке",
-                      "params": {
-                        "flow_steps": "{{file_row_wait_steps}}"
-                      },
-                      "routine": "browser",
-                      "private": true,
-                      "timeout_ms": "{{control_timeout_ms}}",
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_14"
-                    },
-                    {
-                      "action": "browser_eval",
-                      "title": "Сверить единственный XML по имени и полному пути",
-                      "description": "Сверить единственный XML по имени и полному пути",
-                      "params": {
-                        "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';\n const all=[...document.querySelectorAll('[data-minicard-name]')].filter(visible);\n const normalize=value=>{let r=String(value||'').replace(/\\\\/g,'/');if(r.startsWith('file:///')){try{r=decodeURIComponent(r.slice(7));}catch{return null;}}if(/^\\/[a-z]:\\//i.test(r))r=r.slice(1);return /^[a-z]:\\//i.test(r)?r.toLowerCase():r;};\n for(const file of context.report.files){const rows=all.filter(e=>e.getAttribute('data-minicard-name')===file.filename);if(rows.length!==1||!rows[0].getAttribute('data-minicard-path')||normalize(rows[0].getAttribute('data-minicard-path'))!==normalize(file.path))throw Object.assign(new Error('Не подтверждены имя и полный путь части комплекта'),{code:'FILE_SELECTION_MISMATCH'});}\n return true;\n})()"
-                      },
-                      "save_as": "file_verified",
-                      "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_15"
-                    },
-                    {
-                      "action": "compute",
-                      "title": "Зафиксировать подтверждение файла",
-                      "description": "Зафиксировать подтверждение файла",
-                      "params": {
-                        "expression": "({...context.report,file_selection_verified:context.file_verified})"
-                      },
-                      "save_as": "report",
-                      "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_16"
-                    },
-                    {
-                      "action": "call",
-                      "title": "store_report",
-                      "description": "store_report",
-                      "params": {},
-                      "routine": "store_report",
-                      "private": true,
-                      "timeout_ms": "{{control_timeout_ms}}",
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_17"
-                    },
-                    {
-                      "action": "compute",
-                      "title": "Подготовить однократный выбор XML",
-                      "description": "Подготовить однократный выбор XML",
-                      "params": {
-                        "expression": "(()=>{\n if(context.report.files.length===1)return context.ui.upload_steps.slice(-1);\n if(Array.isArray(context.ui.upload_bundle_steps)&&context.ui.upload_bundle_steps.length)return context.ui.upload_bundle_steps;\n const files=context.report.files,selected=context.ui.bundle_selected_row_selector,checkbox=context.ui.bundle_checkbox_selector,button=context.ui.bundle_import_selector;\n if(!selected||!checkbox||!button)throw Object.assign(new Error('Не настроен импорт комплекта'),{code:'UI_BINDING_REQUIRED'});\n const expected=JSON.stringify(files.map(f=>({name:f.filename,path:f.path.replaceAll(String.fromCharCode(92),'/').toLowerCase()})));\n const verify=`(()=>{const expected=${expected};const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const nodes=[...document.querySelectorAll(${JSON.stringify(selected+' [data-minicard-name]')})].filter(visible);const normalize=x=>String(x||'').replaceAll(String.fromCharCode(92),'/').toLowerCase();return nodes.length===expected.length&&expected.every(f=>nodes.filter(e=>e.getAttribute('data-minicard-name')===f.name&&normalize(e.getAttribute('data-minicard-path'))===f.path).length===1)})()`;\n return [...files.flatMap(f=>{const selector='tr:has([data-minicard-name='+JSON.stringify(f.filename)+']) '+checkbox;return [{type:'waitForElement',selectors:[['tr:has([data-minicard-name='+JSON.stringify(f.filename)+'])']],visible:true,count:1,operator:'==',description:'Ожидает чекбокс точной части комплекта.'},{type:'click',selectors:[[selector]],offsetX:7,offsetY:7,description:'Отмечает одну проверенную часть комплекта без импорта.'}]}),{type:'waitForExpression',expression:verify,description:'Проверяет точный набор отмеченных имён и полных путей без лишних файлов.'},{type:'waitForElement',selectors:[[button]],visible:true,count:1,operator:'==',description:'Ожидает единственную кнопку импорта файлового диалога.'},{type:'click',selectors:[[button]],offsetX:25,offsetY:10,description:'Однократно загружает отмеченный комплект; не подписывает и не отправляет.'}];\n})()"
-                      },
-                      "save_as": "select_file_steps",
-                      "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_18"
-                    },
-                    {
-                      "action": "call",
-                      "title": "Импортировать выбранный XML один раз",
-                      "description": "Импортировать выбранный XML один раз",
-                      "params": {
-                        "flow_steps": "{{select_file_steps}}"
-                      },
-                      "routine": "browser",
-                      "private": true,
-                      "timeout_ms": "{{control_timeout_ms}}",
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_19"
-                    },
-                    {
-                      "action": "call",
-                      "title": "Подтвердить новую карточку по ИНН и ключу",
-                      "description": "Подтвердить новую карточку по ИНН и ключу",
-                      "params": {
-                        "capture_key": true
-                      },
-                      "routine": "identity",
-                      "private": true,
-                      "timeout_ms": "{{control_timeout_ms}}",
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_20"
-                    },
-                    {
-                      "action": "compute",
-                      "title": "Зафиксировать импорт",
-                      "description": "Зафиксировать импорт",
-                      "params": {
-                        "expression": "({...context.report,state:'uploaded',load_datetime:new Date().toISOString()})"
-                      },
-                      "save_as": "report",
-                      "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_21"
-                    },
-                    {
-                      "action": "call",
-                      "title": "store_report",
-                      "description": "store_report",
-                      "params": {},
-                      "routine": "store_report",
-                      "private": true,
-                      "timeout_ms": "{{control_timeout_ms}}",
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_22"
-                    },
-                    {
-                      "action": "compute",
-                      "title": "Определить необходимость проверки после импорта",
-                      "description": "upload_only оставляет загруженный черновик без проверки и отправки.",
-                      "params": {
-                        "expression": "context.mode!=='upload_only'"
-                      },
-                      "save_as": "validate_after_upload",
-                      "private": true,
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_23"
-                    },
-                    {
-                      "action": "if",
-                      "title": "Проверить отчет только по выбранному режиму",
-                      "description": "Не вызывает проверку в upload_only.",
-                      "params": {
-                        "condition": "{{validate_after_upload}}"
-                      },
-                      "then": [
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_1"
+                        },
+                        {
+                          "action": "set",
+                          "title": "Обновить переменные сценария",
+                          "description": "Обновить переменные сценария",
+                          "params": {
+                            "file_name": "{{report.filename}}",
+                            "file_path": "{{report.path}}"
+                          },
+                          "private": true,
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_2"
+                        },
+                        {
+                          "id": "sbis_report_tab_open",
+                          "action": "if",
+                          "title": "Открыть отдельную вкладку для текущего отчёта",
+                          "description": "Открыть отдельную вкладку для текущего отчёта",
+                          "params": {
+                            "condition": "{{keep_report_tabs}}"
+                          },
+                          "then": [
+                            {
+                              "id": "sbis_report_tab_open_action",
+                              "action": "browser_tab",
+                              "title": "Открыть отдельную вкладку для текущего отчёта",
+                              "description": "Именованная вкладка связана с полным путём XML. Выбор отсутствующей или закрытой вкладки завершается ошибкой без отправки.",
+                              "params": {
+                                "operation": "open",
+                                "name": "{{report.path}}"
+                              },
+                              "private": true
+                            }
+                          ],
+                          "private": true
+                        },
                         {
                           "action": "call",
-                          "title": "Проверить отчёт и сохранить текст результата",
-                          "description": "Проверить отчёт и сохранить текст результата",
-                          "params": {},
-                          "routine": "validate",
+                          "title": "Открыть раздел перед каждым самостоятельным XML",
+                          "description": "Открыть раздел перед каждым самостоятельным XML",
+                          "params": {
+                            "flow_steps": [
+                              {
+                                "type": "navigate",
+                                "url": "{{authority_url}}"
+                              }
+                            ]
+                          },
+                          "routine": "browser",
                           "private": true,
                           "timeout_ms": "{{control_timeout_ms}}",
-                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_24_then_1"
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_3"
+                        },
+                        {
+                          "action": "call",
+                          "title": "Дождаться раздела перед импортом",
+                          "description": "Дождаться раздела перед импортом",
+                          "params": {
+                            "flow_steps": "{{ui.authority_steps}}"
+                          },
+                          "routine": "browser",
+                          "private": true,
+                          "timeout_ms": "{{control_timeout_ms}}",
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_4"
+                        },
+                        {
+                          "action": "browser_wait",
+                          "title": "Подтвердить адрес выбранного ведомства",
+                          "description": "Сравнивает origin и pathname с authority_url; не допускает перенаправления в другой раздел перед импортом.",
+                          "params": {
+                            "expression": "location.origin === new URL(context.authority_url).origin && location.pathname === new URL(context.authority_url).pathname",
+                            "timeout_ms": 30000,
+                            "error_code": "AUTHORITY_NOT_VERIFIED",
+                            "message": "Не подтверждён адрес выбранного ведомства"
+                          },
+                          "save_as": "reports_section_verified",
+                          "timeout_ms": 35000,
+                          "private": true,
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_5"
+                        },
+                        {
+                          "action": "browser_eval",
+                          "title": "Проверить отсутствие открытой карточки",
+                          "description": "Проверить отсутствие открытой карточки",
+                          "params": {
+                            "expression": "![...document.querySelectorAll(context.ui.report_scope_selector)].some(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden')"
+                          },
+                          "save_as": "no_open_card",
+                          "private": true,
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_6"
+                        },
+                        {
+                          "action": "assert",
+                          "title": "Перед импортом не должно быть открытой карточки",
+                          "description": "Перед импортом не должно быть открытой карточки",
+                          "params": {
+                            "condition": "{{no_open_card}}",
+                            "error_code": "REPORT_IDENTITY_MISMATCH",
+                            "message": "Перед импортом не должно быть открытой карточки"
+                          },
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_7"
+                        },
+                        {
+                          "action": "for_each",
+                          "title": "Проверить неизменность всех XML отчета",
+                          "description": "Сверяет SHA-256 основной декларации и всех связанных частей.",
+                          "params": {
+                            "items": "{{report.files}}"
+                          },
+                          "private": true,
+                          "as": "bundle_file",
+                          "steps": [
+                            {
+                              "action": "file_verify",
+                              "title": "Сверить контрольную сумму части",
+                              "description": "Сверить контрольную сумму части",
+                              "params": {
+                                "file": "{{bundle_file}}"
+                              },
+                              "private": true,
+                              "id": "sbis_run_reports_then_23_steps_14_then_2_steps_8_steps_1"
+                            }
+                          ],
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_8"
+                        },
+                        {
+                          "action": "compute",
+                          "title": "Подготовить шаги открытия файлового диалога",
+                          "description": "Подготовить шаги открытия файлового диалога",
+                          "params": {
+                            "expression": "context.ui.upload_steps.slice(0,-2)"
+                          },
+                          "save_as": "picker_steps",
+                          "private": true,
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_9"
+                        },
+                        {
+                          "action": "call",
+                          "title": "Открыть папку загрузки",
+                          "description": "Открыть папку загрузки",
+                          "params": {
+                            "flow_steps": "{{picker_steps}}"
+                          },
+                          "routine": "browser",
+                          "private": true,
+                          "timeout_ms": "{{control_timeout_ms}}",
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_10"
+                        },
+                        {
+                          "action": "compute",
+                          "title": "Подготовить переход по root_dir или явным шагам каталога",
+                          "description": "Для локального диска C строит Recorder-шаги из root_dir. Явный upload_directory_steps имеет приоритет; другой диск требует такого переопределения. Перед выбором XML отдельно проверяются имя и полный путь.",
+                          "params": {
+                            "expression": "(()=>{if(Array.isArray(context.upload_directory_steps)&&context.upload_directory_steps.length)return context.upload_directory_steps;const root=String(context.root_dir||'').replaceAll(String.fromCharCode(92),'/');if(!/^[a-z]:\\//i.test(root))return [];if(!/^c:\\//i.test(root))throw Object.assign(new Error('Для другого диска настройте upload_directory_steps'),{code:'UI_BINDING_REQUIRED'});const folders=root.split('/').slice(1).filter(Boolean);return [{type:'waitForElement',selectors:[['text/Локальный диск (C:)']],visible:true,description:'Ожидает загрузку дерева дисков Saby Plugin.'},{type:'click',selectors:[['text/Локальный диск (C:)']],offsetX:65,offsetY:10,description:'Открывает диск C в файловом диалоге перед переходом по root_dir.'},...folders.flatMap(name=>{const selector='.FileBrowserComponent__Browser__columnName:has([data-minicard-name='+JSON.stringify(name)+']) .FileBrowserComponent__Browser__columnNameRow';return [{type:'waitForElement',selectors:[[selector]],visible:true,count:1,operator:'==',description:'Ожидает единственную строку подкаталога из root_dir.'},{type:'doubleClick',selectors:[[selector]],offsetX:45,offsetY:10,description:'Открывает следующий подкаталог из root_dir по точному имени.'}]})]})()"
+                          },
+                          "save_as": "directory_navigation_steps",
+                          "private": true,
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_11"
+                        },
+                        {
+                          "action": "call",
+                          "title": "Перейти в заданный подкаталог файлового диалога",
+                          "description": "Перейти в заданный подкаталог файлового диалога",
+                          "params": {
+                            "flow_steps": "{{directory_navigation_steps}}"
+                          },
+                          "routine": "browser",
+                          "private": true,
+                          "timeout_ms": "{{control_timeout_ms}}",
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_12"
+                        },
+                        {
+                          "action": "compute",
+                          "title": "Подготовить ожидание строки XML",
+                          "description": "Подготовить ожидание строки XML",
+                          "params": {
+                            "expression": "context.ui.upload_steps.slice(-2,-1)"
+                          },
+                          "save_as": "file_row_wait_steps",
+                          "private": true,
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_13"
+                        },
+                        {
+                          "action": "call",
+                          "title": "Дождаться выбранного XML в текущей папке",
+                          "description": "Дождаться выбранного XML в текущей папке",
+                          "params": {
+                            "flow_steps": "{{file_row_wait_steps}}"
+                          },
+                          "routine": "browser",
+                          "private": true,
+                          "timeout_ms": "{{control_timeout_ms}}",
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_14"
+                        },
+                        {
+                          "action": "browser_eval",
+                          "title": "Сверить единственный XML по имени и полному пути",
+                          "description": "Сверить единственный XML по имени и полному пути",
+                          "params": {
+                            "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';\n const all=[...document.querySelectorAll('[data-minicard-name]')].filter(visible);\n const normalize=value=>{let r=String(value||'').replace(/\\\\/g,'/');if(r.startsWith('file:///')){try{r=decodeURIComponent(r.slice(7));}catch{return null;}}if(/^\\/[a-z]:\\//i.test(r))r=r.slice(1);return /^[a-z]:\\//i.test(r)?r.toLowerCase():r;};\n for(const file of context.report.files){const rows=all.filter(e=>e.getAttribute('data-minicard-name')===file.filename);if(rows.length!==1||!rows[0].getAttribute('data-minicard-path')||normalize(rows[0].getAttribute('data-minicard-path'))!==normalize(file.path))throw Object.assign(new Error('Не подтверждены имя и полный путь части комплекта'),{code:'FILE_SELECTION_MISMATCH'});}\n return true;\n})()"
+                          },
+                          "save_as": "file_verified",
+                          "private": true,
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_15"
+                        },
+                        {
+                          "action": "compute",
+                          "title": "Зафиксировать подтверждение файла",
+                          "description": "Зафиксировать подтверждение файла",
+                          "params": {
+                            "expression": "({...context.report,file_selection_verified:context.file_verified})"
+                          },
+                          "save_as": "report",
+                          "private": true,
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_16"
+                        },
+                        {
+                          "action": "call",
+                          "title": "store_report",
+                          "description": "store_report",
+                          "params": {},
+                          "routine": "store_report",
+                          "private": true,
+                          "timeout_ms": "{{control_timeout_ms}}",
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_17"
+                        },
+                        {
+                          "action": "compute",
+                          "title": "Подготовить однократный выбор XML",
+                          "description": "Подготовить однократный выбор XML",
+                          "params": {
+                            "expression": "(()=>{\n if(context.report.files.length===1)return context.ui.upload_steps.slice(-1);\n if(Array.isArray(context.ui.upload_bundle_steps)&&context.ui.upload_bundle_steps.length)return context.ui.upload_bundle_steps;\n const files=context.report.files,selected=context.ui.bundle_selected_row_selector,checkbox=context.ui.bundle_checkbox_selector,button=context.ui.bundle_import_selector;\n if(!selected||!checkbox||!button)throw Object.assign(new Error('Не настроен импорт комплекта'),{code:'UI_BINDING_REQUIRED'});\n const expected=JSON.stringify(files.map(f=>({name:f.filename,path:f.path.replaceAll(String.fromCharCode(92),'/').toLowerCase()})));\n const verify=`(()=>{const expected=${expected};const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const nodes=[...document.querySelectorAll(${JSON.stringify(selected+' [data-minicard-name]')})].filter(visible);const normalize=x=>String(x||'').replaceAll(String.fromCharCode(92),'/').toLowerCase();return nodes.length===expected.length&&expected.every(f=>nodes.filter(e=>e.getAttribute('data-minicard-name')===f.name&&normalize(e.getAttribute('data-minicard-path'))===f.path).length===1)})()`;\n return [...files.flatMap(f=>{const selector='tr:has([data-minicard-name='+JSON.stringify(f.filename)+']) '+checkbox;return [{type:'waitForElement',selectors:[['tr:has([data-minicard-name='+JSON.stringify(f.filename)+'])']],visible:true,count:1,operator:'==',description:'Ожидает чекбокс точной части комплекта.'},{type:'click',selectors:[[selector]],offsetX:7,offsetY:7,description:'Отмечает одну проверенную часть комплекта без импорта.'}]}),{type:'waitForExpression',expression:verify,description:'Проверяет точный набор отмеченных имён и полных путей без лишних файлов.'},{type:'waitForElement',selectors:[[button]],visible:true,count:1,operator:'==',description:'Ожидает единственную кнопку импорта файлового диалога.'},{type:'click',selectors:[[button]],offsetX:25,offsetY:10,description:'Однократно загружает отмеченный комплект; не подписывает и не отправляет.'}];\n})()"
+                          },
+                          "save_as": "select_file_steps",
+                          "private": true,
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_18"
+                        },
+                        {
+                          "action": "call",
+                          "title": "Импортировать выбранный XML один раз",
+                          "description": "Импортировать выбранный XML один раз",
+                          "params": {
+                            "flow_steps": "{{select_file_steps}}"
+                          },
+                          "routine": "browser",
+                          "private": true,
+                          "timeout_ms": "{{control_timeout_ms}}",
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_19"
+                        },
+                        {
+                          "action": "call",
+                          "title": "Подтвердить новую карточку по ИНН и ключу",
+                          "description": "Подтвердить новую карточку по ИНН и ключу",
+                          "params": {
+                            "capture_key": true
+                          },
+                          "routine": "identity",
+                          "private": true,
+                          "timeout_ms": "{{control_timeout_ms}}",
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_20"
+                        },
+                        {
+                          "action": "compute",
+                          "title": "Зафиксировать импорт",
+                          "description": "Зафиксировать импорт",
+                          "params": {
+                            "expression": "({...context.report,state:'uploaded',load_datetime:new Date().toISOString()})"
+                          },
+                          "save_as": "report",
+                          "private": true,
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_21"
+                        },
+                        {
+                          "action": "call",
+                          "title": "store_report",
+                          "description": "store_report",
+                          "params": {},
+                          "routine": "store_report",
+                          "private": true,
+                          "timeout_ms": "{{control_timeout_ms}}",
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_22"
+                        },
+                        {
+                          "action": "compute",
+                          "title": "Определить необходимость проверки после импорта",
+                          "description": "upload_only оставляет загруженный черновик без проверки и отправки.",
+                          "params": {
+                            "expression": "context.mode!=='upload_only'"
+                          },
+                          "save_as": "validate_after_upload",
+                          "private": true,
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_23"
+                        },
+                        {
+                          "action": "if",
+                          "title": "Проверить отчет только по выбранному режиму",
+                          "description": "Не вызывает проверку в upload_only.",
+                          "params": {
+                            "condition": "{{validate_after_upload}}"
+                          },
+                          "then": [
+                            {
+                              "action": "call",
+                              "title": "Проверить отчёт и сохранить текст результата",
+                              "description": "Проверить отчёт и сохранить текст результата",
+                              "params": {},
+                              "routine": "validate",
+                              "private": true,
+                              "timeout_ms": "{{control_timeout_ms}}",
+                              "id": "sbis_run_reports_then_23_steps_14_then_2_steps_24_then_1"
+                            }
+                          ],
+                          "private": true,
+                          "timeout_ms": "{{control_timeout_ms}}",
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_steps_24"
                         }
                       ],
-                      "private": true,
-                      "timeout_ms": "{{control_timeout_ms}}",
-                      "id": "sbis_run_reports_then_23_steps_14_then_2_steps_24"
+                      "error_as": "report_error",
+                      "error_codes": [
+                        "REPORT_ALREADY_IMPORTED",
+                        "SOURCE_CHANGED",
+                        "FILE_SELECTION_MISMATCH",
+                        "REPORTING_LICENSE_REQUIRED",
+                        "REPORTING_LICENSE_CONFIRMATION_REQUIRED",
+                        "LICENSE_PRICE_CHANGED",
+                        "REQUIRES_RECONCILIATION",
+                        "ERROR_ARCHIVE_CONFLICT",
+                        "ARCHIVE_CONFLICT",
+                        "EEXIST",
+                        "EACCES",
+                        "EPERM",
+                        "VALIDATION_ERROR",
+                        "WORKFLOW_ERROR"
+                      ],
+                      "catch": [
+                        {
+                          "id": "sbis_run_reports_then_23_steps_14_then_2_failure",
+                          "action": "call",
+                          "title": "Зафиксировать ошибку и продолжить со следующим отчётом",
+                          "params": {},
+                          "private": true,
+                          "routine": "record_report_failure",
+                          "timeout_ms": "{{control_timeout_ms}}",
+                          "description": "Зафиксировать ошибку и продолжить со следующим отчётом"
+                        }
+                      ],
+                      "description": "Обработать отдельный отчёт и сохранить его ошибку"
                     }
                   ],
                   "index_as": "report_index",
@@ -2106,7 +2283,7 @@
                   "title": "Разрешить отправку только после успешной проверки всех XML",
                   "description": "Разрешить отправку только после успешной проверки всех XML",
                   "params": {
-                    "expression": "context.mode==='send'&&context.submit_enabled===true&&context.reports.filter(r=>r.authority===context.plan.authority).every(r=>r.state==='validated'&&r.protocol)"
+                    "expression": "context.mode==='send'&&context.submit_enabled===true&&context.reports.some(r=>r.authority===context.plan.authority&&r.state==='validated'&&r.protocol&&!r.processing_error)"
                   },
                   "save_as": "can_submit",
                   "private": true,
@@ -2125,7 +2302,7 @@
                       "title": "Получить проверенные отчёты",
                       "description": "Получить проверенные отчёты",
                       "params": {
-                        "expression": "context.reports.filter(r=>r.authority===context.plan.authority)"
+                        "expression": "context.reports.filter(r=>r.authority===context.plan.authority&&r.state==='validated'&&!r.processing_error)"
                       },
                       "save_as": "current_reports",
                       "private": true,
@@ -2141,338 +2318,439 @@
                       "as": "report",
                       "steps": [
                         {
-                          "action": "set",
-                          "title": "Отметить текущий отчет для отдельного результата",
-                          "description": "Привязывает ошибку и финансовые условия только к текущему XML.",
-                          "params": {
-                            "active_report_path": "{{report.path}}",
-                            "license_quote": "{{report.license_quote}}"
-                          },
-                          "private": true,
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_1"
-                        },
-                        {
-                          "action": "set",
-                          "title": "Обновить переменные сценария",
-                          "description": "Обновить переменные сценария",
-                          "params": {
-                            "file_name": "{{report.filename}}",
-                            "file_path": "{{report.path}}"
-                          },
-                          "private": true,
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_2"
-                        },
-                        {
-                          "id": "sbis_report_tab_select",
-                          "action": "if",
-                          "title": "Вернуться во вкладку проверенного отчёта",
-                          "description": "Вернуться во вкладку проверенного отчёта",
-                          "params": {
-                            "condition": "{{keep_report_tabs}}"
-                          },
-                          "then": [
-                            {
-                              "id": "sbis_report_tab_select_action",
-                              "action": "browser_tab",
-                              "title": "Вернуться во вкладку проверенного отчёта",
-                              "description": "Именованная вкладка связана с полным путём XML. Выбор отсутствующей или закрытой вкладки завершается ошибкой без отправки.",
-                              "params": {
-                                "operation": "select",
-                                "name": "{{report.path}}"
-                              },
-                              "private": true
-                            }
-                          ],
-                          "private": true
-                        },
-                        {
-                          "action": "call",
-                          "title": "Подготовить сохранённую карточку к повторной проверке",
-                          "description": "Вкладка текущего XML уже выбрана. Необязательные ui.reopen_steps выполняются в ней; далее обязательно сверяются ИНН и сохранённый ключ карточки.",
-                          "params": {
-                            "flow_steps": "{{ui.reopen_steps}}"
-                          },
-                          "routine": "browser",
-                          "private": true,
-                          "timeout_ms": "{{control_timeout_ms}}",
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_3"
-                        },
-                        {
-                          "action": "call",
-                          "title": "Повторно проверить точную карточку перед отправкой",
-                          "description": "Повторно проверить точную карточку перед отправкой",
+                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_isolated",
+                          "action": "try",
+                          "title": "Обработать отдельный отчёт и сохранить его ошибку",
                           "params": {},
-                          "routine": "validate",
                           "private": true,
-                          "timeout_ms": "{{control_timeout_ms}}",
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_4"
-                        },
-                        {
-                          "action": "compute",
-                          "title": "Проверить результат перед отправкой",
-                          "description": "Проверить результат перед отправкой",
-                          "params": {
-                            "expression": "context.report.state==='validated'"
-                          },
-                          "save_as": "valid_before_submit",
-                          "private": true,
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_5"
-                        },
-                        {
-                          "action": "assert",
-                          "title": "Проверка перед отправкой должна быть успешной",
-                          "description": "Проверка перед отправкой должна быть успешной",
-                          "params": {
-                            "condition": "{{valid_before_submit}}",
-                            "error_code": "VALIDATION_ERROR",
-                            "message": "Проверка перед отправкой должна быть успешной"
-                          },
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_6"
-                        },
-                        {
-                          "action": "set",
-                          "title": "Обновить переменные сценария",
-                          "description": "Обновить переменные сценария",
-                          "params": {
-                            "submission_started": true
-                          },
-                          "private": true,
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_7"
-                        },
-                        {
-                          "action": "compute",
-                          "title": "Отметить начало необратимой отправки",
-                          "description": "Отметить начало необратимой отправки",
-                          "params": {
-                            "expression": "({...context.report,state:'submission_unknown'})"
-                          },
-                          "save_as": "report",
-                          "private": true,
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_8"
-                        },
-                        {
-                          "action": "call",
-                          "title": "store_report",
-                          "description": "store_report",
-                          "params": {},
-                          "routine": "store_report",
-                          "private": true,
-                          "timeout_ms": "{{control_timeout_ms}}",
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_9"
-                        },
-                        {
-                          "action": "call",
-                          "title": "Подписать и отправить по явно заданным шагам",
-                          "description": "Подписать и отправить по явно заданным шагам",
-                          "params": {
-                            "flow_steps": "{{ui.submit_steps}}"
-                          },
-                          "routine": "browser",
-                          "private": true,
-                          "timeout_ms": "{{control_timeout_ms}}",
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_10"
-                        },
-                        {
-                          "action": "call",
-                          "routine": "identity",
-                          "title": "Повторно подтвердить карточку после шагов отправки",
-                          "description": "До подтверждения отправки или сброса неопределённости заново проверяет полный ИНН и прежний ключ. Чужая или неоднозначная карточка сохраняет requires_reconciliation.",
-                          "params": {
-                            "capture_key": false
-                          },
-                          "private": true,
-                          "timeout_ms": "{{control_timeout_ms}}",
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_11"
-                        },
-                        {
-                          "action": "browser_eval",
-                          "title": "Проверить явную блокировку лицензией до подтверждения отправки",
-                          "description": "После повторной сверки полного ИНН и прежнего ключа карточки требует единственное видимое сообщение лицензии и единственный неотправленный статус внутри current_card_scope_selector. При противоречащем статусе не снимает неопределённость.",
-                          "params": {
-                            "expression": "(()=>{const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const caption=String(context.ui.reporting_license_text||'').replace(/\\s+/g,' ').trim();if(!caption)return false;const includes=e=>e.textContent.replace(/\\s+/g,' ').includes(caption);const messages=[...document.querySelectorAll('*')].filter(e=>visible(e)&&includes(e)&&![...e.children].some(c=>includes(c)));if(messages.length!==1)return false;const scopes=[...document.querySelectorAll(context.ui.current_card_scope_selector)].filter(visible);if(scopes.length!==1)return false;const scope=scopes[0];const cards=[...(scope.matches(context.ui.report_scope_selector)?[scope]:[]),...scope.querySelectorAll(context.ui.report_scope_selector)].filter(visible);if(cards.length!==1)return false;const statuses=[...scope.querySelectorAll(context.ui.unsent_status_selector)].filter(visible);if(statuses.length!==1||statuses[0].innerText.trim()!==context.ui.unsent_status_text)return false;const sent=[...scope.querySelectorAll(context.ui.sent_status_selector)].filter(visible).map(e=>e.innerText.trim());if(sent.some(s=>s===context.ui.sent_status_text||/^Отправ(?:ляется|лен|лено)/i.test(s)))return false;return true})()"
-                          },
-                          "save_as": "license_blocked",
-                          "private": true,
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_12"
-                        },
-                        {
-                          "action": "if",
-                          "title": "Вернуть отсутствие лицензии без повтора и архивирования",
-                          "description": "Сохраняет успешную проверку и явный отказ кабинета отправлять отчёт с этой лицензией. Не покупает лицензию и не оформляет её в долг.",
-                          "params": {
-                            "condition": "{{license_blocked}}"
-                          },
-                          "then": [
+                          "steps": [
                             {
                               "action": "set",
-                              "title": "Зафиксировать явное отсутствие отправки",
-                              "description": "Окно лицензирования и статус неотправленного отчёта исключают неопределённую отправку.",
+                              "title": "Отметить текущий отчет для отдельного результата",
+                              "description": "Привязывает ошибку и финансовые условия только к текущему XML.",
                               "params": {
-                                "submission_started": false
+                                "active_report_path": "{{report.path}}",
+                                "license_quote": "{{report.license_quote}}"
                               },
                               "private": true,
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_13_then_1"
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_1"
                             },
                             {
+                              "id": "sbis_individual_archive_clear",
                               "action": "compute",
-                              "title": "Сохранить проверенный неотправленный отчёт",
-                              "description": "Сохраняет статус проверки, протокол и причину отсутствия отправки.",
+                              "title": "Проверить имена XML текущего отчёта в архиве",
                               "params": {
-                                "expression": "({...context.report,state:'validated',sbis_status:'Отправка заблокирована: нет лицензии'})"
-                              },
-                              "save_as": "report",
-                              "private": true,
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_13_then_2"
-                            },
-                            {
-                              "action": "call",
-                              "routine": "store_report",
-                              "title": "Сохранить блокировку отчёта",
-                              "description": "Обновляет результат текущего отчёта перед возвратом ошибки.",
-                              "params": {},
-                              "private": true,
-                              "timeout_ms": "{{control_timeout_ms}}",
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_13_then_3"
-                            },
-                            {
-                              "action": "fail",
-                              "title": "Вернуть необходимость лицензии",
-                              "description": "Возвращает REPORTING_LICENSE_REQUIRED, без автоматического повтора отправки.",
-                              "params": {
-                                "error_code": "REPORTING_LICENSE_REQUIRED",
-                                "message": "СБИС блокирует отправку: отсутствует лицензия Отчетность"
-                              },
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_13_then_4"
-                            }
-                          ],
-                          "else": [],
-                          "timeout_ms": "{{control_timeout_ms}}",
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_13"
-                        },
-                        {
-                          "action": "browser_eval",
-                          "title": "Прочитать предупреждение о действующей лицензии в долг",
-                          "description": "Прочитать предупреждение о действующей лицензии в долг",
-                          "params": {
-                            "expression": "(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const caption=context.ui.license_debt_caption;\n if(!caption)return null;\n const has=e=>e.textContent.replace(/\\s+/g,' ').includes(caption);\n const messages=[...document.querySelectorAll('*')].filter(e=>v(e)&&has(e)&&![...e.children].some(has));\n if(!messages.length)return null;\n const scopes=[...document.querySelectorAll(context.ui.current_card_scope_selector)].filter(v);\n if(messages.length!==1||scopes.length!==1)throw Object.assign(new Error('Неоднозначное окно лицензии'),{code:'UI_BINDING_REQUIRED'});\n const statuses=[...scopes[0].querySelectorAll(context.ui.unsent_status_selector)].filter(v);\n const sent=[...scopes[0].querySelectorAll(context.ui.sent_status_selector)].filter(v).map(e=>e.innerText.trim());\n if(sent.some(t=>(context.ui.sent_status_texts||[]).includes(t)||t===context.ui.sent_status_text||/^Отправ(?:ляется|лен|лено)/i.test(t)))throw Object.assign(new Error('Противоречивый статус отправки'),{code:'REQUIRES_RECONCILIATION'});\n const buttons=[...document.querySelectorAll(context.ui.license_debt_button_selector)].filter(v);\n const pay=[...document.querySelectorAll(context.ui.license_pay_button_selector)].filter(v);\n if(statuses.length!==1||statuses[0].innerText.trim()!==context.ui.unsent_status_text||buttons.length!==1||pay.length!==1)throw Object.assign(new Error('Не подтверждена текущая неотправленная карточка'),{code:'REQUIRES_RECONCILIATION'});\n const match=/^Оплатить\\s+([\\d\\s\\u00a0\\u202f]+)\\s*₽$/.exec(pay[0].innerText.trim());\n return {requires_confirmation:true,amount:match?Number(match[1].replace(/\\s/g,'')):null,currency:'RUB'};\n})()"
-                          },
-                          "private": true,
-                          "save_as": "license_quote",
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_14"
-                        },
-                        {
-                          "action": "compute",
-                          "title": "Определить наличие финансового предупреждения",
-                          "description": "Определить наличие финансового предупреждения",
-                          "params": {
-                            "expression": "context.license_quote!=null"
-                          },
-                          "private": true,
-                          "save_as": "license_debt_visible",
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_15"
-                        },
-                        {
-                          "action": "if",
-                          "title": "Проверить отдельное разрешение на В долг",
-                          "description": "Проверить отдельное разрешение на В долг",
-                          "params": {
-                            "condition": "{{license_debt_visible}}"
-                          },
-                          "then": [
-                            {
-                              "action": "compute",
-                              "title": "Сверить разрешение и ожидаемую сумму",
-                              "description": "Сверить разрешение и ожидаемую сумму",
-                              "params": {
-                                "expression": "context.license_debt_enabled===true&&context.license_quote.amount===context.license_debt_expected_amount"
+                                "expression": "!context.report.files.some(f=>context.archive_existing.some(a=>a.filename.toLowerCase()===f.filename.toLowerCase()))"
                               },
                               "private": true,
-                              "save_as": "license_debt_authorized",
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_1"
+                              "save_as": "individual_archive_clear",
+                              "description": "Проверить имена XML текущего отчёта в архиве"
                             },
                             {
+                              "id": "sbis_individual_archive_assert",
+                              "action": "assert",
+                              "title": "Проверить архив текущего отчёта",
+                              "params": {
+                                "condition": "{{individual_archive_clear}}",
+                                "error_code": "ARCHIVE_CONFLICT",
+                                "message": "XML с таким именем уже находится в архиве"
+                              },
+                              "private": true,
+                              "description": "Проверить архив текущего отчёта"
+                            },
+                            {
+                              "action": "set",
+                              "title": "Обновить переменные сценария",
+                              "description": "Обновить переменные сценария",
+                              "params": {
+                                "file_name": "{{report.filename}}",
+                                "file_path": "{{report.path}}"
+                              },
+                              "private": true,
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_2"
+                            },
+                            {
+                              "id": "sbis_report_tab_select",
                               "action": "if",
-                              "title": "Продолжить только при совпадении финансовых условий",
-                              "description": "Продолжить только при совпадении финансовых условий",
+                              "title": "Вернуться во вкладку проверенного отчёта",
+                              "description": "Вернуться во вкладку проверенного отчёта",
                               "params": {
-                                "condition": "{{license_debt_authorized}}"
+                                "condition": "{{keep_report_tabs}}"
                               },
                               "then": [
                                 {
-                                  "action": "browser_wait",
-                                  "title": "Дождаться разрешенной кнопки В долг и неизменной суммы",
-                                  "description": "Дождаться разрешенной кнопки В долг и неизменной суммы",
+                                  "id": "sbis_report_tab_select_action",
+                                  "action": "browser_tab",
+                                  "title": "Вернуться во вкладку проверенного отчёта",
+                                  "description": "Именованная вкладка связана с полным путём XML. Выбор отсутствующей или закрытой вкладки завершается ошибкой без отправки.",
                                   "params": {
-                                    "expression": "(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const buttons=[...document.querySelectorAll(context.ui.license_debt_button_selector)].filter(v);\n const pay=[...document.querySelectorAll(context.ui.license_pay_button_selector)].filter(v);\n const match=pay.length===1?/^Оплатить\\s+([\\d\\s\\u00a0\\u202f]+)\\s*₽$/.exec(pay[0].innerText.trim()):null;\n return buttons.length===1&&!buttons[0].disabled&&buttons[0].getAttribute('aria-disabled')!=='true'&&match&&Number(match[1].replace(/\\s/g,''))===context.license_debt_expected_amount;\n})()",
-                                    "timeout_ms": 90000
+                                    "operation": "select",
+                                    "name": "{{report.path}}"
                                   },
-                                  "timeout_ms": 95000,
+                                  "private": true
+                                }
+                              ],
+                              "private": true
+                            },
+                            {
+                              "action": "call",
+                              "title": "Подготовить сохранённую карточку к повторной проверке",
+                              "description": "Вкладка текущего XML уже выбрана. Необязательные ui.reopen_steps выполняются в ней; далее обязательно сверяются ИНН и сохранённый ключ карточки.",
+                              "params": {
+                                "flow_steps": "{{ui.reopen_steps}}"
+                              },
+                              "routine": "browser",
+                              "private": true,
+                              "timeout_ms": "{{control_timeout_ms}}",
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_3"
+                            },
+                            {
+                              "action": "call",
+                              "title": "Повторно проверить точную карточку перед отправкой",
+                              "description": "Повторно проверить точную карточку перед отправкой",
+                              "params": {},
+                              "routine": "validate",
+                              "private": true,
+                              "timeout_ms": "{{control_timeout_ms}}",
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_4"
+                            },
+                            {
+                              "action": "compute",
+                              "title": "Проверить результат перед отправкой",
+                              "description": "Проверить результат перед отправкой",
+                              "params": {
+                                "expression": "context.report.state==='validated'"
+                              },
+                              "save_as": "valid_before_submit",
+                              "private": true,
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_5"
+                            },
+                            {
+                              "action": "assert",
+                              "title": "Проверка перед отправкой должна быть успешной",
+                              "description": "Проверка перед отправкой должна быть успешной",
+                              "params": {
+                                "condition": "{{valid_before_submit}}",
+                                "error_code": "VALIDATION_ERROR",
+                                "message": "Проверка перед отправкой должна быть успешной"
+                              },
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_6"
+                            },
+                            {
+                              "action": "set",
+                              "title": "Обновить переменные сценария",
+                              "description": "Обновить переменные сценария",
+                              "params": {
+                                "submission_started": true
+                              },
+                              "private": true,
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_7"
+                            },
+                            {
+                              "action": "compute",
+                              "title": "Отметить начало необратимой отправки",
+                              "description": "Отметить начало необратимой отправки",
+                              "params": {
+                                "expression": "({...context.report,state:'submission_unknown'})"
+                              },
+                              "save_as": "report",
+                              "private": true,
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_8"
+                            },
+                            {
+                              "action": "call",
+                              "title": "store_report",
+                              "description": "store_report",
+                              "params": {},
+                              "routine": "store_report",
+                              "private": true,
+                              "timeout_ms": "{{control_timeout_ms}}",
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_9"
+                            },
+                            {
+                              "action": "call",
+                              "title": "Подписать и отправить по явно заданным шагам",
+                              "description": "Подписать и отправить по явно заданным шагам",
+                              "params": {
+                                "flow_steps": "{{ui.submit_steps}}"
+                              },
+                              "routine": "browser",
+                              "private": true,
+                              "timeout_ms": "{{control_timeout_ms}}",
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_10"
+                            },
+                            {
+                              "action": "call",
+                              "routine": "identity",
+                              "title": "Повторно подтвердить карточку после шагов отправки",
+                              "description": "До подтверждения отправки или сброса неопределённости заново проверяет полный ИНН и прежний ключ. Чужая или неоднозначная карточка сохраняет requires_reconciliation.",
+                              "params": {
+                                "capture_key": false
+                              },
+                              "private": true,
+                              "timeout_ms": "{{control_timeout_ms}}",
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_11"
+                            },
+                            {
+                              "action": "browser_eval",
+                              "title": "Проверить явную блокировку лицензией до подтверждения отправки",
+                              "description": "После повторной сверки полного ИНН и прежнего ключа карточки требует единственное видимое сообщение лицензии и единственный неотправленный статус внутри current_card_scope_selector. При противоречащем статусе не снимает неопределённость.",
+                              "params": {
+                                "expression": "(()=>{const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const caption=String(context.ui.reporting_license_text||'').replace(/\\s+/g,' ').trim();if(!caption)return false;const includes=e=>e.textContent.replace(/\\s+/g,' ').includes(caption);const messages=[...document.querySelectorAll('*')].filter(e=>visible(e)&&includes(e)&&![...e.children].some(c=>includes(c)));if(messages.length!==1)return false;const scopes=[...document.querySelectorAll(context.ui.current_card_scope_selector)].filter(visible);if(scopes.length!==1)return false;const scope=scopes[0];const cards=[...(scope.matches(context.ui.report_scope_selector)?[scope]:[]),...scope.querySelectorAll(context.ui.report_scope_selector)].filter(visible);if(cards.length!==1)return false;const statuses=[...scope.querySelectorAll(context.ui.unsent_status_selector)].filter(visible);if(statuses.length!==1||statuses[0].innerText.trim()!==context.ui.unsent_status_text)return false;const sent=[...scope.querySelectorAll(context.ui.sent_status_selector)].filter(visible).map(e=>e.innerText.trim());if(sent.some(s=>s===context.ui.sent_status_text||/^Отправ(?:ляется|лен|лено)/i.test(s)))return false;return true})()"
+                              },
+                              "save_as": "license_blocked",
+                              "private": true,
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_12"
+                            },
+                            {
+                              "action": "if",
+                              "title": "Вернуть отсутствие лицензии без повтора и архивирования",
+                              "description": "Сохраняет успешную проверку и явный отказ кабинета отправлять отчёт с этой лицензией. Не покупает лицензию и не оформляет её в долг.",
+                              "params": {
+                                "condition": "{{license_blocked}}"
+                              },
+                              "then": [
+                                {
+                                  "action": "set",
+                                  "title": "Зафиксировать явное отсутствие отправки",
+                                  "description": "Окно лицензирования и статус неотправленного отчёта исключают неопределённую отправку.",
+                                  "params": {
+                                    "submission_started": false
+                                  },
                                   "private": true,
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_1"
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_13_then_1"
+                                },
+                                {
+                                  "action": "compute",
+                                  "title": "Сохранить проверенный неотправленный отчёт",
+                                  "description": "Сохраняет статус проверки, протокол и причину отсутствия отправки.",
+                                  "params": {
+                                    "expression": "({...context.report,state:'validated',sbis_status:'Отправка заблокирована: нет лицензии'})"
+                                  },
+                                  "save_as": "report",
+                                  "private": true,
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_13_then_2"
                                 },
                                 {
                                   "action": "call",
-                                  "title": "Сверить карточку перед финансовым продолжением",
-                                  "description": "Сверить карточку перед финансовым продолжением",
-                                  "params": {
-                                    "capture_key": false
-                                  },
-                                  "routine": "identity",
+                                  "routine": "store_report",
+                                  "title": "Сохранить блокировку отчёта",
+                                  "description": "Обновляет результат текущего отчёта перед возвратом ошибки.",
+                                  "params": {},
                                   "private": true,
                                   "timeout_ms": "{{control_timeout_ms}}",
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_2"
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_13_then_3"
                                 },
                                 {
-                                  "action": "browser_eval",
-                                  "title": "Защитить нативный клик повторной сверкой суммы и карточки",
-                                  "description": "Защитить нативный клик повторной сверкой суммы и карточки",
+                                  "action": "fail",
+                                  "title": "Вернуть необходимость лицензии",
+                                  "description": "Возвращает REPORTING_LICENSE_REQUIRED, без автоматического повтора отправки.",
                                   "params": {
-                                    "expression": "(() => {\n if(window.__sfDebtCleanup)window.__sfDebtCleanup();\n const read=()=>(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\nconst cards=[...document.querySelectorAll(context.ui.report_scope_selector)].filter(v);if(cards.length!==1||!new RegExp('(^|[^0-9])'+context.inn+'([^0-9]|$)').test(cards[0].innerText+' '+[...cards[0].querySelectorAll('input,textarea')].filter(v).map(e=>e.value).join(' '))||String(({{ui.report_key_expression}}))!==String(context.report.report_key))throw Object.assign(new Error('Карточка изменилась'),{code:'REPORT_IDENTITY_MISMATCH'});\n const caption=context.ui.license_debt_caption;\n if(!caption)throw Object.assign(new Error('Нет сообщения лицензии'),{code:'REQUIRES_RECONCILIATION'});\n const has=e=>e.textContent.replace(/\\s+/g,' ').includes(caption);\n const messages=[...document.querySelectorAll('*')].filter(e=>v(e)&&has(e)&&![...e.children].some(has));\n if(!messages.length)throw Object.assign(new Error('Нет сообщения лицензии'),{code:'REQUIRES_RECONCILIATION'});\n const scopes=[...document.querySelectorAll(context.ui.current_card_scope_selector)].filter(v);\n if(messages.length!==1||scopes.length!==1)throw Object.assign(new Error('Неоднозначное окно лицензии'),{code:'UI_BINDING_REQUIRED'});\n const statuses=[...scopes[0].querySelectorAll(context.ui.unsent_status_selector)].filter(v);\n const sent=[...scopes[0].querySelectorAll(context.ui.sent_status_selector)].filter(v).map(e=>e.innerText.trim());\n if(sent.some(t=>(context.ui.sent_status_texts||[]).includes(t)||t===context.ui.sent_status_text||/^Отправ(?:ляется|лен|лено)/i.test(t)))throw Object.assign(new Error('Противоречивый статус отправки'),{code:'REQUIRES_RECONCILIATION'});\n const buttons=[...document.querySelectorAll(context.ui.license_debt_button_selector)].filter(v);\n const pay=[...document.querySelectorAll(context.ui.license_pay_button_selector)].filter(v);\n if(statuses.length!==1||statuses[0].innerText.trim()!==context.ui.unsent_status_text||buttons.length!==1||pay.length!==1)throw Object.assign(new Error('Не подтверждена текущая неотправленная карточка'),{code:'REQUIRES_RECONCILIATION'});\n const match=/^Оплатить\\s+([\\d\\s\\u00a0\\u202f]+)\\s*₽$/.exec(pay[0].innerText.trim());\n return {requires_confirmation:true,amount:match?Number(match[1].replace(/\\s/g,'')):null,currency:'RUB'};\n})();\n const expected=context.license_debt_expected_amount;\n const initial=read();\n window.__sfDebtError=initial.amount===expected?null:'LICENSE_PRICE_CHANGED';\n const handler=event=>{\n  if(!event.target.closest(context.ui.license_debt_button_selector))return;\n  try {const quote=read();if(quote.amount!==expected)window.__sfDebtError='LICENSE_PRICE_CHANGED';}\n  catch(error){window.__sfDebtError=error.code||'REQUIRES_RECONCILIATION';}\n  if(window.__sfDebtError){event.preventDefault();event.stopImmediatePropagation();}\n };\n const types=['pointerdown','mousedown','mouseup','click'];\n types.forEach(type=>window.addEventListener(type,handler,true));\n window.__sfDebtCleanup=()=>{types.forEach(type=>window.removeEventListener(type,handler,true));delete window.__sfDebtCleanup;};\n return true;\n})()"
+                                    "error_code": "REPORTING_LICENSE_REQUIRED",
+                                    "message": "СБИС блокирует отправку: отсутствует лицензия Отчетность"
                                   },
-                                  "private": true,
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_3"
-                                },
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_13_then_4"
+                                }
+                              ],
+                              "else": [],
+                              "timeout_ms": "{{control_timeout_ms}}",
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_13"
+                            },
+                            {
+                              "action": "browser_eval",
+                              "title": "Прочитать предупреждение о действующей лицензии в долг",
+                              "description": "Прочитать предупреждение о действующей лицензии в долг",
+                              "params": {
+                                "expression": "(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const caption=context.ui.license_debt_caption;\n if(!caption)return null;\n const has=e=>e.textContent.replace(/\\s+/g,' ').includes(caption);\n const messages=[...document.querySelectorAll('*')].filter(e=>v(e)&&has(e)&&![...e.children].some(has));\n if(!messages.length)return null;\n const scopes=[...document.querySelectorAll(context.ui.current_card_scope_selector)].filter(v);\n if(messages.length!==1||scopes.length!==1)throw Object.assign(new Error('Неоднозначное окно лицензии'),{code:'UI_BINDING_REQUIRED'});\n const statuses=[...scopes[0].querySelectorAll(context.ui.unsent_status_selector)].filter(v);\n const sent=[...scopes[0].querySelectorAll(context.ui.sent_status_selector)].filter(v).map(e=>e.innerText.trim());\n if(sent.some(t=>(context.ui.sent_status_texts||[]).includes(t)||t===context.ui.sent_status_text||/^Отправ(?:ляется|лен|лено)/i.test(t)))throw Object.assign(new Error('Противоречивый статус отправки'),{code:'REQUIRES_RECONCILIATION'});\n const buttons=[...document.querySelectorAll(context.ui.license_debt_button_selector)].filter(v);\n const pay=[...document.querySelectorAll(context.ui.license_pay_button_selector)].filter(v);\n if(statuses.length!==1||statuses[0].innerText.trim()!==context.ui.unsent_status_text||buttons.length!==1||pay.length!==1)throw Object.assign(new Error('Не подтверждена текущая неотправленная карточка'),{code:'REQUIRES_RECONCILIATION'});\n const match=/^Оплатить\\s+([\\d\\s\\u00a0\\u202f]+)\\s*₽$/.exec(pay[0].innerText.trim());\n return {requires_confirmation:true,amount:match?Number(match[1].replace(/\\s/g,'')):null,currency:'RUB'};\n})()"
+                              },
+                              "private": true,
+                              "save_as": "license_quote",
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_14"
+                            },
+                            {
+                              "action": "compute",
+                              "title": "Определить наличие финансового предупреждения",
+                              "description": "Определить наличие финансового предупреждения",
+                              "params": {
+                                "expression": "context.license_quote!=null"
+                              },
+                              "private": true,
+                              "save_as": "license_debt_visible",
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_15"
+                            },
+                            {
+                              "action": "if",
+                              "title": "Проверить отдельное разрешение на В долг",
+                              "description": "Проверить отдельное разрешение на В долг",
+                              "params": {
+                                "condition": "{{license_debt_visible}}"
+                              },
+                              "then": [
                                 {
-                                  "action": "browser_steps",
-                                  "title": "Продолжить В долг с проверкой на каждом событии клика",
-                                  "description": "Продолжить В долг с проверкой на каждом событии клика",
+                                  "action": "compute",
+                                  "title": "Сверить разрешение и ожидаемую сумму",
+                                  "description": "Сверить разрешение и ожидаемую сумму",
                                   "params": {
-                                    "steps": [
-                                      {
-                                        "type": "click",
-                                        "selectors": [
-                                          [
-                                            "{{ui.license_debt_button_selector}}"
-                                          ]
-                                        ],
-                                        "offsetX": 20,
-                                        "offsetY": 10
-                                      }
-                                    ]
+                                    "expression": "context.license_debt_enabled===true&&context.license_quote.amount===context.license_debt_expected_amount"
                                   },
                                   "private": true,
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_4"
-                                },
-                                {
-                                  "action": "browser_eval",
-                                  "title": "Снять защиту и получить результат финансовой проверки",
-                                  "description": "Снять защиту и получить результат финансовой проверки",
-                                  "params": {
-                                    "expression": "(()=>{const code=window.__sfDebtError;window.__sfDebtCleanup?.();delete window.__sfDebtError;if(code&&code!=='LICENSE_PRICE_CHANGED')throw Object.assign(new Error('Карточка или статус изменились'),{code});return code==='LICENSE_PRICE_CHANGED'})()"
-                                  },
-                                  "private": true,
-                                  "save_as": "late_license_price_changed",
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_5"
+                                  "save_as": "license_debt_authorized",
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_1"
                                 },
                                 {
                                   "action": "if",
-                                  "title": "Остановиться при позднем изменении суммы",
-                                  "description": "Остановиться при позднем изменении суммы",
+                                  "title": "Продолжить только при совпадении финансовых условий",
+                                  "description": "Продолжить только при совпадении финансовых условий",
                                   "params": {
-                                    "condition": "{{late_license_price_changed}}"
+                                    "condition": "{{license_debt_authorized}}"
                                   },
-                                  "private": true,
                                   "then": [
+                                    {
+                                      "action": "browser_wait",
+                                      "title": "Дождаться разрешенной кнопки В долг и неизменной суммы",
+                                      "description": "Дождаться разрешенной кнопки В долг и неизменной суммы",
+                                      "params": {
+                                        "expression": "(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const buttons=[...document.querySelectorAll(context.ui.license_debt_button_selector)].filter(v);\n const pay=[...document.querySelectorAll(context.ui.license_pay_button_selector)].filter(v);\n const match=pay.length===1?/^Оплатить\\s+([\\d\\s\\u00a0\\u202f]+)\\s*₽$/.exec(pay[0].innerText.trim()):null;\n return buttons.length===1&&!buttons[0].disabled&&buttons[0].getAttribute('aria-disabled')!=='true'&&match&&Number(match[1].replace(/\\s/g,''))===context.license_debt_expected_amount;\n})()",
+                                        "timeout_ms": 90000
+                                      },
+                                      "timeout_ms": 95000,
+                                      "private": true,
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_1"
+                                    },
+                                    {
+                                      "action": "call",
+                                      "title": "Сверить карточку перед финансовым продолжением",
+                                      "description": "Сверить карточку перед финансовым продолжением",
+                                      "params": {
+                                        "capture_key": false
+                                      },
+                                      "routine": "identity",
+                                      "private": true,
+                                      "timeout_ms": "{{control_timeout_ms}}",
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_2"
+                                    },
+                                    {
+                                      "action": "browser_eval",
+                                      "title": "Защитить нативный клик повторной сверкой суммы и карточки",
+                                      "description": "Защитить нативный клик повторной сверкой суммы и карточки",
+                                      "params": {
+                                        "expression": "(() => {\n if(window.__sfDebtCleanup)window.__sfDebtCleanup();\n const read=()=>(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\nconst cards=[...document.querySelectorAll(context.ui.report_scope_selector)].filter(v);if(cards.length!==1||!new RegExp('(^|[^0-9])'+context.inn+'([^0-9]|$)').test(cards[0].innerText+' '+[...cards[0].querySelectorAll('input,textarea')].filter(v).map(e=>e.value).join(' '))||String(({{ui.report_key_expression}}))!==String(context.report.report_key))throw Object.assign(new Error('Карточка изменилась'),{code:'REPORT_IDENTITY_MISMATCH'});\n const caption=context.ui.license_debt_caption;\n if(!caption)throw Object.assign(new Error('Нет сообщения лицензии'),{code:'REQUIRES_RECONCILIATION'});\n const has=e=>e.textContent.replace(/\\s+/g,' ').includes(caption);\n const messages=[...document.querySelectorAll('*')].filter(e=>v(e)&&has(e)&&![...e.children].some(has));\n if(!messages.length)throw Object.assign(new Error('Нет сообщения лицензии'),{code:'REQUIRES_RECONCILIATION'});\n const scopes=[...document.querySelectorAll(context.ui.current_card_scope_selector)].filter(v);\n if(messages.length!==1||scopes.length!==1)throw Object.assign(new Error('Неоднозначное окно лицензии'),{code:'UI_BINDING_REQUIRED'});\n const statuses=[...scopes[0].querySelectorAll(context.ui.unsent_status_selector)].filter(v);\n const sent=[...scopes[0].querySelectorAll(context.ui.sent_status_selector)].filter(v).map(e=>e.innerText.trim());\n if(sent.some(t=>(context.ui.sent_status_texts||[]).includes(t)||t===context.ui.sent_status_text||/^Отправ(?:ляется|лен|лено)/i.test(t)))throw Object.assign(new Error('Противоречивый статус отправки'),{code:'REQUIRES_RECONCILIATION'});\n const buttons=[...document.querySelectorAll(context.ui.license_debt_button_selector)].filter(v);\n const pay=[...document.querySelectorAll(context.ui.license_pay_button_selector)].filter(v);\n if(statuses.length!==1||statuses[0].innerText.trim()!==context.ui.unsent_status_text||buttons.length!==1||pay.length!==1)throw Object.assign(new Error('Не подтверждена текущая неотправленная карточка'),{code:'REQUIRES_RECONCILIATION'});\n const match=/^Оплатить\\s+([\\d\\s\\u00a0\\u202f]+)\\s*₽$/.exec(pay[0].innerText.trim());\n return {requires_confirmation:true,amount:match?Number(match[1].replace(/\\s/g,'')):null,currency:'RUB'};\n})();\n const expected=context.license_debt_expected_amount;\n const initial=read();\n window.__sfDebtError=initial.amount===expected?null:'LICENSE_PRICE_CHANGED';\n const handler=event=>{\n  if(!event.target.closest(context.ui.license_debt_button_selector))return;\n  try {const quote=read();if(quote.amount!==expected)window.__sfDebtError='LICENSE_PRICE_CHANGED';}\n  catch(error){window.__sfDebtError=error.code||'REQUIRES_RECONCILIATION';}\n  if(window.__sfDebtError){event.preventDefault();event.stopImmediatePropagation();}\n };\n const types=['pointerdown','mousedown','mouseup','click'];\n types.forEach(type=>window.addEventListener(type,handler,true));\n window.__sfDebtCleanup=()=>{types.forEach(type=>window.removeEventListener(type,handler,true));delete window.__sfDebtCleanup;};\n return true;\n})()"
+                                      },
+                                      "private": true,
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_3"
+                                    },
+                                    {
+                                      "action": "browser_steps",
+                                      "title": "Продолжить В долг с проверкой на каждом событии клика",
+                                      "description": "Продолжить В долг с проверкой на каждом событии клика",
+                                      "params": {
+                                        "steps": [
+                                          {
+                                            "type": "click",
+                                            "selectors": [
+                                              [
+                                                "{{ui.license_debt_button_selector}}"
+                                              ]
+                                            ],
+                                            "offsetX": 20,
+                                            "offsetY": 10
+                                          }
+                                        ]
+                                      },
+                                      "private": true,
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_4"
+                                    },
+                                    {
+                                      "action": "browser_eval",
+                                      "title": "Снять защиту и получить результат финансовой проверки",
+                                      "description": "Снять защиту и получить результат финансовой проверки",
+                                      "params": {
+                                        "expression": "(()=>{const code=window.__sfDebtError;window.__sfDebtCleanup?.();delete window.__sfDebtError;if(code&&code!=='LICENSE_PRICE_CHANGED')throw Object.assign(new Error('Карточка или статус изменились'),{code});return code==='LICENSE_PRICE_CHANGED'})()"
+                                      },
+                                      "private": true,
+                                      "save_as": "late_license_price_changed",
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_5"
+                                    },
+                                    {
+                                      "action": "if",
+                                      "title": "Остановиться при позднем изменении суммы",
+                                      "description": "Остановиться при позднем изменении суммы",
+                                      "params": {
+                                        "condition": "{{late_license_price_changed}}"
+                                      },
+                                      "private": true,
+                                      "then": [
+                                        {
+                                          "action": "set",
+                                          "title": "Зафиксировать остановку до финансового решения",
+                                          "description": "Зафиксировать остановку до финансового решения",
+                                          "params": {
+                                            "submission_started": false
+                                          },
+                                          "private": true,
+                                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_then_1"
+                                        },
+                                        {
+                                          "action": "compute",
+                                          "title": "Сохранить проверенный неотправленный отчет",
+                                          "description": "Сохранить проверенный неотправленный отчет",
+                                          "params": {
+                                            "expression": "({...context.report,state:'validated',sbis_status:'Требуется решение по лицензии'})"
+                                          },
+                                          "private": true,
+                                          "save_as": "report",
+                                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_then_2"
+                                        },
+                                        {
+                                          "action": "call",
+                                          "title": "Сохранить причину остановки отчета",
+                                          "description": "Сохранить причину остановки отчета",
+                                          "params": {},
+                                          "routine": "store_report",
+                                          "private": true,
+                                          "timeout_ms": "{{control_timeout_ms}}",
+                                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_then_3"
+                                        },
+                                        {
+                                          "action": "compute",
+                                          "title": "Определить причину запрета продолжения",
+                                          "description": "Определить причину запрета продолжения",
+                                          "params": {
+                                            "expression": "'LICENSE_PRICE_CHANGED'"
+                                          },
+                                          "private": true,
+                                          "save_as": "license_error_code",
+                                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_then_4"
+                                        },
+                                        {
+                                          "action": "fail",
+                                          "title": "Не продолжать без разрешения на финансовые условия",
+                                          "description": "Не продолжать без разрешения на финансовые условия",
+                                          "params": {
+                                            "error_code": "{{license_error_code}}",
+                                            "message": "СБИС требует решение по лицензии; продолжение В долг не разрешено либо сумма изменилась"
+                                          },
+                                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_then_5"
+                                        }
+                                      ],
+                                      "else": [
+                                        {
+                                          "action": "compute",
+                                          "title": "Сохранить выбранное продолжение без оплаты",
+                                          "description": "Отмечает отдельно разрешенное продолжение В долг; не подтверждает оплату счета.",
+                                          "params": {
+                                            "expression": "({...context.license_quote,requires_confirmation:false,continuation:'debt'})"
+                                          },
+                                          "save_as": "license_quote",
+                                          "private": true,
+                                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_else_1"
+                                        }
+                                      ],
+                                      "timeout_ms": "{{control_timeout_ms}}",
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6"
+                                    }
+                                  ],
+                                  "else": [
                                     {
                                       "action": "set",
                                       "title": "Зафиксировать остановку до финансового решения",
@@ -2481,7 +2759,7 @@
                                         "submission_started": false
                                       },
                                       "private": true,
-                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_then_1"
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_else_1"
                                     },
                                     {
                                       "action": "compute",
@@ -2492,7 +2770,7 @@
                                       },
                                       "private": true,
                                       "save_as": "report",
-                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_then_2"
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_else_2"
                                     },
                                     {
                                       "action": "call",
@@ -2502,18 +2780,18 @@
                                       "routine": "store_report",
                                       "private": true,
                                       "timeout_ms": "{{control_timeout_ms}}",
-                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_then_3"
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_else_3"
                                     },
                                     {
                                       "action": "compute",
                                       "title": "Определить причину запрета продолжения",
                                       "description": "Определить причину запрета продолжения",
                                       "params": {
-                                        "expression": "'LICENSE_PRICE_CHANGED'"
+                                        "expression": "context.license_debt_enabled===true?'LICENSE_PRICE_CHANGED':'REPORTING_LICENSE_CONFIRMATION_REQUIRED'"
                                       },
                                       "private": true,
                                       "save_as": "license_error_code",
-                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_then_4"
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_else_4"
                                     },
                                     {
                                       "action": "fail",
@@ -2523,144 +2801,105 @@
                                         "error_code": "{{license_error_code}}",
                                         "message": "СБИС требует решение по лицензии; продолжение В долг не разрешено либо сумма изменилась"
                                       },
-                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_then_5"
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_else_5"
                                     }
                                   ],
-                                  "else": [
-                                    {
-                                      "action": "compute",
-                                      "title": "Сохранить выбранное продолжение без оплаты",
-                                      "description": "Отмечает отдельно разрешенное продолжение В долг; не подтверждает оплату счета.",
-                                      "params": {
-                                        "expression": "({...context.license_quote,requires_confirmation:false,continuation:'debt'})"
-                                      },
-                                      "save_as": "license_quote",
-                                      "private": true,
-                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6_else_1"
-                                    }
-                                  ],
-                                  "timeout_ms": "{{control_timeout_ms}}",
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_6"
-                                }
-                              ],
-                              "else": [
-                                {
-                                  "action": "set",
-                                  "title": "Зафиксировать остановку до финансового решения",
-                                  "description": "Зафиксировать остановку до финансового решения",
-                                  "params": {
-                                    "submission_started": false
-                                  },
-                                  "private": true,
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_else_1"
-                                },
-                                {
-                                  "action": "compute",
-                                  "title": "Сохранить проверенный неотправленный отчет",
-                                  "description": "Сохранить проверенный неотправленный отчет",
-                                  "params": {
-                                    "expression": "({...context.report,state:'validated',sbis_status:'Требуется решение по лицензии'})"
-                                  },
-                                  "private": true,
-                                  "save_as": "report",
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_else_2"
-                                },
-                                {
-                                  "action": "call",
-                                  "title": "Сохранить причину остановки отчета",
-                                  "description": "Сохранить причину остановки отчета",
-                                  "params": {},
-                                  "routine": "store_report",
                                   "private": true,
                                   "timeout_ms": "{{control_timeout_ms}}",
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_else_3"
-                                },
-                                {
-                                  "action": "compute",
-                                  "title": "Определить причину запрета продолжения",
-                                  "description": "Определить причину запрета продолжения",
-                                  "params": {
-                                    "expression": "context.license_debt_enabled===true?'LICENSE_PRICE_CHANGED':'REPORTING_LICENSE_CONFIRMATION_REQUIRED'"
-                                  },
-                                  "private": true,
-                                  "save_as": "license_error_code",
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_else_4"
-                                },
-                                {
-                                  "action": "fail",
-                                  "title": "Не продолжать без разрешения на финансовые условия",
-                                  "description": "Не продолжать без разрешения на финансовые условия",
-                                  "params": {
-                                    "error_code": "{{license_error_code}}",
-                                    "message": "СБИС требует решение по лицензии; продолжение В долг не разрешено либо сумма изменилась"
-                                  },
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_else_5"
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2"
                                 }
                               ],
                               "private": true,
                               "timeout_ms": "{{control_timeout_ms}}",
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2"
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16"
+                            },
+                            {
+                              "action": "browser_wait",
+                              "title": "Дождаться точного подтверждённого статуса отправки",
+                              "description": "Дождаться точного подтверждённого статуса отправки",
+                              "params": {
+                                "expression": "(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(v);\n if(roots.length!==1)return false;\n const es=[...roots[0].querySelectorAll(context.ui.sent_status_selector)].filter(v);\n return es.length===1&&[context.ui.sent_status_text,...(context.ui.sent_status_texts||[])].includes(es[0].innerText.trim());\n})()",
+                                "timeout_ms": "{{submit_timeout_ms}}"
+                              },
+                              "timeout_ms": "{{submit_step_timeout_ms}}",
+                              "private": true,
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_17"
+                            },
+                            {
+                              "action": "call",
+                              "title": "Повторно сверить ИНН и ключ после отправки",
+                              "description": "Повторно сверить ИНН и ключ после отправки",
+                              "params": {
+                                "capture_key": false
+                              },
+                              "routine": "identity",
+                              "private": true,
+                              "timeout_ms": "{{control_timeout_ms}}",
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_18"
+                            },
+                            {
+                              "action": "browser_eval",
+                              "title": "Прочитать фактический подтвержденный статус",
+                              "description": "Сохраняет текст статуса текущей карточки, включая уже полученное Отчет сдан.",
+                              "params": {
+                                "expression": "(()=>{const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(v);if(roots.length!==1)throw new Error('Неоднозначная карточка');const es=[...roots[0].querySelectorAll(context.ui.sent_status_selector)].filter(v);if(es.length!==1||![context.ui.sent_status_text,...(context.ui.sent_status_texts||[])].includes(es[0].innerText.trim()))throw new Error('Статус изменился до подтверждения');return es[0].innerText.trim()})()"
+                              },
+                              "save_as": "confirmed_sent_status",
+                              "private": true,
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_19"
+                            },
+                            {
+                              "action": "compute",
+                              "title": "Зафиксировать подтверждённую отправку",
+                              "description": "Зафиксировать подтверждённую отправку",
+                              "params": {
+                                "expression": "({...context.report,state:'sent',sbis_status:context.confirmed_sent_status})"
+                              },
+                              "save_as": "report",
+                              "private": true,
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_20"
+                            },
+                            {
+                              "action": "call",
+                              "title": "store_report",
+                              "description": "store_report",
+                              "params": {},
+                              "routine": "store_report",
+                              "private": true,
+                              "timeout_ms": "{{control_timeout_ms}}",
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_21"
                             }
                           ],
-                          "private": true,
-                          "timeout_ms": "{{control_timeout_ms}}",
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16"
-                        },
-                        {
-                          "action": "browser_wait",
-                          "title": "Дождаться точного подтверждённого статуса отправки",
-                          "description": "Дождаться точного подтверждённого статуса отправки",
-                          "params": {
-                            "expression": "(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(v);\n if(roots.length!==1)return false;\n const es=[...roots[0].querySelectorAll(context.ui.sent_status_selector)].filter(v);\n return es.length===1&&[context.ui.sent_status_text,...(context.ui.sent_status_texts||[])].includes(es[0].innerText.trim());\n})()",
-                            "timeout_ms": "{{submit_timeout_ms}}"
-                          },
-                          "timeout_ms": "{{submit_step_timeout_ms}}",
-                          "private": true,
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_17"
-                        },
-                        {
-                          "action": "call",
-                          "title": "Повторно сверить ИНН и ключ после отправки",
-                          "description": "Повторно сверить ИНН и ключ после отправки",
-                          "params": {
-                            "capture_key": false
-                          },
-                          "routine": "identity",
-                          "private": true,
-                          "timeout_ms": "{{control_timeout_ms}}",
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_18"
-                        },
-                        {
-                          "action": "browser_eval",
-                          "title": "Прочитать фактический подтвержденный статус",
-                          "description": "Сохраняет текст статуса текущей карточки, включая уже полученное Отчет сдан.",
-                          "params": {
-                            "expression": "(()=>{const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(v);if(roots.length!==1)throw new Error('Неоднозначная карточка');const es=[...roots[0].querySelectorAll(context.ui.sent_status_selector)].filter(v);if(es.length!==1||![context.ui.sent_status_text,...(context.ui.sent_status_texts||[])].includes(es[0].innerText.trim()))throw new Error('Статус изменился до подтверждения');return es[0].innerText.trim()})()"
-                          },
-                          "save_as": "confirmed_sent_status",
-                          "private": true,
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_19"
-                        },
-                        {
-                          "action": "compute",
-                          "title": "Зафиксировать подтверждённую отправку",
-                          "description": "Зафиксировать подтверждённую отправку",
-                          "params": {
-                            "expression": "({...context.report,state:'sent',sbis_status:context.confirmed_sent_status})"
-                          },
-                          "save_as": "report",
-                          "private": true,
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_20"
-                        },
-                        {
-                          "action": "call",
-                          "title": "store_report",
-                          "description": "store_report",
-                          "params": {},
-                          "routine": "store_report",
-                          "private": true,
-                          "timeout_ms": "{{control_timeout_ms}}",
-                          "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_21"
+                          "error_as": "report_error",
+                          "error_codes": [
+                            "REPORT_ALREADY_IMPORTED",
+                            "SOURCE_CHANGED",
+                            "FILE_SELECTION_MISMATCH",
+                            "REPORTING_LICENSE_REQUIRED",
+                            "REPORTING_LICENSE_CONFIRMATION_REQUIRED",
+                            "LICENSE_PRICE_CHANGED",
+                            "REQUIRES_RECONCILIATION",
+                            "ERROR_ARCHIVE_CONFLICT",
+                            "ARCHIVE_CONFLICT",
+                            "EEXIST",
+                            "EACCES",
+                            "EPERM",
+                            "VALIDATION_ERROR",
+                            "WORKFLOW_ERROR"
+                          ],
+                          "catch": [
+                            {
+                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_failure",
+                              "action": "call",
+                              "title": "Зафиксировать ошибку и продолжить со следующим отчётом",
+                              "params": {},
+                              "private": true,
+                              "routine": "record_report_failure",
+                              "timeout_ms": "{{control_timeout_ms}}",
+                              "description": "Зафиксировать ошибку и продолжить со следующим отчётом"
+                            }
+                          ],
+                          "description": "Обработать отдельный отчёт и сохранить его ошибку"
                         }
                       ],
                       "index_as": "report_index",
@@ -2673,7 +2912,7 @@
                       "title": "Проверить отправку всех файлов ведомства",
                       "description": "Проверить отправку всех файлов ведомства",
                       "params": {
-                        "expression": "context.reports.filter(r=>r.authority===context.plan.authority).every(r=>r.state==='sent')"
+                        "expression": "context.reports.some(r=>r.authority===context.plan.authority&&r.state==='sent')"
                       },
                       "save_as": "all_sent",
                       "private": true,
@@ -2692,7 +2931,7 @@
                           "title": "compute",
                           "description": "compute",
                           "params": {
-                            "expression": "context.reports.filter(r=>r.authority===context.plan.authority)"
+                            "expression": "context.reports.filter(r=>r.authority===context.plan.authority&&r.state==='sent')"
                           },
                           "save_as": "current_reports",
                           "private": true,
@@ -2708,105 +2947,135 @@
                           "as": "report",
                           "steps": [
                             {
-                              "action": "set",
-                              "title": "Отметить текущий отчет для отдельного результата",
-                              "description": "Привязывает ошибку и финансовые условия только к текущему XML.",
-                              "params": {
-                                "active_report_path": "{{report.path}}",
-                                "license_quote": "{{report.license_quote}}"
-                              },
+                              "id": "sbis_archive_individual",
+                              "action": "try",
+                              "title": "Архивировать отдельный отправленный отчёт",
+                              "params": {},
                               "private": true,
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_1"
-                            },
-                            {
-                              "action": "compute",
-                              "title": "Сформировать путь архивного протокола",
-                              "description": "Сформировать путь архивного протокола",
-                              "params": {
-                                "expression": "context.loaded_dir+'/'+context.report.filename+'.'+context.job_id+'.validation.txt'"
-                              },
-                              "save_as": "archive_protocol_path",
-                              "private": true,
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_2"
-                            },
-                            {
-                              "action": "file_copy",
-                              "title": "Скопировать протокол без перезаписи",
-                              "description": "Скопировать протокол без перезаписи",
-                              "params": {
-                                "source": "{{report.protocol.local_path}}",
-                                "destination": "{{archive_protocol_path}}"
-                              },
-                              "private": true,
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_3"
-                            },
-                            {
-                              "action": "for_each",
-                              "title": "Архивировать все части подтвержденного отчета",
-                              "description": "Перемещает только неизменённые части после подтверждённой отправки отчета.",
-                              "params": {
-                                "items": "{{report.files}}"
-                              },
-                              "private": true,
-                              "as": "bundle_file",
                               "steps": [
                                 {
-                                  "action": "file_archive",
-                                  "title": "Архивировать часть без перезаписи",
-                                  "description": "Архивировать часть без перезаписи",
+                                  "action": "set",
+                                  "title": "Отметить текущий отчет для отдельного результата",
+                                  "description": "Привязывает ошибку и финансовые условия только к текущему XML.",
                                   "params": {
-                                    "file": "{{bundle_file}}",
-                                    "directory": "{{loaded_dir}}"
+                                    "active_report_path": "{{report.path}}",
+                                    "license_quote": "{{report.license_quote}}"
                                   },
                                   "private": true,
-                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_4_steps_1"
-                                }
-                              ],
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_4"
-                            },
-                            {
-                              "action": "compute",
-                              "title": "Зафиксировать архивирование",
-                              "description": "Зафиксировать архивирование",
-                              "params": {
-                                "expression": "({...context.report,state:'archived',archived_path:context.loaded_dir+'/'+context.report.filename})"
-                              },
-                              "save_as": "report",
-                              "private": true,
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_5"
-                            },
-                            {
-                              "action": "call",
-                              "title": "store_report",
-                              "description": "store_report",
-                              "params": {},
-                              "routine": "store_report",
-                              "private": true,
-                              "timeout_ms": "{{control_timeout_ms}}",
-                              "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_6"
-                            },
-                            {
-                              "id": "sbis_report_tab_close",
-                              "action": "if",
-                              "title": "Закрыть вкладку после подтверждённой отправки и архивирования",
-                              "description": "Закрыть вкладку после подтверждённой отправки и архивирования",
-                              "params": {
-                                "condition": "{{keep_report_tabs}}"
-                              },
-                              "then": [
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_1"
+                                },
                                 {
-                                  "id": "sbis_report_tab_close_action",
-                                  "action": "browser_tab",
-                                  "title": "Закрыть вкладку после подтверждённой отправки и архивирования",
-                                  "description": "Именованная вкладка связана с полным путём XML. Выбор отсутствующей или закрытой вкладки завершается ошибкой без отправки.",
+                                  "action": "compute",
+                                  "title": "Сформировать путь архивного протокола",
+                                  "description": "Сформировать путь архивного протокола",
                                   "params": {
-                                    "operation": "close",
-                                    "name": "{{report.path}}"
+                                    "expression": "context.loaded_dir+'/'+context.report.filename+'.'+context.job_id+'.validation.txt'"
                                   },
+                                  "save_as": "archive_protocol_path",
+                                  "private": true,
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_2"
+                                },
+                                {
+                                  "action": "file_copy",
+                                  "title": "Скопировать протокол без перезаписи",
+                                  "description": "Скопировать протокол без перезаписи",
+                                  "params": {
+                                    "source": "{{report.protocol.local_path}}",
+                                    "destination": "{{archive_protocol_path}}"
+                                  },
+                                  "private": true,
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_3"
+                                },
+                                {
+                                  "action": "for_each",
+                                  "title": "Архивировать все части подтвержденного отчета",
+                                  "description": "Перемещает только неизменённые части после подтверждённой отправки отчета.",
+                                  "params": {
+                                    "items": "{{report.files}}"
+                                  },
+                                  "private": true,
+                                  "as": "bundle_file",
+                                  "steps": [
+                                    {
+                                      "action": "file_archive",
+                                      "title": "Архивировать часть без перезаписи",
+                                      "description": "Архивировать часть без перезаписи",
+                                      "params": {
+                                        "file": "{{bundle_file}}",
+                                        "directory": "{{loaded_dir}}"
+                                      },
+                                      "private": true,
+                                      "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_4_steps_1"
+                                    }
+                                  ],
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_4"
+                                },
+                                {
+                                  "action": "compute",
+                                  "title": "Зафиксировать архивирование",
+                                  "description": "Зафиксировать архивирование",
+                                  "params": {
+                                    "expression": "({...context.report,state:'archived',archived_path:context.loaded_dir+'/'+context.report.filename})"
+                                  },
+                                  "save_as": "report",
+                                  "private": true,
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_5"
+                                },
+                                {
+                                  "action": "call",
+                                  "title": "store_report",
+                                  "description": "store_report",
+                                  "params": {},
+                                  "routine": "store_report",
+                                  "private": true,
+                                  "timeout_ms": "{{control_timeout_ms}}",
+                                  "id": "sbis_run_reports_then_23_steps_14_then_4_then_4_then_2_steps_6"
+                                },
+                                {
+                                  "id": "sbis_report_tab_close",
+                                  "action": "if",
+                                  "title": "Закрыть вкладку после подтверждённой отправки и архивирования",
+                                  "description": "Закрыть вкладку после подтверждённой отправки и архивирования",
+                                  "params": {
+                                    "condition": "{{keep_report_tabs}}"
+                                  },
+                                  "then": [
+                                    {
+                                      "id": "sbis_report_tab_close_action",
+                                      "action": "browser_tab",
+                                      "title": "Закрыть вкладку после подтверждённой отправки и архивирования",
+                                      "description": "Именованная вкладка связана с полным путём XML. Выбор отсутствующей или закрытой вкладки завершается ошибкой без отправки.",
+                                      "params": {
+                                        "operation": "close",
+                                        "name": "{{report.path}}"
+                                      },
+                                      "private": true
+                                    }
+                                  ],
                                   "private": true
                                 }
                               ],
-                              "private": true
+                              "error_as": "report_error",
+                              "error_codes": [
+                                "SOURCE_CHANGED",
+                                "EEXIST",
+                                "EACCES",
+                                "EPERM",
+                                "ARCHIVE_CONFLICT"
+                              ],
+                              "catch": [
+                                {
+                                  "id": "sbis_archive_failure",
+                                  "action": "call",
+                                  "title": "Зафиксировать ошибку и продолжить со следующим отчётом",
+                                  "params": {},
+                                  "private": true,
+                                  "routine": "record_report_failure",
+                                  "timeout_ms": "{{control_timeout_ms}}",
+                                  "description": "Зафиксировать ошибку и продолжить со следующим отчётом"
+                                }
+                              ],
+                              "description": "Архивировать отдельный отправленный отчёт"
                             }
                           ],
                           "private": true,
@@ -2851,6 +3120,51 @@
             "filename": "workflow-final.png"
           },
           "id": "sbis_run_reports_then_25"
+        },
+        {
+          "id": "sbis_batch_failed",
+          "action": "compute",
+          "title": "Проверить ошибки отдельных отчётов после обхода",
+          "params": {
+            "expression": "context.reports.some(r=>r.processing_error)"
+          },
+          "private": true,
+          "save_as": "batch_failed",
+          "description": "Проверить ошибки отдельных отчётов после обхода"
+        },
+        {
+          "id": "sbis_batch_failure",
+          "action": "if",
+          "title": "Вернуть ошибки обработанных отчётов",
+          "params": {
+            "condition": "{{batch_failed}}"
+          },
+          "private": true,
+          "then": [
+            {
+              "id": "sbis_batch_message",
+              "action": "compute",
+              "title": "Собрать причины ошибок обработанных отчётов",
+              "params": {
+                "expression": "context.reports.filter(r=>r.processing_error).map(r=>r.authority+', '+r.filename+': '+r.processing_error.message).join('\\n')"
+              },
+              "private": true,
+              "save_as": "batch_message",
+              "description": "Собрать причины ошибок обработанных отчётов"
+            },
+            {
+              "id": "sbis_batch_fail",
+              "action": "fail",
+              "title": "Завершить обработку с ошибками отдельных отчётов",
+              "params": {
+                "error_code": "REPORTS_FAILED",
+                "message": "{{batch_message}}"
+              },
+              "private": true,
+              "description": "Завершить обработку с ошибками отдельных отчётов"
+            }
+          ],
+          "description": "Вернуть ошибки обработанных отчётов"
         },
         {
           "action": "compute",

@@ -83,3 +83,18 @@
 `GET /api/v2/interpreter/actions` возвращает универсальные операции в `formats.json-workflow`. Старый `json-steps` сохраняется для совместимости с демонстрациями; его имитационные действия не используются новым workflow.
 
 Формат `sbis-report` удалён из исполнительного пути. Старые JSON этого формата необходимо заменить новым `demo/sbis-report-full.json`; автоматической скрытой конвертации нет.
+
+
+### try: обработка ожидаемых ошибок
+
+```json
+{
+  "action": "try",
+  "error_as": "local_error",
+  "error_codes": ["EXPECTED_ERROR"],
+  "steps": [{"action":"fail","params":{"error_code":"EXPECTED_ERROR","message":"Описание"}}],
+  "catch": [{"action":"set","params":{"description":"{{local_error.message}}"}}]
+}
+```
+
+API 0.9.8+. `steps` выполняется последовательно; при ошибке из явного списка `error_codes` запускается `catch`, затем выполнение продолжается после try. Переменная `error_as` доступна в catch и содержит code, message, step_id, source_path; после catch прежнее значение переменной восстанавливается. Ошибки вне списка, отмена и TIMEOUT_ERROR передаются наружу. Ошибка внутри catch также передаётся наружу. Обработчик не откатывает выполненные действия. В журнале исходный шаг остаётся failed, даже если ошибка обработана.
