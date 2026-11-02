@@ -117,13 +117,20 @@ for (const scenario of ['mixed_validation_send','duplicate_then_valid_conflict',
       const records=Object.fromEntries(Object.entries(projection).filter(([k])=>/^Rezult_[1-9]\d*$/.test(k)));
       assert.deepEqual(JSON.parse(text), records);
       for(const report of Object.values(records))for(const value of Object.values(report))assert.ok(value===null||['string','number','boolean'].includes(typeof value));
+      for(const r of Object.values(records)){
+        for(let i=1;i<=r.file_count;i++)assert.equal(r['screenshot_'+i],r.screenshot);
+        if(r.screenshot){
+          assert.ok(projection.artifacts.some(a=>a.public_url===r.screenshot&&a.filename.startsWith('report-')));
+          assert.ok(r.screenshot_stage);
+        }
+      }
       assert.equal(text.includes('key-NO'), false);
     };
     if(scenario==='mixed_validation_send'){
       let partial;await assert.rejects(executeJsonWorkflow(opts),e=>{partial=e.partial_context;assert.equal(e.code,'VALIDATION_ERROR');return true;});
       const records=Object.values(partial).filter(r=>r?.file_name);
       assert.equal(records.find(r=>r.file_name==='NO_one.xml').state,'validation_failed');
-      assert.equal(records.find(r=>r.file_name==='AN_two.xml').state,'sent');
+      assert.equal(records.find(r=>r.file_name==='AN_two.xml').state,'sent');assert.equal(records.find(r=>r.file_name==='AN_two.xml').screenshot_stage,'sent');assert.equal(records.find(r=>r.file_name==='NO_one.xml').screenshot_stage,'validation_failed');
       assert.equal(submitted,1);assert.deepEqual(await readdir(incoming),[]);await checkSavedResult(partial);return;
     }
     if(scenario.startsWith('duplicate_then_valid')){
@@ -131,7 +138,7 @@ for (const scenario of ['mixed_validation_send','duplicate_then_valid_conflict',
       await assert.rejects(executeJsonWorkflow(opts),e=>{partial=e.partial_context;assert.equal(e.code,'REPORTS_FAILED');return true;});
       const records=Object.values(partial).filter(r=>r?.file_name),duplicate=records.find(r=>r.file_name==='NO_one.xml'),valid=records.find(r=>r.file_name==='AN_two.xml');
       assert.equal(duplicate.error_code,'REPORT_ALREADY_IMPORTED');assert.equal(duplicate.error_path,scenario.endsWith('conflict')?null:path.join(errors,'NO_one.xml'));if(scenario.endsWith('conflict')){assert.match(duplicate.error_message,/Ошибка переноса/);assert.equal(await readFile(path.join(errors,'NO_one.xml'),'utf8'),'KEEP EXISTING');}
-      assert.equal(valid.state,'sent');assert.equal(imported,1);assert.equal(submitted,1);
+      assert.equal(valid.state,'sent');assert.equal(valid.screenshot_stage,'sent');assert.ok(valid.screenshot);assert.equal(duplicate.screenshot_stage,'error');assert.ok(duplicate.screenshot);assert.notEqual(valid.screenshot,duplicate.screenshot);assert.equal(imported,1);assert.equal(submitted,1);
       assert.deepEqual(await readdir(incoming),scenario.endsWith('conflict')?['NO_one.xml']:[]);assert.deepEqual((await readdir(loaded)).filter(n=>n.endsWith('.xml')),['AN_two.xml']);await checkSavedResult(partial);return;
     }
     if (codes[scenario]) {
@@ -228,14 +235,14 @@ for (const scenario of ['mixed_validation_send','duplicate_then_valid_conflict',
   });
 }
 
-const resultFields = ['state','report_state','inn','authority','section_name','mode','file_name','sha256','load_datetime','validation_result','file_selection_verified','report_key_verified','validation_protocol','sbis_status','archived_path','error_path','error_protocol_path','error_code','error_message','license_requires_confirmation','license_amount','license_currency','license_continuation','file_count','bundle_verified'];
+const resultFields = ['state','report_state','inn','authority','section_name','mode','file_name','sha256','load_datetime','validation_result','file_selection_verified','report_key_verified','validation_protocol','sbis_status','archived_path','error_path','error_protocol_path','error_code','error_message','license_requires_confirmation','license_amount','license_currency','license_continuation','screenshot','screenshot_stage','screenshot_error','file_count','bundle_verified'];
 test('SBIS result fields have the same fixed order for every authority and outcome', async () => {
   for(const state of ['selected','uploaded','validated','validation_failed','archived']){
     const reports=['FNS','SFR','ROSSTAT'].map(authority=>({authority,state,path:authority+'.xml',filename:authority+'.xml',sha256:'a'.repeat(64),load_datetime:state==='selected'?null:'2026-10-21T00:00:00Z',files:[{path:authority+'.xml',filename:authority+'.xml',sha256:'a'.repeat(64)}]}));
     const script={format:'json-workflow',context:{reports,inn,mode:'validate_only'},routines:{project_results:template.routines.project_results},steps:[{action:'call',routine:'project_results'}],output:'{{report_results}}'};
     const result=await executeJsonWorkflow({script});
     for(const r of Object.values(result.context).filter(r=>r?.file_name)){
-      assert.deepEqual(Object.keys(r),[...resultFields,'file_name_1','sha256_1','error_path_1']);
+      assert.deepEqual(Object.keys(r),[...resultFields,'file_name_1','sha256_1','error_path_1','screenshot_1']);
       assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(r))),Object.keys(r));
       for(const value of Object.values(r))assert.ok(value===null||['string','boolean','number'].includes(typeof value));
     }

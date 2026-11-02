@@ -208,7 +208,12 @@ export async function executeJsonWorkflow(options) {
         try { if (!await runner.run()) fail('CANCELLED', 'Браузерные шаги остановлены'); activeSignal?.throwIfAborted(); return true; }
         finally { activeSignal?.removeEventListener('abort', abort); }
       }
-      case 'browser_screenshot': return screenshot(params.filename || `workflow-${count}.png`);
+      case 'browser_screenshot':
+        try { return await screenshot(params.filename || `workflow-${count}.png`); }
+        catch (error) {
+          if (activeSignal?.aborted || params.optional !== true) throw error;
+          return { captured: false, error_code: error.code || 'SCREENSHOT_FAILED', message: error.message || 'Не удалось сохранить снимок' };
+        }
       default: fail('UNKNOWN_ACTION', 'Неизвестная операция');
     }
   }

@@ -48,6 +48,10 @@ export function validateWorkflow(script) {
         && typeof step.params.ignore_default_args !== 'boolean' && !timeoutTemplate(step.params.ignore_default_args)) {
         add(`${at}.params.ignore_default_args`, 'Требуется boolean или шаблон переменной');
       }
+      if (step.action === 'browser_screenshot' && step.params?.optional !== undefined
+        && typeof step.params.optional !== 'boolean' && !timeoutTemplate(step.params.optional)) {
+        add(`${at}.params.optional`, 'Требуется boolean или шаблон переменной');
+      }
       if (step.action === 'browser_tab') {
         if (!['open', 'select', 'close'].includes(step.params?.operation) && !timeoutTemplate(step.params?.operation)) add(`${at}.params.operation`, 'Укажите open, select или close');
         if (typeof step.params?.name !== 'string' || !step.params.name.trim() || step.params.name.length > 1024) add(`${at}.params.name`, 'Укажите непустое имя вкладки длиной до 1024 символов');

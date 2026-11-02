@@ -260,7 +260,7 @@ file_selection_verified, report_key_verified, validation_protocol,
 sbis_status, archived_path, error_path, error_protocol_path,
 error_code, error_message, license_requires_confirmation,
 license_amount, license_currency, license_continuation,
-file_count, bundle_verified
+screenshot, screenshot_stage, screenshot_error, file_count, bundle_verified
 ```
 
 Затем идут `file_name_1, sha256_1, error_path_1`, затем те же поля для 2 и далее до `file_count`. Неприменимые значения общих полей всегда присутствуют как null либо false. Порядок сохранён в экспортируемом JSON; по стандарту JSON ключи объекта не упорядочены, поэтому в 1С надёжнее обращаться по именам, а не по позициям.
@@ -269,3 +269,9 @@ file_count, bundle_verified
 
 
 Начиная с API 0.9.8 / JSON СБИС 3.6.0 ожидаемые ошибки отдельных отчётов не останавливают обход. После обхода `job.status=failed`, `job.error.code=REPORTS_FAILED`, если были перехваченные ошибки. Для каждого `Rezult_N` анализируйте его собственные `state`, `error_code`, `error_message`: часть отчётов могла быть успешно отправлена. Не повторяйте всё задание автоматически по общему коду: отчёты со статусом `sent` уже отправлены, а `requires_reconciliation` требует сверки. Повторная загрузка `REPORT_ALREADY_IMPORTED` переносится в `error_dir` и не считается подтверждением отправки.
+
+
+JSON СБИС 3.7.0 / API 0.9.11 добавляет общие поля `screenshot`, `screenshot_stage`, `screenshot_error` в каждый Rezult_N (перед file_count/bundle_verified). screenshot содержит ссылку на последний снимок своего отчёта; скачать его можно через соответствующий элемент result.artifacts. При недоступном браузере ссылка null и указана причина. Снимки не обработанных отчётов отсутствуют. `parameters.timeout_ms` остаётся общим лимитом всего задания, а не лимитом каждого отчёта.
+
+
+В JSON 3.7.0 каждому физическому XML соответствует плоское поле `screenshot_N`, добавленное в конец результата рядом с `file_name_N`, `sha256_N`, `error_path_N`. Самостоятельный отчёт получает свой снимок. Связанный комплект остаётся одной единицей загрузки, проверки и отправки: его части имеют одинаковую ссылку на снимок общей карточки СБИС. Это не отдельные проверки каждой части и не три независимые отправки. Количество Rezult_N соответствует отчётам, а file_count — количеству XML внутри отчёта. При недоступном снимке все соответствующие ссылки null, причина указана в общем screenshot_error.

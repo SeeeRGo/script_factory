@@ -279,3 +279,9 @@ test('try cannot swallow cancellation or timeouts, and catch failures propagate'
   script.steps[0].error_codes=['LOCAL'];script.steps[0].steps=[{action:'fail',params:{error_code:'LOCAL',message:'local'}}];script.steps[0].catch=[{action:'fail',params:{error_code:'CATCH_FAILED',message:'handler failed'}}];
   await assert.rejects(executeJsonWorkflow({...await options(t,script)}),{code:'CATCH_FAILED'});
 });
+
+test('optional screenshot reports unavailability without hiding strict screenshot errors', async t => {
+  const script={format:'json-workflow',steps:[{action:'browser_screenshot',params:{filename:'optional.png',optional:true},save_as:'image'}],output:{Rezult_1:'{{image}}'}};
+  const r=await executeJsonWorkflow({...await options(t,script)});assert.equal(r.context.Rezult_1.captured,false);assert.equal(r.context.Rezult_1.error_code,'BROWSER_NOT_STARTED');
+  script.steps[0].params.optional=false;await assert.rejects(executeJsonWorkflow({...await options(t,script)}),{code:'BROWSER_NOT_STARTED'});
+});

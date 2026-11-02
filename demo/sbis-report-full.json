@@ -1,7 +1,7 @@
 {
   "format": "json-workflow",
   "title": "СБИС: ФНС, СФР и Росстат из JSON",
-  "version": "3.6.0",
+  "version": "3.7.0",
   "default_step_timeout_ms": 60000,
   "context": {
     "mode": "validate_only",
@@ -619,6 +619,18 @@
         "id": "sbis_validate_8"
       },
       {
+        "id": "sbis_validation_screenshot",
+        "action": "call",
+        "title": "Сохранить отдельный снимок отчёта",
+        "description": "Сохранить отдельный снимок отчёта",
+        "params": {
+          "screenshot_stage": "{{report.state}}"
+        },
+        "private": true,
+        "routine": "capture_report",
+        "timeout_ms": "{{control_timeout_ms}}"
+      },
+      {
         "id": "sbis_validation_has_errors",
         "action": "compute",
         "title": "Определить ошибку проверки отчёта",
@@ -745,7 +757,7 @@
         "title": "Сформировать плоские результаты каждого отчета",
         "description": "Один плоский Rezult_N на отчет, включая комплект: file_count, file_name_1..N и sha256_1..N. Коллекций в результате нет.",
         "params": {
-          "expression": "(() => {\n const names={FNS:'ФНС',SFR:'СФР',ROSSTAT:'Росстат'},out={};\n for(const [index,r] of (context.reports||[]).entries()) {\n  const active=r.path===context.active_report_path;\n  const error=context.error?.code==='REPORTS_FAILED'?null:(context.error||null);\n  const affected=!!error&&error.code!=='VALIDATION_ERROR'&&(active||context.active_report_path==null);\n  const quote=r.license_quote||(active?context.license_quote:null)||null;\n  let state;\n  if(['sent','archived'].includes(r.state))state='sent';\n  else if(r.state==='submission_unknown')state='requires_reconciliation';\n  else if(r.state==='validation_failed')state='validation_failed';\n  else if(r.processing_error)state=['REPORTING_LICENSE_REQUIRED','REPORTING_LICENSE_CONFIRMATION_REQUIRED','LICENSE_PRICE_CHANGED'].includes(r.processing_error.code)?(r.processing_error.code==='REPORTING_LICENSE_REQUIRED'?'license_required':'license_confirmation_required'):'failed';\n  else if(affected&&error.code!=='VALIDATION_ERROR')state=active?(context.result_state||'failed'):'not_processed';\n  else if(context.mode==='preflight'&&!error)state='preflight_completed';\n  else state=r.state==='validated'?'validated_not_sent':r.state==='uploaded'?'uploaded_not_sent':'not_processed';\n  out['Rezult_'+(index+1)]={state,report_state:r.state,inn:context.inn,authority:r.authority,\n   section_name:r.load_datetime?(names[r.authority]||r.authority):null,mode:context.mode,\n   file_name:r.filename,sha256:r.sha256,load_datetime:r.load_datetime||null,\n   validation_result:r.validation_result||null,file_selection_verified:!!r.file_selection_verified,\n   report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,\n   sbis_status:r.sbis_status||null,archived_path:r.archived_path||null,\n   error_path:r.error_path||null,error_protocol_path:r.error_protocol_path||null,\n   error_code:r.processing_error?r.processing_error.code:affected?error.code:r.state==='validation_failed'?'VALIDATION_ERROR':null,\n   error_message:r.processing_error?r.processing_error.message:affected?(r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности')+'\\nОшибка сохранения отчёта: '+error.message:error.message):r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности'):null,\n   license_requires_confirmation:quote?.requires_confirmation??null,\n   license_amount:quote?.amount??null,license_currency:quote?.currency??null,\n   license_continuation:quote?.continuation??null,file_count:(r.files||[r]).length,bundle_verified:!!r.bundle_verified};\n  for(const [i,file] of (r.files||[r]).entries()){out['Rezult_'+(index+1)]['file_name_'+(i+1)]=file.filename;out['Rezult_'+(index+1)]['sha256_'+(i+1)]=file.sha256;out['Rezult_'+(index+1)]['error_path_'+(i+1)]=r.error_paths?.[file.path]||null;}\n }\n return out;\n})()"
+          "expression": "(() => {\n const names={FNS:'ФНС',SFR:'СФР',ROSSTAT:'Росстат'},out={};\n for(const [index,r] of (context.reports||[]).entries()) {\n  const active=r.path===context.active_report_path;\n  const error=context.error?.code==='REPORTS_FAILED'?null:(context.error||null);\n  const affected=!!error&&error.code!=='VALIDATION_ERROR'&&(active||context.active_report_path==null);\n  const quote=r.license_quote||(active?context.license_quote:null)||null;\n  let state;\n  if(['sent','archived'].includes(r.state))state='sent';\n  else if(r.state==='submission_unknown')state='requires_reconciliation';\n  else if(r.state==='validation_failed')state='validation_failed';\n  else if(r.processing_error)state=['REPORTING_LICENSE_REQUIRED','REPORTING_LICENSE_CONFIRMATION_REQUIRED','LICENSE_PRICE_CHANGED'].includes(r.processing_error.code)?(r.processing_error.code==='REPORTING_LICENSE_REQUIRED'?'license_required':'license_confirmation_required'):'failed';\n  else if(affected&&error.code!=='VALIDATION_ERROR')state=active?(context.result_state||'failed'):'not_processed';\n  else if(context.mode==='preflight'&&!error)state='preflight_completed';\n  else state=r.state==='validated'?'validated_not_sent':r.state==='uploaded'?'uploaded_not_sent':'not_processed';\n  out['Rezult_'+(index+1)]={state,report_state:r.state,inn:context.inn,authority:r.authority,\n   section_name:r.load_datetime?(names[r.authority]||r.authority):null,mode:context.mode,\n   file_name:r.filename,sha256:r.sha256,load_datetime:r.load_datetime||null,\n   validation_result:r.validation_result||null,file_selection_verified:!!r.file_selection_verified,\n   report_key_verified:!!r.report_key,validation_protocol:r.protocol?.public_url||null,\n   sbis_status:r.sbis_status||null,archived_path:r.archived_path||null,\n   error_path:r.error_path||null,error_protocol_path:r.error_protocol_path||null,\n   error_code:r.processing_error?r.processing_error.code:affected?error.code:r.state==='validation_failed'?'VALIDATION_ERROR':null,\n   error_message:r.processing_error?r.processing_error.message:affected?(r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности')+'\\nОшибка сохранения отчёта: '+error.message:error.message):r.state==='validation_failed'?(r.validation_error_text||'СБИС обнаружил ошибки отчетности'):null,\n   license_requires_confirmation:quote?.requires_confirmation??null,\n   license_amount:quote?.amount??null,license_currency:quote?.currency??null,\n   license_continuation:quote?.continuation??null,\n   screenshot:r.screenshot?.public_url||null,screenshot_stage:r.screenshot_stage||null,screenshot_error:r.screenshot_error||null,file_count:(r.files||[r]).length,bundle_verified:!!r.bundle_verified};\n  for(const [i,file] of (r.files||[r]).entries()){out['Rezult_'+(index+1)]['file_name_'+(i+1)]=file.filename;out['Rezult_'+(index+1)]['sha256_'+(i+1)]=file.sha256;out['Rezult_'+(index+1)]['error_path_'+(i+1)]=r.error_paths?.[file.path]||null;out['Rezult_'+(index+1)]['screenshot_'+(i+1)]=r.screenshot?.public_url||null;}\n }\n return out;\n})()"
         },
         "save_as": "report_results",
         "private": true,
@@ -959,6 +971,37 @@
     ],
     "record_report_failure": [
       {
+        "action": "compute",
+        "title": "Определить необходимость снимка ошибки в браузере",
+        "description": "Ошибки архивирования сохраняют снимок подтверждённой отправки своей карточки.",
+        "params": {
+          "expression": "!['sent','archived'].includes(context.report.state)"
+        },
+        "save_as": "capture_local_failure",
+        "private": true
+      },
+      {
+        "action": "if",
+        "title": "Снять ошибку текущей карточки",
+        "params": {
+          "condition": "{{capture_local_failure}}"
+        },
+        "then": [
+          {
+            "id": "sbis_failure_screenshot",
+            "action": "call",
+            "title": "Сохранить отдельный снимок отчёта",
+            "description": "Сохранить отдельный снимок отчёта",
+            "params": {
+              "screenshot_stage": "error"
+            },
+            "private": true,
+            "routine": "capture_report",
+            "timeout_ms": "{{control_timeout_ms}}"
+          }
+        ]
+      },
+      {
         "id": "sbis_check_recoverable",
         "action": "compute",
         "params": {
@@ -1112,6 +1155,63 @@
           }
         ],
         "description": "Перенести ранее загруженный комплект"
+      }
+    ],
+    "capture_report": [
+      {
+        "id": "sbis_snapshot_sequence",
+        "action": "compute",
+        "title": "Выбрать уникальный номер снимка",
+        "description": "Выбрать уникальный номер снимка",
+        "params": {
+          "expression": "(context.screenshot_sequence||0)+1"
+        },
+        "private": true,
+        "save_as": "screenshot_sequence"
+      },
+      {
+        "id": "sbis_snapshot_name",
+        "action": "compute",
+        "title": "Сформировать имя снимка отчёта",
+        "description": "Сформировать имя снимка отчёта",
+        "params": {
+          "expression": "'report-'+context.report.authority+'-'+context.report.sha256.slice(0,12)+'-'+context.screenshot_sequence+'.png'"
+        },
+        "private": true,
+        "save_as": "report_screenshot_filename"
+      },
+      {
+        "id": "sbis_snapshot_capture",
+        "action": "browser_screenshot",
+        "title": "Снять экран текущего отчёта",
+        "description": "Снять экран текущего отчёта",
+        "params": {
+          "filename": "{{report_screenshot_filename}}",
+          "optional": true
+        },
+        "private": true,
+        "save_as": "report_screenshot"
+      },
+      {
+        "id": "sbis_snapshot_record",
+        "action": "compute",
+        "title": "Связать снимок с текущим отчётом",
+        "description": "Связать снимок с текущим отчётом",
+        "params": {
+          "expression": "({...context.report,screenshot:context.report_screenshot.local_path?context.report_screenshot:null,screenshot_stage:context.screenshot_stage,screenshot_error:context.report_screenshot.local_path?null:context.report_screenshot.message})"
+        },
+        "private": true,
+        "save_as": "report"
+      },
+      {
+        "id": "sbis_snapshot_store",
+        "action": "call",
+        "title": "Сохранить ссылку на снимок в результате",
+        "description": "Сохранить ссылку на снимок в результате",
+        "params": {},
+        "private": true,
+        "routine": "store_report",
+        "timeout_ms": "{{control_timeout_ms}}"
       }
     ]
   },
@@ -2207,6 +2307,18 @@
                           "id": "sbis_run_reports_then_23_steps_14_then_2_steps_22"
                         },
                         {
+                          "id": "sbis_uploaded_screenshot",
+                          "action": "call",
+                          "title": "Сохранить отдельный снимок отчёта",
+                          "description": "Сохранить отдельный снимок отчёта",
+                          "params": {
+                            "screenshot_stage": "uploaded"
+                          },
+                          "private": true,
+                          "routine": "capture_report",
+                          "timeout_ms": "{{control_timeout_ms}}"
+                        },
+                        {
                           "action": "compute",
                           "title": "Определить необходимость проверки после импорта",
                           "description": "upload_only оставляет загруженный черновик без проверки и отправки.",
@@ -2336,29 +2448,6 @@
                               "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_1"
                             },
                             {
-                              "id": "sbis_individual_archive_clear",
-                              "action": "compute",
-                              "title": "Проверить имена XML текущего отчёта в архиве",
-                              "params": {
-                                "expression": "!context.report.files.some(f=>context.archive_existing.some(a=>a.filename.toLowerCase()===f.filename.toLowerCase()))"
-                              },
-                              "private": true,
-                              "save_as": "individual_archive_clear",
-                              "description": "Проверить имена XML текущего отчёта в архиве"
-                            },
-                            {
-                              "id": "sbis_individual_archive_assert",
-                              "action": "assert",
-                              "title": "Проверить архив текущего отчёта",
-                              "params": {
-                                "condition": "{{individual_archive_clear}}",
-                                "error_code": "ARCHIVE_CONFLICT",
-                                "message": "XML с таким именем уже находится в архиве"
-                              },
-                              "private": true,
-                              "description": "Проверить архив текущего отчёта"
-                            },
-                            {
                               "action": "set",
                               "title": "Обновить переменные сценария",
                               "description": "Обновить переменные сценария",
@@ -2391,6 +2480,29 @@
                                 }
                               ],
                               "private": true
+                            },
+                            {
+                              "id": "sbis_individual_archive_clear",
+                              "action": "compute",
+                              "title": "Проверить имена XML текущего отчёта в архиве",
+                              "params": {
+                                "expression": "!context.report.files.some(f=>context.archive_existing.some(a=>a.filename.toLowerCase()===f.filename.toLowerCase()))"
+                              },
+                              "private": true,
+                              "save_as": "individual_archive_clear",
+                              "description": "Проверить имена XML текущего отчёта в архиве"
+                            },
+                            {
+                              "id": "sbis_individual_archive_assert",
+                              "action": "assert",
+                              "title": "Проверить архив текущего отчёта",
+                              "params": {
+                                "condition": "{{individual_archive_clear}}",
+                                "error_code": "ARCHIVE_CONFLICT",
+                                "message": "XML с таким именем уже находится в архиве"
+                              },
+                              "private": true,
+                              "description": "Проверить архив текущего отчёта"
                             },
                             {
                               "action": "call",
@@ -2860,6 +2972,18 @@
                               "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_20"
                             },
                             {
+                              "id": "sbis_sent_screenshot",
+                              "action": "call",
+                              "title": "Сохранить отдельный снимок отчёта",
+                              "description": "Сохранить отдельный снимок отчёта",
+                              "params": {
+                                "screenshot_stage": "sent"
+                              },
+                              "private": true,
+                              "routine": "capture_report",
+                              "timeout_ms": "{{control_timeout_ms}}"
+                            },
+                            {
                               "action": "call",
                               "title": "store_report",
                               "description": "store_report",
@@ -3226,6 +3350,52 @@
       "save_as": "result_state",
       "private": true,
       "id": "sbis_error_1"
+    },
+    {
+      "id": "sbis_error_snapshot_target",
+      "action": "compute",
+      "title": "Выбрать отчёт, на котором остановилось задание",
+      "description": "Выбрать отчёт, на котором остановилось задание",
+      "params": {
+        "expression": "context.reports?.find(r=>r.path===context.active_report_path)||null"
+      },
+      "private": true,
+      "save_as": "report"
+    },
+    {
+      "id": "sbis_error_snapshot_exists",
+      "action": "compute",
+      "title": "Проверить наличие текущего отчёта",
+      "description": "Проверить наличие текущего отчёта",
+      "params": {
+        "expression": "!!context.report&&!['REPORTS_FAILED','VALIDATION_ERROR','BROWSER_TAB_NOT_FOUND','BROWSER_TAB_EXISTS'].includes(context.error.code)"
+      },
+      "private": true,
+      "save_as": "has_error_report"
+    },
+    {
+      "id": "sbis_error_report_snapshot",
+      "action": "if",
+      "title": "Сохранить снимок текущего отчёта при остановке",
+      "description": "Сохранить снимок текущего отчёта при остановке",
+      "params": {
+        "condition": "{{has_error_report}}"
+      },
+      "private": true,
+      "then": [
+        {
+          "id": "sbis_error_report_snapshot_call",
+          "action": "call",
+          "title": "Сохранить отдельный снимок отчёта",
+          "description": "Сохранить отдельный снимок отчёта",
+          "params": {
+            "screenshot_stage": "error"
+          },
+          "private": true,
+          "routine": "capture_report",
+          "timeout_ms": "{{control_timeout_ms}}"
+        }
+      ]
     },
     {
       "action": "call",
