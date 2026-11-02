@@ -37,7 +37,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Windows preflight завершился с ош
 
 if (-not $SkipDependencyInstall) {
   $env:PUPPETEER_SKIP_DOWNLOAD = 'true'
-  & npm.cmd ci --omit=dev
+  # npm warnings on stderr must not terminate Windows PowerShell 5.1.
+  # Merge streams in cmd itself; still reject a nonzero npm exit code below.
+  & cmd.exe /d /c "npm.cmd ci --omit=dev 2>&1"
   if ($LASTEXITCODE -ne 0) { throw 'npm ci завершился с ошибкой' }
 }
 
