@@ -7,7 +7,7 @@ import { InterpreterError, resolveTemplates, abortableDelay } from './interprete
 import { resolveBrowserExecutablePath, resolveBrowserUploadFiles } from './browser-replay.js';
 import { checkExternalIp } from './system-checks.js';
 import { validateWorkflow, workflowIdentifier } from './workflow-schema.js';
-import { checkedWorkflowPath, listWorkflowFiles, verifyWorkflowFile, archiveWorkflowFile, copyWorkflowFile, readWorkflowFile } from './workflow-files.js';
+import { checkedWorkflowPath, createWorkflowDirectory, listWorkflowFiles, verifyWorkflowFile, archiveWorkflowFile, copyWorkflowFile, readWorkflowFile } from './workflow-files.js';
 
 const fail = (code, message) => { throw new InterpreterError(code, message); };
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -61,21 +61,24 @@ export async function executeJsonWorkflow(options) {
     return { ...(valid ? output : {}), artifacts: [...artifacts] };
   };
   const requirePage = () => { if (!page || page.isClosed()) fail('BROWSER_NOT_STARTED', 'Браузер не запущен'); };
-  const writeArtifact = async (filename, value, mime = 'text/plain', kind = 'workflow_artifact') => {
+  const writeArtifact = async (filename, value, mime = 'text/plain', kind = 'workflow_artifact', replace = false) => {
     if (!artifactDirectory || typeof filename !== 'string' || !filename || path.basename(filename) !== filename || filename === '.' || filename === '..' || /[\\/]/.test(filename)) fail('INVALID_ARTIFACT', 'Неверное имя артефакта');
     await mkdir(artifactDirectory, { recursive: true });
     const directory = await checkedWorkflowPath(artifactDirectory, allowedRoots, true);
     const file = path.join(directory, filename);
-    await writeFile(file, value, { flag: 'wx' });
+    const existing = artifacts.findIndex(a => a.local_path === file);
+    const update = replace === true && existing >= 0;
+    if (update && await checkedWorkflowPath(file, allowedRoots) !== file) fail('INVALID_ARTIFACT', 'Путь артефакта изменился');
+    await writeFile(file, value, { flag: update ? 'w' : 'wx' });
     const descriptor = { artifact_id: `${jobId}_${filename}`, kind, filename, local_path: file,
       public_url: `${publicArtifactBasePath}/${encodeURIComponent(filename)}`, mime_type: mime,
       size_bytes: (await stat(file)).size, created_at: new Date().toISOString() };
-    artifacts.push(descriptor);
+    if (update) artifacts[existing] = descriptor; else artifacts.push(descriptor);
     return descriptor;
   };
-  const screenshot = async name => {
+  const screenshot = async (name, replace = false) => {
     requirePage();
-    return writeArtifact(name, await page.screenshot({ fullPage: true }), 'image/png', 'browser_screenshot');
+    return writeArtifact(name, await page.screenshot({ fullPage: true }), 'image/png', 'browser_screenshot', replace);
   };
   const scoped = async (values, fn) => {
     const previous = new Map(Object.keys(values).map(key => [key, Object.hasOwn(context, key) ? { value: context[key] } : null]));
@@ -115,11 +118,12 @@ export async function executeJsonWorkflow(options) {
       case 'call': return scoped(params, () => run(script.routines[step.routine], activeSignal, depth + 1, `routines.${step.routine}`));
       case 'system_ip_check': return (options.checkIp || checkExternalIp)();
       case 'file_read': return readWorkflowFile(params.file, allowedRoots, params);
+      case 'directory_create': return createWorkflowDirectory(params.directory, allowedRoots, activeSignal);
       case 'files_list': return listWorkflowFiles(params.directory, allowedRoots, activeSignal);
       case 'file_verify': await verifyWorkflowFile(params.file, allowedRoots); return true;
       case 'file_archive': return archiveWorkflowFile(params.file, params.directory, allowedRoots, activeSignal);
       case 'file_copy': return copyWorkflowFile(params.source, params.destination, allowedRoots, activeSignal);
-      case 'artifact_write': return writeArtifact(params.filename, typeof params.text === 'string' ? params.text : JSON.stringify(params.text), params.mime_type || 'text/plain');
+      case 'artifact_write': return writeArtifact(params.filename, typeof params.text === 'string' ? params.text : JSON.stringify(params.text), params.mime_type || 'text/plain', 'workflow_artifact', params.replace);
       case 'browser_launch': {
         if (browser) fail('BROWSER_ALREADY_STARTED', 'Сессия браузера уже существует');
         const headless = options.headless ?? true;
@@ -209,7 +213,7 @@ export async function executeJsonWorkflow(options) {
         finally { activeSignal?.removeEventListener('abort', abort); }
       }
       case 'browser_screenshot':
-        try { return await screenshot(params.filename || `workflow-${count}.png`); }
+        try { return await screenshot(params.filename || `workflow-${count}.png`, params.replace); }
         catch (error) {
           if (activeSignal?.aborted || params.optional !== true) throw error;
           return { captured: false, error_code: error.code || 'SCREENSHOT_FAILED', message: error.message || 'Не удалось сохранить снимок' };
@@ -284,7 +288,7 @@ export async function executeJsonWorkflow(options) {
     context.error = { code: error.code || 'WORKFLOW_ERROR', message: error.message || 'Ошибка выполнения' };
     // An aborted job must never execute further browser or file actions.
     if (!signal?.aborted && script.on_error) { try { await run(script.on_error, signal, 0, 'on_error'); } catch { /* Preserve the original error. */ } }
-    try { if (page && !page.isClosed()) await screenshot('workflow-error.png'); } catch { /* Preserve the original error. */ }
+    try { if (script.capture_error_screenshot !== false && page && !page.isClosed()) await screenshot('workflow-error.png'); } catch { /* Preserve the original error. */ }
     error.partial_context = projection();
     error.retryable = false;
     throw error;

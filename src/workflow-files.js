@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { copyFile, readFile, readdir, realpath, stat, unlink, open } from 'node:fs/promises';
+import { copyFile, readFile, readdir, realpath, stat, unlink, open, mkdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { InterpreterError } from './interpreter.js';
@@ -79,4 +79,15 @@ export async function readWorkflowFile(file, roots, { max_bytes = 65536, encodin
   if (createHash('sha256').update(content).digest('hex').toLowerCase() !== file.sha256.toLowerCase()) fail('SOURCE_CHANGED', 'Файл изменён после выбора');
   try { return { text: new TextDecoder(encoding, { fatal: true }).decode(content), encoding, size_bytes: content.length }; }
   catch { fail('FILE_ENCODING_ERROR', 'Файл не соответствует заданной кодировке'); }
+}
+
+// Creates one child directory of an existing authorized directory.
+export async function createWorkflowDirectory(value, roots, signal) {
+  if (typeof value !== 'string' || !value) fail('MISSING_PARAMETER', 'Не задан путь каталога');
+  const candidate = path.resolve(value);
+  const parent = await checkedWorkflowPath(path.dirname(candidate), roots, true);
+  const target = path.join(parent, path.basename(candidate));
+  signal?.throwIfAborted();
+  try { await mkdir(target); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+  return checkedWorkflowPath(target, roots, true);
 }

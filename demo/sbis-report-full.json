@@ -1,7 +1,7 @@
 {
   "format": "json-workflow",
   "title": "СБИС: ФНС, СФР и Росстат из JSON",
-  "version": "3.7.0",
+  "version": "3.9.0",
   "default_step_timeout_ms": 60000,
   "context": {
     "mode": "validate_only",
@@ -578,7 +578,7 @@
         "title": "Сформировать имя артефакта",
         "description": "Сформировать имя артефакта",
         "params": {
-          "expression": "'validation-'+context.plan.authority+'-'+context.report_index+'-'+Date.now()+'.txt'"
+          "expression": "'validation-'+context.report.authority+'-'+(context.reports.findIndex(r=>r.path===context.report.path)+1)+'.txt'"
         },
         "save_as": "protocol_filename",
         "private": true,
@@ -591,7 +591,8 @@
         "params": {
           "filename": "{{protocol_filename}}",
           "text": "{{validation_data.protocol}}",
-          "mime_type": "text/plain"
+          "mime_type": "text/plain",
+          "replace": true
         },
         "save_as": "protocol_artifact",
         "private": true,
@@ -700,9 +701,10 @@
         "action": "artifact_write",
         "title": "Сохранить JSON результата для 1С",
         "params": {
-          "filename": "result-{{result_export_index}}.json",
+          "filename": "result-1.json",
           "text": "{{result_export.text}}",
-          "mime_type": "application/json"
+          "mime_type": "application/json",
+          "replace": true
         },
         "private": true,
         "description": "Сохранить JSON результата для 1С",
@@ -836,25 +838,42 @@
       {
         "id": "sbis_error_clear",
         "action": "compute",
-        "title": "Проверить весь комплект перед переносом",
-        "description": "Проверить весь комплект перед переносом",
+        "title": "Определить необходимость отдельного каталога комплекта",
+        "description": "Совпадение имени любой части больше не блокирует перенос.",
         "params": {
-          "expression": "!context.report.files.some(f=>context.validation_error_existing.some(a=>a.filename.toLowerCase()===f.filename.toLowerCase()))"
+          "expression": "context.report.files.some(f=>context.validation_error_existing.some(a=>a.filename.toLowerCase()===f.filename.toLowerCase()))"
         },
         "private": true,
-        "save_as": "validation_error_clear"
+        "save_as": "validation_error_collision"
       },
       {
-        "id": "sbis_error_conflict",
-        "action": "assert",
-        "title": "Запретить перезапись файлов с ошибками",
-        "description": "Запретить перезапись файлов с ошибками",
+        "id": "sbis_error_unique_directory",
+        "action": "if",
+        "title": "Сохранить комплект с повторяющимся именем отдельно",
+        "description": "Все части остаются вместе под исходными именами.",
         "params": {
-          "condition": "{{validation_error_clear}}",
-          "error_code": "ERROR_ARCHIVE_CONFLICT",
-          "message": "XML с таким именем уже находится в каталоге отчётов с ошибками; исходный комплект сохранён"
+          "condition": "{{validation_error_collision}}"
         },
-        "private": true
+        "then": [
+          {
+            "action": "compute",
+            "title": "Сформировать уникальный путь комплекта",
+            "params": {
+              "expression": "context.validation_error_dir+'/'+context.job_id+'-report-'+(context.reports.findIndex(r=>r.path===context.report.path)+1)"
+            },
+            "save_as": "collision_directory",
+            "private": true
+          },
+          {
+            "action": "directory_create",
+            "title": "Создать отдельную папку для комплекта",
+            "params": {
+              "directory": "{{collision_directory}}"
+            },
+            "save_as": "validation_error_dir",
+            "private": true
+          }
+        ]
       },
       {
         "id": "sbis_error_verify_all",
@@ -1075,13 +1094,24 @@
         "private": true,
         "then": [
           {
+            "action": "compute",
+            "title": "Сформировать имя протокола повторной загрузки",
+            "description": "Единое имя последнего протокола отчёта.",
+            "params": {
+              "expression": "'validation-'+context.report.authority+'-'+(context.reports.findIndex(r=>r.path===context.report.path)+1)+'.txt'"
+            },
+            "save_as": "duplicate_protocol_filename",
+            "private": true
+          },
+          {
             "id": "sbis_duplicate_protocol",
             "action": "artifact_write",
             "title": "Сохранить описание повторной загрузки",
             "params": {
-              "filename": "duplicate-{{plan.authority}}-{{report_index}}-{{job_id}}.txt",
+              "filename": "{{duplicate_protocol_filename}}",
               "text": "{{report_error.message}}",
-              "mime_type": "text/plain"
+              "mime_type": "text/plain",
+              "replace": true
             },
             "private": true,
             "save_as": "duplicate_protocol",
@@ -1159,23 +1189,12 @@
     ],
     "capture_report": [
       {
-        "id": "sbis_snapshot_sequence",
-        "action": "compute",
-        "title": "Выбрать уникальный номер снимка",
-        "description": "Выбрать уникальный номер снимка",
-        "params": {
-          "expression": "(context.screenshot_sequence||0)+1"
-        },
-        "private": true,
-        "save_as": "screenshot_sequence"
-      },
-      {
         "id": "sbis_snapshot_name",
         "action": "compute",
         "title": "Сформировать имя снимка отчёта",
         "description": "Сформировать имя снимка отчёта",
         "params": {
-          "expression": "'report-'+context.report.authority+'-'+context.report.sha256.slice(0,12)+'-'+context.screenshot_sequence+'.png'"
+          "expression": "'report-'+context.report.authority+'-'+(context.reports.findIndex(r=>r.path===context.report.path)+1)+'.png'"
         },
         "private": true,
         "save_as": "report_screenshot_filename"
@@ -1187,7 +1206,8 @@
         "description": "Снять экран текущего отчёта",
         "params": {
           "filename": "{{report_screenshot_filename}}",
-          "optional": true
+          "optional": true,
+          "replace": true
         },
         "private": true,
         "save_as": "report_screenshot"
@@ -3237,15 +3257,6 @@
           "id": "sbis_run_reports_then_24"
         },
         {
-          "action": "browser_screenshot",
-          "title": "Сохранить итоговый диагностический снимок",
-          "description": "Сохранить итоговый диагностический снимок",
-          "params": {
-            "filename": "workflow-final.png"
-          },
-          "id": "sbis_run_reports_then_25"
-        },
-        {
           "id": "sbis_batch_failed",
           "action": "compute",
           "title": "Проверить ошибки отдельных отчётов после обхода",
@@ -3408,5 +3419,6 @@
       "id": "sbis_error_2"
     }
   ],
-  "output": "{{report_results}}"
+  "output": "{{report_results}}",
+  "capture_error_screenshot": false
 }

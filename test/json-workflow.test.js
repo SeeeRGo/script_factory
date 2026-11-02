@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createServer } from 'node:http';
 import { executeJsonWorkflow, computeWorkflowExpression } from '../src/json-workflow.js';
 import { validateScript } from '../src/interpreter.js';
-import { archiveWorkflowFile, listWorkflowFiles } from '../src/workflow-files.js';
+import { archiveWorkflowFile, listWorkflowFiles, createWorkflowDirectory } from '../src/workflow-files.js';
 const base = steps => ({ format: 'json-workflow', steps });
 test('if rejects a misplaced or non-Boolean condition before executing a branch', async t => {
   assert.ok(validateScript(base([{ action: 'if', condition: true, then: [] }]))
@@ -284,4 +284,21 @@ test('optional screenshot reports unavailability without hiding strict screensho
   const script={format:'json-workflow',steps:[{action:'browser_screenshot',params:{filename:'optional.png',optional:true},save_as:'image'}],output:{Rezult_1:'{{image}}'}};
   const r=await executeJsonWorkflow({...await options(t,script)});assert.equal(r.context.Rezult_1.captured,false);assert.equal(r.context.Rezult_1.error_code,'BROWSER_NOT_STARTED');
   script.steps[0].params.optional=false;await assert.rejects(executeJsonWorkflow({...await options(t,script)}),{code:'BROWSER_NOT_STARTED'});
+});
+
+test('artifact replacement updates only an artifact created by this execution', async t => {
+  const script=base([{action:'artifact_write',params:{filename:'latest.txt',text:'first'}},{action:'artifact_write',params:{filename:'latest.txt',text:'final contents',replace:true}}]);
+  const opts=await options(t,script),r=await executeJsonWorkflow(opts);
+  assert.equal(r.context.artifacts.length,1);assert.equal(r.context.artifacts[0].size_bytes,14);assert.equal(await readFile(r.context.artifacts[0].local_path,'utf8'),'final contents');
+  // A new execution must not overwrite a pre-existing file, even with replace=true.
+  script.steps=[{action:'artifact_write',params:{filename:'latest.txt',text:'bad',replace:true}}];await assert.rejects(executeJsonWorkflow(opts),{code:'EEXIST'});
+});
+
+
+test('directory creation respects allowed roots and rejects an escaping symlink', async t => {
+  const opts=await options(t,base([]));const target=path.join(opts.root,'child');
+  assert.equal(await createWorkflowDirectory(target,[opts.root]),target);assert.equal(await createWorkflowDirectory(target,[opts.root]),target);
+  await assert.rejects(createWorkflowDirectory(path.join(opts.root,'..','outside'),[opts.root]),{code:'FILESYSTEM_ACCESS_DENIED'});
+  const outside=await mkdtemp(path.join(tmpdir(),'outside-dir-'));t.after(()=>rm(outside,{recursive:true,force:true}));
+  await symlink(outside,path.join(opts.root,'escape'),'dir');await assert.rejects(createWorkflowDirectory(path.join(opts.root,'escape'),[opts.root]),{code:'FILESYSTEM_ACCESS_DENIED'});
 });

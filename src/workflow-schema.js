@@ -1,6 +1,6 @@
 export const WORKFLOW_ACTIONS = Object.freeze([
   'try', 'set', 'compute', 'assert', 'fail', 'if', 'for_each', 'call', 'wait',
-  'system_ip_check', 'files_list', 'file_verify', 'file_archive', 'file_copy',
+  'system_ip_check', 'directory_create', 'files_list', 'file_verify', 'file_archive', 'file_copy',
   'file_read', 'artifact_write', 'browser_launch', 'browser_tab', 'browser_steps', 'browser_eval', 'browser_wait', 'browser_screenshot'
 ]);
 const timeoutTemplate = value => typeof value === 'string' && /^\{\{\s*[\w.]+\s*\}\}$/.test(value);
@@ -12,6 +12,7 @@ export function validateWorkflow(script) {
   if (!script || script.format !== 'json-workflow') return [{ path: 'script.format', message: 'Ожидается json-workflow' }];
   if (script.context != null && (typeof script.context !== 'object' || Array.isArray(script.context))) add('script.context', 'context должен быть объектом');
   if (script.output !== undefined && !timeoutTemplate(script.output) && (!script.output || typeof script.output !== 'object' || Array.isArray(script.output))) add('script.output', 'output должен быть объектом или точным шаблоном объекта');
+  if (script.capture_error_screenshot !== undefined && typeof script.capture_error_screenshot !== 'boolean') add('script.capture_error_screenshot', 'Требуется boolean');
   const routines = script.routines || {};
   if (typeof routines !== 'object' || Array.isArray(routines)) add('script.routines', 'routines должен быть объектом');
   const visit = (steps, path, depth = 0) => {
@@ -51,6 +52,10 @@ export function validateWorkflow(script) {
       if (step.action === 'browser_screenshot' && step.params?.optional !== undefined
         && typeof step.params.optional !== 'boolean' && !timeoutTemplate(step.params.optional)) {
         add(`${at}.params.optional`, 'Требуется boolean или шаблон переменной');
+      }
+      if (['artifact_write','browser_screenshot'].includes(step.action) && step.params?.replace !== undefined
+        && typeof step.params.replace !== 'boolean' && !timeoutTemplate(step.params.replace)) {
+        add(`${at}.params.replace`, 'Требуется boolean или шаблон переменной');
       }
       if (step.action === 'browser_tab') {
         if (!['open', 'select', 'close'].includes(step.params?.operation) && !timeoutTemplate(step.params?.operation)) add(`${at}.params.operation`, 'Укажите open, select или close');
