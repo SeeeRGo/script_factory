@@ -8,6 +8,15 @@
 )
 
 $ErrorActionPreference = 'Stop'
+# Bind the default to this machine, regardless of the installer account/domain.
+$userId = if ([string]::IsNullOrWhiteSpace($RunAsUser)) { "$env:COMPUTERNAME\robot" } else { $RunAsUser }
+try {
+  $account = New-Object System.Security.Principal.NTAccount($userId)
+  $null = $account.Translate([System.Security.Principal.SecurityIdentifier])
+} catch {
+  throw "Не найдена учётная запись worker '$userId'. Создайте локального пользователя robot или задайте -RunAsUser."
+}
+
 $nodeVersion = & node --version
 if (-not $nodeVersion -or [int]($nodeVersion.TrimStart('v').Split('.')[0]) -lt 24) {
   throw "Для установки требуется Node.js 24+, найдено: $nodeVersion"
@@ -43,7 +52,6 @@ if (-not $SkipDependencyInstall) {
   if ($LASTEXITCODE -ne 0) { throw 'npm ci завершился с ошибкой' }
 }
 
-$userId = if ($RunAsUser) { $RunAsUser } else { [System.Security.Principal.WindowsIdentity]::GetCurrent().Name }
 $powerShell = (Get-Command powershell.exe).Source
 $startScript = Join-Path $ProjectPath 'windows\start-worker.ps1'
 $arguments = "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$startScript`" -ProjectPath `"$ProjectPath`" -EnvFile `"$configurationFile`" -RestartOnExit"
@@ -62,4 +70,4 @@ try {
 }
 
 Start-ScheduledTask -TaskName $TaskName
-Write-Host "Задача $TaskName запущена. Проверка: http://localhost:$Port/health"
+Write-Host "Задача $TaskName настроена для $userId; команда запуска отправлена. Пользователь должен войти в Windows. Проверка: http://localhost:$Port/health"
