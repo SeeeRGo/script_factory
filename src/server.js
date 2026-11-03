@@ -1,3 +1,4 @@
+import { resolveBrowserSettings } from './browser-settings.js';
 import { executeJsonWorkflow } from './json-workflow.js';
 import { WORKFLOW_ACTIONS } from './workflow-schema.js';
 import http from 'node:http';
@@ -1426,6 +1427,7 @@ async function executeJob(job) {
         script, context: job.request.context || {}, signal: controller.signal,
         allowedRoots: STEP_ALLOWED_ROOTS, artifactDirectory, publicArtifactBasePath, jobId: job.job_id,
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, headless: process.env.BROWSER_HEADLESS !== 'false',
+        onBrowserLog:(level,message)=>logJob(job,level,message),
         onEvent: (event) => applyInterpreterEvent(job, event)
       })
       : browserReplay
@@ -1458,6 +1460,7 @@ async function executeJob(job) {
           downloadBaseUrl: serviceBaseUrl,
           openFile: ({ file, signal }) => openFileInBrowser({
             filePath: file,
+            allowedRoots:STEP_ALLOWED_ROOTS,
             signal,
             executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
             headless: process.env.BROWSER_HEADLESS !== 'false',
@@ -1708,22 +1711,23 @@ async function buildReadinessChecks() {
     checks.filesystem = { status: 'error', path: DATA_DIR, message: error.message };
   }
 
-  const browserExecutable = await resolveBrowserExecutablePath(process.env.PUPPETEER_EXECUTABLE_PATH);
-  if (browserExecutable) {
-    checks.browser.executable_path = browserExecutable;
-  } else {
-    checks.browser = {
-      status: 'error',
-      executable_path: null,
-      message: 'Не найден исполняемый файл Chromium или Яндекс Браузера'
-    };
+  try {
+    const browserExecutable = await resolveBrowserExecutablePath(resolveBrowserSettings().executable_path);
+    if (browserExecutable) {
+      checks.browser.executable_path = browserExecutable;
+    } else {
+      checks.browser = { status: 'error', executable_path: null, message: 'Не найден исполняемый файл Chromium или Яндекс Браузера' };
+    }
+  } catch (error) {
+    checks.browser = { status: 'error', executable_path: null, message: error.message };
   }
 
   return checks;
 }
 
 async function buildHealthResponse(requestId) {
-  const headless = process.env.BROWSER_HEADLESS !== 'false';
+  let browserDefaults;try{browserDefaults=resolveBrowserSettings();}catch{browserDefaults=resolveBrowserSettings({env:{}});}
+  const headless=browserDefaults.headless;
   const noVncConfigured = process.env.NOVNC_ENABLED === 'true';
   const checks = await buildReadinessChecks();
   if (powerManager?.committing) checks.power = { status: 'error', message: 'УН переходит в suspend' };
@@ -1751,8 +1755,8 @@ async function buildHealthResponse(requestId) {
       browser_product: process.env.BROWSER_PRODUCT || 'chromium-compatible',
       executable_path: checks.browser.executable_path,
       headless,
-      step_delay_ms: Number(process.env.BROWSER_STEP_DELAY_MS || 0),
-      captcha_wait_ms: Number(process.env.BROWSER_CAPTCHA_WAIT_MS || 0),
+      step_delay_ms: browserDefaults.step_delay_ms,
+      captcha_wait_ms: browserDefaults.captcha_wait_ms,
       live_view: {
         enabled: noVncConfigured && !headless,
         port: Number(process.env.NOVNC_PUBLIC_PORT || 33303),
@@ -1783,7 +1787,8 @@ async function buildVersionedSystemResources() {
 }
 
 function buildSystemResources() {
-  const headless = process.env.BROWSER_HEADLESS !== 'false';
+  let browserDefaults;try{browserDefaults=resolveBrowserSettings();}catch{browserDefaults=resolveBrowserSettings({env:{}});}
+  const headless=browserDefaults.headless;
   const memoryUsage = process.memoryUsage();
   const totalMemory = os.totalmem();
   const freeMemory = os.freemem();
@@ -1844,10 +1849,10 @@ function buildSystemResources() {
     browser_replay: {
       available: true,
       browser_product: process.env.BROWSER_PRODUCT || 'chromium-compatible',
-      executable_path: process.env.PUPPETEER_EXECUTABLE_PATH || null,
+      executable_path: browserDefaults.executable_path,
       headless,
-      step_delay_ms: Number(process.env.BROWSER_STEP_DELAY_MS || 0),
-      captcha_wait_ms: Number(process.env.BROWSER_CAPTCHA_WAIT_MS || 0),
+      step_delay_ms: browserDefaults.step_delay_ms,
+      captcha_wait_ms: browserDefaults.captcha_wait_ms,
       live_view_enabled: process.env.NOVNC_ENABLED === 'true' && !headless,
       demo_mail_messages: demoMail.messageCount
     },

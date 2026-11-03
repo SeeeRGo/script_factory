@@ -83,3 +83,6 @@ node --test --test-name-pattern=send_multiple test/sbis-json.test.js
 ```
 
 Эти тесты используют локальный HTTP-стенд и искусственные XML, без отправки в ведомства. Его файловый диалог сразу показывает папку incoming, поэтому тест явно переопределяет upload_directory_steps. BROWSER_TEST_WAIT_MS меняет только сокращённые ожидания стенда; в рабочую .env этот параметр добавлять не нужно.
+
+
+С API 0.9.15 доступна [общая конфигурация браузера и лимитов исполнителя](10-browser-settings.md): BROWSER_OPTIONS_JSON / WORKFLOW_LIMITS_JSON в .env, browser / limits в сценарии, context.browser в запросе, настройки browser_launch.params. Профиль, расширения, запуск, CDP, окно, задержки, прокси, сертификаты, диалоги, скачивание и лимиты задаются без изменения кода API. Пауза BROWSER_STEP_DELAY_MS теперь действует и в json-workflow; она входит в общий лимит времени. Изменение .env требует перезапуска worker.

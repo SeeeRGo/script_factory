@@ -1,3 +1,5 @@
+import { resolveBrowserSettings, prepareBrowserLaunch, configureBrowser, configureBrowserPage, redactBrowserParameters } from './browser-settings.js';
+import { resolveWorkflowLimits } from './workflow-limits.js';
 import { parseReplayWithTimeouts } from './replay-timeouts.js';
 import { Worker } from 'node:worker_threads';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
@@ -5,20 +7,20 @@ import path from 'node:path';
 import puppeteer from 'puppeteer';
 import { createRunner, PuppeteerRunnerExtension } from '@puppeteer/replay';
 import { InterpreterError, resolveTemplates, abortableDelay } from './interpreter.js';
-import { resolveBrowserExecutablePath, resolveBrowserUploadFiles } from './browser-replay.js';
+import { resolveBrowserExecutablePath, resolveBrowserUploadFiles, waitForYandexCaptcha } from './browser-replay.js';
 import { checkExternalIp } from './system-checks.js';
 import { validateWorkflow, workflowIdentifier } from './workflow-schema.js';
 import { checkedWorkflowPath, createWorkflowDirectory, listWorkflowFiles, verifyWorkflowFile, archiveWorkflowFile, copyWorkflowFile, readWorkflowFile } from './workflow-files.js';
 
 const fail = (code, message) => { throw new InterpreterError(code, message); };
 const clone = value => JSON.parse(JSON.stringify(value));
-export async function computeWorkflowExpression(expression, context) {
-  if (typeof expression !== 'string' || expression.length > 100000) fail('INVALID_EXPRESSION', 'Неверное выражение');
+export async function computeWorkflowExpression(expression, context, limits = resolveWorkflowLimits()) {
+  if (typeof expression !== 'string' || expression.length > limits.max_expression_chars) fail('INVALID_EXPRESSION', 'Неверное выражение');
   const data = JSON.stringify(context);
-  if (data.length > 16 * 1024 * 1024) fail('WORKFLOW_LIMIT', 'Контекст слишком велик');
+  if (Buffer.byteLength(data, 'utf8') > limits.max_context_bytes) fail('WORKFLOW_LIMIT', 'Контекст слишком велик');
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./workflow-expression.js', import.meta.url), {
-      workerData: { expression, data }, resourceLimits: { maxOldGenerationSizeMb: 64 }, execArgv: []
+      workerData: { expression, data, maxResultBytes: limits.max_result_bytes }, resourceLimits: { maxOldGenerationSizeMb: limits.compute_memory_mb }, execArgv: []
     });
     let settled = false;
     const finish = async (error, value) => {
@@ -28,7 +30,7 @@ export async function computeWorkflowExpression(expression, context) {
       await worker.terminate().catch(() => {});
       if (error) reject(error); else resolve(value);
     };
-    const timer = setTimeout(() => finish(new InterpreterError('EXPRESSION_ERROR', 'Выражение превысило тайм-аут')), 1000);
+    const timer = setTimeout(() => finish(new InterpreterError('EXPRESSION_ERROR', 'Выражение превысило тайм-аут')), limits.compute_timeout_ms);
     worker.on('message', encoded => {
       try {
         const result = JSON.parse(encoded);
@@ -41,10 +43,13 @@ export async function computeWorkflowExpression(expression, context) {
 }
 export async function executeJsonWorkflow(options) {
   const { script, signal, allowedRoots = [], artifactDirectory, publicArtifactBasePath = '', jobId = 'workflow', onEvent = () => {} } = options;
-  const errors = validateWorkflow(script);
+  const limits = resolveWorkflowLimits(script.limits);
+  const errors = validateWorkflow(script, limits);
   if (errors.length) throw new InterpreterError('INVALID_SCRIPT', 'Некорректный JSON workflow', { details: { errors } });
   const context = clone({ ...(script.context || {}), ...(options.context || {}) });
   context.job_id = jobId;
+  const legacyBrowser={executable_path:options.executablePath,headless:options.headless};
+  let browserSettings=resolveBrowserSettings({legacy:legacyBrowser,script:script.browser||{},context:context.browser||{}});
   const startedAt = Date.now();
   let browser, page, count = 0, completed = 0;
   const tabs = new Map();
@@ -90,7 +95,7 @@ export async function executeJsonWorkflow(options) {
     activeSignal?.throwIfAborted();
     switch (step.action) {
       case 'set': for (const [key, value] of Object.entries(params)) assign(key, value); return null;
-      case 'compute': return computeWorkflowExpression(params.expression, context);
+      case 'compute': return computeWorkflowExpression(params.expression, context, limits);
       case 'assert': if (params.condition !== true) fail(params.error_code || 'ASSERTION_FAILED', params.message || 'Условие не выполнено'); return true;
       case 'fail': fail(params.error_code || 'WORKFLOW_FAILED', params.message || 'Сценарий остановлен'); break;
       case 'wait': await abortableDelay(params.duration_ms || 0, activeSignal); return true;
@@ -100,7 +105,7 @@ export async function executeJsonWorkflow(options) {
         return null;
       case 'for_each': {
         if (!Array.isArray(params.items)) fail('INVALID_ITERATION', 'items должен быть массивом');
-        if (params.items.length > 1000) fail('WORKFLOW_LIMIT', 'Слишком много итераций');
+        if (params.items.length > limits.max_iterations) fail('WORKFLOW_LIMIT', 'Слишком много итераций');
         for (const [index, item] of params.items.entries()) {
           activeSignal?.throwIfAborted();
           await scoped({ [step.as]: item, ...(step.index_as ? { [step.index_as]: index } : {}) }, () => run(step.steps, activeSignal, depth + 1, `${sourcePath}.steps`));
@@ -127,16 +132,16 @@ export async function executeJsonWorkflow(options) {
       case 'artifact_write': return writeArtifact(params.filename, typeof params.text === 'string' ? params.text : JSON.stringify(params.text), params.mime_type || 'text/plain', 'workflow_artifact', params.replace);
       case 'browser_launch': {
         if (browser) fail('BROWSER_ALREADY_STARTED', 'Сессия браузера уже существует');
-        const headless = options.headless ?? true;
-        const minimal = params.ignore_default_args ?? false;
-        if (typeof minimal !== 'boolean') fail('INVALID_BROWSER_OPTIONS', 'ignore_default_args должен быть boolean');
-        const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--window-size=1400,860'];
-        if (minimal) args.push('--enable-automation', '--no-first-run', '--no-default-browser-check', ...(headless ? ['--headless=new'] : []));
-        browser = await puppeteer.launch({ executablePath: await resolveBrowserExecutablePath(options.executablePath), headless,
-          defaultViewport: headless ? { width: 1400, height: 860 } : null,
-          ignoreDefaultArgs: minimal, args });
+        const launchSettings={...params};
+        delete launchSettings.init_scripts;
+        browserSettings=resolveBrowserSettings({legacy:legacyBrowser,script:script.browser||{},context:context.browser||{},launch:launchSettings});
+        const prepared=await prepareBrowserLaunch(browserSettings,allowedRoots,activeSignal);
+        browserSettings=prepared.settings;
+        browser = await puppeteer.launch({...prepared.options,executablePath:await resolveBrowserExecutablePath(browserSettings.executable_path)});
         if (activeSignal?.aborted) { await browser.close(); throw activeSignal.reason; }
+        await configureBrowser(browser,browserSettings);
         page = (await browser.pages())[0] || await browser.newPage();
+        await configureBrowserPage(page,browserSettings);
         tabs.set('main', page);
         await page.bringToFront();
         page.on('pageerror', () => {});
@@ -151,6 +156,7 @@ export async function executeJsonWorkflow(options) {
         if (operation === 'open') {
           if (tabs.has(name)) fail('BROWSER_TAB_EXISTS', 'Вкладка с таким именем уже существует');
           const opened = await browser.newPage();
+          await configureBrowserPage(opened,browserSettings);
           tabs.set(name, opened);
           activeSignal?.throwIfAborted();
           opened.on('pageerror', () => {});
@@ -191,14 +197,18 @@ export async function executeJsonWorkflow(options) {
           const data = JSON.stringify(JSON.stringify(context));
           const source = `(() => { const context = JSON.parse(${data}); return (${params.expression}); })()`;
           const handle = await page.waitForFunction(source,
-            { timeout: params.timeout_ms || script.default_step_timeout_ms || 30000, signal: activeSignal });
+            { timeout: params.timeout_ms ?? browserSettings.default_timeout_ms, signal: activeSignal });
           try { return await handle.jsonValue(); } finally { await handle.dispose(); }
         } catch (error) { if (activeSignal?.aborted) throw activeSignal.reason; if (params.error_code) fail(params.error_code, params.message || 'Не выполнено условие ожидания'); throw error; }
       }
       case 'browser_steps': {
         requirePage();
-        const recording = parseReplayWithTimeouts({ title: 'JSON browser steps', timeout: params.timeout_ms ?? 30000, steps: resolveTemplates(params.steps, context) });
+        const recording = parseReplayWithTimeouts({ title: 'JSON browser steps', timeout: params.timeout_ms ?? browserSettings.default_timeout_ms, steps: resolveTemplates(params.steps, context) });
         const extension = new class extends PuppeteerRunnerExtension {
+          async afterEachStep(step) {
+            if(step.type!=='keyDown')await waitForYandexCaptcha({page,signal:activeSignal,headless:browserSettings.headless,waitMs:browserSettings.captcha_wait_ms,pollIntervalMs:browserSettings.captcha_poll_ms,onBrowserLog:options.onBrowserLog});
+            if(browserSettings.step_delay_ms)await abortableDelay(browserSettings.step_delay_ms,activeSignal);
+          }
           async runStepInFrame(step, main, target, frame, timeout) {
             if (step.type !== 'customStep') return super.runStepInFrame(step, main, target, frame, timeout);
             if (step.name !== 'uploadFiles') fail('INVALID_SCRIPT', 'Неизвестный customStep');
@@ -206,7 +216,7 @@ export async function executeJsonWorkflow(options) {
             const input = await frame.waitForSelector(step.parameters?.selector, { timeout, signal: activeSignal });
             try { await input.uploadFile(...files.map(file => file.path)); } finally { await input.dispose(); }
           }
-        }(browser, page, { timeout: params.timeout_ms || 30000 });
+        }(browser, page, { timeout: params.timeout_ms ?? browserSettings.default_timeout_ms });
         const runner = await createRunner(recording, extension);
         const abort = () => { runner.abort(); close(); };
         activeSignal?.addEventListener('abort', abort, { once: true });
@@ -223,10 +233,10 @@ export async function executeJsonWorkflow(options) {
     }
   }
   async function run(steps, parentSignal, depth = 0, sourceBase = 'steps') {
-    if (depth > 25) fail('WORKFLOW_LIMIT', 'Слишком глубокий вызов подпрограмм');
+    if (depth > limits.max_depth) fail('WORKFLOW_LIMIT', 'Слишком глубокий вызов подпрограмм');
     for (const [sourceIndex, step] of steps.entries()) {
       parentSignal?.throwIfAborted();
-      if (count >= 10000) fail('WORKFLOW_LIMIT', 'Превышен лимит шагов');
+      if (count >= limits.max_steps) fail('WORKFLOW_LIMIT', 'Превышен лимит шагов');
       const index = count++, start = Date.now();
       const sourcePath = `${sourceBase}[${sourceIndex}]`;
       const identity = { step_id: step.id || `step_${index + 1}`, title: step.title ?? null,
@@ -234,7 +244,7 @@ export async function executeJsonWorkflow(options) {
       const params = resolveTemplates(step.params || {}, context);
       const privateStep = step.private === true;
       await emit({ type: 'step_added', step_index: index, ...identity, step: { ...step, params: undefined, steps: undefined, then: undefined, else: undefined } });
-      await emit({ type: 'step_started', step_index: index, ...identity, action: step.action, params: privateStep ? { redacted: true } : params });
+      await emit({ type: 'step_started', step_index: index, ...identity, action: step.action, params: privateStep ? { redacted: true } : step.action==='browser_launch'?redactBrowserParameters(params):params });
       const controller = new AbortController();
       const abort = () => controller.abort(parentSignal.reason);
       parentSignal?.addEventListener('abort', abort, { once: true });
@@ -282,6 +292,7 @@ export async function executeJsonWorkflow(options) {
   await emit({ type: 'script_started', execution_steps: [], total_steps: 0, runtime: 'json-workflow' });
   try {
     await run(script.steps, signal);
+    if(browser&&browserSettings.hold_open_ms)await abortableDelay(browserSettings.hold_open_ms,signal);
     const result = { steps_executed: completed, duration_ms: Date.now() - startedAt, context: projection(true) };
     await emit({ type: 'script_completed', result });
     return result;

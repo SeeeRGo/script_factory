@@ -40,17 +40,35 @@ if (-not (Test-Path $configurationFile)) {
   throw "Не найден файл конфигурации $configurationFile"
 }
 
-if (-not $env:PUPPETEER_EXECUTABLE_PATH) {
+$browserOptionsText = if ($env:BROWSER_OPTIONS_JSON) { $env:BROWSER_OPTIONS_JSON } else { Read-DotEnvValue $configurationFile 'BROWSER_OPTIONS_JSON' }
+$browserOptions = $null
+if ($browserOptionsText) {
+  try {
+    $browserOptions = $browserOptionsText | ConvertFrom-Json
+    if ($browserOptions -isnot [PSCustomObject]) { throw 'Expected object' }
+  } catch { throw 'BROWSER_OPTIONS_JSON должен содержать корректный JSON-объект' }
+}
+$explicitBrowser = if ($browserOptions -and $browserOptions.executable_path) {
+  $browserOptions.executable_path
+} elseif ($env:PUPPETEER_EXECUTABLE_PATH) {
+  $env:PUPPETEER_EXECUTABLE_PATH
+} else {
+  Read-DotEnvValue $configurationFile 'PUPPETEER_EXECUTABLE_PATH'
+}
+if ($explicitBrowser) {
+  if (-not (Test-Path -LiteralPath $explicitBrowser -PathType Leaf)) { throw 'Заданный браузер недоступен; проверьте executable_path в конфигурации УН' }
+  $env:PUPPETEER_EXECUTABLE_PATH = $explicitBrowser
+} else {
   $candidates = @(
-    (Read-DotEnvValue $configurationFile 'PUPPETEER_EXECUTABLE_PATH'),
     "$env:LOCALAPPDATA\Yandex\YandexBrowser\Application\browser.exe",
     "$env:ProgramFiles\Yandex\YandexBrowser\Application\browser.exe",
-    "${env:ProgramFiles(x86)}\Yandex\YandexBrowser\Application\browser.exe"
+    "${env:ProgramFiles(x86)}\Yandex\YandexBrowser\Application\browser.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe",
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
   )
-  $browser = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-  if (-not $browser) {
-    throw 'Яндекс Браузер не найден. Укажите PUPPETEER_EXECUTABLE_PATH в файле конфигурации.'
-  }
+  $browser = $candidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+  if (-not $browser) { throw 'Браузер не найден. Укажите executable_path в BROWSER_OPTIONS_JSON или PUPPETEER_EXECUTABLE_PATH.' }
   $env:PUPPETEER_EXECUTABLE_PATH = $browser
 }
 

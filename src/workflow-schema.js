@@ -1,3 +1,4 @@
+import { resolveWorkflowLimits } from './workflow-limits.js';
 export const WORKFLOW_ACTIONS = Object.freeze([
   'try', 'set', 'compute', 'assert', 'fail', 'if', 'for_each', 'call', 'wait',
   'system_ip_check', 'directory_create', 'files_list', 'file_verify', 'file_archive', 'file_copy',
@@ -6,7 +7,9 @@ export const WORKFLOW_ACTIONS = Object.freeze([
 const timeoutTemplate = value => typeof value === 'string' && /^\{\{\s*[\w.]+\s*\}\}$/.test(value);
 const identifier = value => typeof value === 'string' && /^[A-Za-z_]\w*$/.test(value)
   && !['__proto__', 'prototype', 'constructor'].includes(value);
-export function validateWorkflow(script) {
+export function validateWorkflow(script, configuredLimits) {
+  let limits;
+  try { limits=configuredLimits||resolveWorkflowLimits(script?.limits); } catch(error) { return [{path:'script.limits',message:error.message}]; }
   const errors = [];
   const add = (path, message) => errors.push({ path, message });
   if (!script || script.format !== 'json-workflow') return [{ path: 'script.format', message: 'Ожидается json-workflow' }];
@@ -16,7 +19,7 @@ export function validateWorkflow(script) {
   const routines = script.routines || {};
   if (typeof routines !== 'object' || Array.isArray(routines)) add('script.routines', 'routines должен быть объектом');
   const visit = (steps, path, depth = 0) => {
-    if (depth > 25) { add(path, 'Слишком глубокая вложенность'); return; }
+    if (depth > limits.max_depth) { add(path, 'Слишком глубокая вложенность'); return; }
     if (!Array.isArray(steps)) { add(path, 'steps должен быть массивом'); return; }
     steps.forEach((step, i) => {
       const at = `${path}[${i}]`;
@@ -46,7 +49,7 @@ export function validateWorkflow(script) {
       if (step.action === 'call' && (!identifier(step.routine) || !Object.hasOwn(routines, step.routine))) add(`${at}.routine`, 'Неизвестная подпрограмма JSON');
       if (['compute', 'browser_eval', 'browser_wait'].includes(step.action) && typeof step.params?.expression !== 'string') add(`${at}.params.expression`, 'Укажите строку выражения');
       if (step.action === 'browser_launch' && step.params?.ignore_default_args !== undefined
-        && typeof step.params.ignore_default_args !== 'boolean' && !timeoutTemplate(step.params.ignore_default_args)) {
+        && typeof step.params.ignore_default_args !== 'boolean' && !(Array.isArray(step.params.ignore_default_args)&&step.params.ignore_default_args.every(x=>typeof x==='string')) && !timeoutTemplate(step.params.ignore_default_args)) {
         add(`${at}.params.ignore_default_args`, 'Требуется boolean или шаблон переменной');
       }
       if (step.action === 'browser_screenshot' && step.params?.optional !== undefined

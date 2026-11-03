@@ -110,3 +110,6 @@ API 0.9.13 добавляет универсальную операцию `direc
 
 
 API 0.9.14: browser_steps.params.timeout_ms и Recorder steps[].timeout могут превышать 30000 мс. Адаптер проверяет целое число 1..2147483647 мс, сохраняет структурную проверку Replay и передаёт фактическое ожидание исполнителю. Приоритет: timeout действия → timeout записи/params.timeout_ms → значение по умолчанию. Внешний steps[].timeout_ms и общий parameters.timeout_ms продолжают действовать. То же расширение применяется к нативному формату puppeteer-replay.
+
+
+С API 0.9.15 доступна [общая конфигурация браузера и лимитов исполнителя](../docs/project-guide/10-browser-settings.md): BROWSER_OPTIONS_JSON / WORKFLOW_LIMITS_JSON в .env, browser / limits в сценарии, context.browser в запросе, настройки browser_launch.params. Профиль, расширения, запуск, CDP, окно, задержки, прокси, сертификаты, диалоги, скачивание и лимиты задаются без изменения кода API. Пауза BROWSER_STEP_DELAY_MS теперь действует и в json-workflow; она входит в общий лимит времени. Изменение .env требует перезапуска worker.

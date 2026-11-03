@@ -31,7 +31,7 @@
   "script": {
     "format": "json-workflow",
     "title": "СБИС: ФНС, СФР и Росстат из JSON",
-    "version": "3.10.0",
+    "version": "3.12.0",
     "default_step_timeout_ms": 60000,
     "context": {
       "mode": "validate_only",
@@ -284,7 +284,8 @@
         "bundle_selected_row_selector": ".controls-ListView__item__multiSelected",
         "bundle_import_selector": "[data-name=\"FolderBrowserComponent__StartLoadButton\"]",
         "upload_bundle_steps": [],
-        "validation_error_selector": "[data-qa=\"journal_check_result\"]"
+        "validation_error_selector": "[data-qa=\"journal_check_result\"]",
+        "validation_error_description_selector": "[data-qa=\"journal_check_name\"],[data-qa=\"journal_check_text\"]"
       },
       "authority_prefixes": [
         {
@@ -583,7 +584,7 @@
           "title": "Дождаться единственного результата и непустого текста проверки",
           "description": "Сохраняет весь выбранный блок протокола, включая сам validation_scope_selector, описания ошибок и разделы. Не принимает один заголовок со счётчиком и датой за полноценный протокол ошибки.",
           "params": {
-            "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden', roots=[...document.querySelectorAll(context.ui.validation_scope_selector||context.ui.report_scope_selector)].filter(visible);\n if(roots.length!==1)return false;\n const root=roots[0],matches=[...root.querySelectorAll(context.ui.validation_status_selector)].filter(e=>visible(e)&&[context.ui.validation_success_text,context.ui.validation_failure_text].includes(e.innerText.trim()));\n if(matches.length!==1)return false;\n const selector=context.ui.protocol_selector,protocols=[...(root.matches(selector)?[root]:[]),...root.querySelectorAll(selector)].filter(visible);\n if(protocols.length!==1)return false;\n const status=matches[0].innerText.trim(),protocol=protocols[0].innerText.trim();\n if(!protocol)return false;\n if(status===context.ui.validation_failure_text){\n  if(context.ui.validation_error_selector){\n   const errors=[...root.querySelectorAll(context.ui.validation_error_selector)].filter(visible);\n   if(!errors.length||errors.some(e=>!e.innerText.trim()))return false;\n  }\n  const details=protocol.replace(status,'').split(/\\n/).map(line=>line.trim()).filter(line=>line&&!/^\\d+$/.test(line)&&!/^\\d{1,2}\\s+[а-яёa-z]{3,}[’']?\\d{2,4}\\s+\\d{1,2}:\\d{2}$/i.test(line));\n  if(!details.length)return false;\n }\n return {status,protocol};\n})()",
+            "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden', roots=[...document.querySelectorAll(context.ui.validation_scope_selector||context.ui.report_scope_selector)].filter(visible);\n if(roots.length!==1)return false;\n const root=roots[0],matches=[...root.querySelectorAll(context.ui.validation_status_selector)].filter(e=>visible(e)&&[context.ui.validation_success_text,context.ui.validation_failure_text].includes(e.innerText.trim()));\n if(matches.length!==1)return false;\n const selector=context.ui.protocol_selector,protocols=[...(root.matches(selector)?[root]:[]),...root.querySelectorAll(selector)].filter(visible);\n if(protocols.length!==1)return false;\n const status=matches[0].innerText.trim();let protocol=protocols[0].innerText.trim();\n if(!protocol)return false;\n if(status===context.ui.validation_failure_text){\n  if(context.ui.validation_error_selector){\n   const errors=[...root.querySelectorAll(context.ui.validation_error_selector)].filter(visible);\n   if(!errors.length||errors.some(e=>!e.innerText.trim()))return false;\n   const selector=context.ui.validation_error_description_selector||'[data-qa=\"journal_check_name\"],[data-qa=\"journal_check_text\"]';\n   const messages=errors.map(row=>{\n    const parts=[...(row.matches(selector)?[row]:[]),...row.querySelectorAll(selector)].filter(visible).map(e=>e.innerText.trim()).filter(Boolean);\n    return [...new Set(parts.length?parts:[row.innerText.trim()])].join('\\n\\n');\n   });\n   protocol=[...new Set(messages)].join('\\n\\n');\n  }\n  const details=protocol.replace(status,'').split(/\\n/).map(line=>line.trim()).filter(line=>line&&!/^\\d+$/.test(line)&&!/^\\d{1,2}\\s+[а-яёa-z]{3,}[’']?\\d{2,4}\\s+\\d{1,2}:\\d{2}$/i.test(line));\n  if(!details.length)return false;\n }\n return {status,protocol};\n})()",
             "timeout_ms": "{{validation_timeout_ms}}",
             "error_code": "VALIDATION_PROTOCOL_NOT_READY",
             "message": "Не удалось получить результат проверки и полный текст протокола СБИС"
@@ -3467,6 +3468,8 @@
       }
     ],
     "output": "{{report_results}}",
-    "capture_error_screenshot": false
+    "capture_error_screenshot": false,
+    "browser": {},
+    "limits": {}
   }
 }

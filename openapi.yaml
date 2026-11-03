@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.9.14
+  version: 0.9.15
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
@@ -124,7 +124,7 @@ components:
         timeout:
           type: integer
           minimum: 1
-          maximum: 30000
+          maximum: 2147483647
         selectors:
           type: array
           description: Альтернативные CSS, ARIA, text, XPath или pierce-селекторы Recorder.
@@ -135,12 +135,14 @@ components:
       required: [title, steps]
       description: Нативный JSON, экспортированный через Chrome DevTools Recorder → Export → JSON.
       properties:
+        browser:
+          $ref: '#/components/schemas/BrowserSettings'
         title:
           type: string
         timeout:
           type: integer
           minimum: 1
-          maximum: 30000
+          maximum: 2147483647
         selectorAttribute:
           type: string
         steps:
@@ -153,7 +155,7 @@ components:
       properties:
         action:
           type: string
-          enum: [set, compute, assert, fail, if, for_each, call, wait, system_ip_check, files_list, file_verify, file_archive, file_copy, file_read, artifact_write, browser_launch, browser_tab, browser_steps, browser_eval, browser_wait, browser_screenshot]
+          enum: [try, set, compute, assert, fail, if, for_each, call, wait, system_ip_check, directory_create, files_list, file_verify, file_archive, file_copy, file_read, artifact_write, browser_launch, browser_tab, browser_steps, browser_eval, browser_wait, browser_screenshot]
         title:
           type: string
         description:
@@ -174,6 +176,16 @@ components:
               minimum: 1
             - type: string
               pattern: '^\{\{\s*[\w.]+\s*\}\}$'
+        error_as:
+          type: string
+          description: Имя переменной ошибки в catch.
+        error_codes:
+          type: array
+          items: {type: string}
+        catch:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowStep'
         as:
           type: string
           description: Переменная элемента for_each.
@@ -199,6 +211,10 @@ components:
       required: [format, steps]
       description: Универсальный сценарий. Циклы, условия, проверки, выражения и браузерные шаги определены в JSON; обработчиков отдельных сайтов нет. Пример demo/sbis-report-full.json.
       properties:
+        browser:
+          $ref: '#/components/schemas/BrowserSettings'
+        limits:
+          $ref: '#/components/schemas/WorkflowLimits'
         format:
           type: string
           enum: [json-workflow]
@@ -228,6 +244,183 @@ components:
           type: object
           additionalProperties: true
           description: Проекция итогового контекста, например Rezult_1; внутренние переменные не возвращаются.
+    BrowserSettings:
+      type: object
+      additionalProperties: false
+      description: Общие настройки браузера API 0.9.15+. Подробности docs/project-guide/10-browser-settings.md.
+      properties:
+        headless:
+          type: boolean
+          default: true
+        launch_timeout_ms:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          default: 30000
+        protocol_timeout_ms:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          default: 180000
+        default_timeout_ms:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          default: 30000
+        navigation_timeout_ms:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          default: 30000
+        window_width:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          default: 1400
+        window_height:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          default: 860
+        viewport:
+          nullable: true
+          oneOf:
+            - {type: string, enum: [auto]}
+            - {type: object, additionalProperties: true}
+          default: auto
+        user_data_dir:
+          type: string
+          nullable: true
+        profile_directory:
+          type: string
+          nullable: true
+        executable_path:
+          type: string
+          nullable: true
+        args:
+          type: array
+          items: {type: string}
+        ignore_default_args:
+          oneOf:
+            - {type: boolean}
+            - {type: array, items: {type: string}}
+          default: false
+        enable_extensions:
+          type: boolean
+          default: false
+        extensions:
+          type: array
+          items: {type: string}
+        proxy_server:
+          type: string
+          nullable: true
+        proxy_bypass_list:
+          type: string
+          nullable: true
+        proxy_username:
+          type: string
+          nullable: true
+        proxy_password:
+          type: string
+          nullable: true
+          writeOnly: true
+        user_agent:
+          type: string
+          nullable: true
+        locale:
+          type: string
+          nullable: true
+        timezone_id:
+          type: string
+          nullable: true
+        extra_http_headers:
+          type: object
+          additionalProperties: {type: string}
+        accept_insecure_certs:
+          type: boolean
+          default: false
+        slow_mo_ms:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          default: 0
+        step_delay_ms:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          default: 0
+        hold_open_ms:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          default: 0
+        captcha_wait_ms:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          default: 0
+        captcha_poll_ms:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          default: 500
+        download_dir:
+          type: string
+          nullable: true
+        download_behavior:
+          type: string
+          default: "default"
+        dialog_action:
+          type: string
+          default: "dismiss"
+        dialog_prompt_text:
+          type: string
+          default: ""
+        permissions:
+          type: array
+          items:
+            type: object
+            required: [origin, permissions]
+            properties:
+              origin: {type: string}
+              permissions: {type: array, items: {type: string}}
+    WorkflowLimits:
+      type: object
+      additionalProperties: false
+      description: Лимиты json-workflow, API 0.9.15+.
+      properties:
+        max_steps:
+          type: integer
+          minimum: 1
+          default: 10000
+        max_iterations:
+          type: integer
+          minimum: 1
+          default: 1000
+        max_depth:
+          type: integer
+          minimum: 1
+          default: 25
+        compute_timeout_ms:
+          type: integer
+          minimum: 1
+          default: 1000
+        max_expression_chars:
+          type: integer
+          minimum: 1
+          default: 100000
+        max_context_bytes:
+          type: integer
+          minimum: 1
+          default: 16777216
+        max_result_bytes:
+          type: integer
+          minimum: 1
+          default: 16777216
+        compute_memory_mb:
+          type: integer
+          minimum: 16
+          default: 64
     AnyScript:
       oneOf:
         - $ref: '#/components/schemas/PuppeteerReplayScript'

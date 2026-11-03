@@ -61,17 +61,36 @@ foreach ($secretName in @('API_KEY', 'WEB_PASSWORD', 'CALLBACK_AUTH_TOKEN')) {
 }
 if (-not $configuration['UN_ID']) { $errors.Add('Заполните UN_ID в .env') }
 
-$browserCandidates = @(
-  $env:PUPPETEER_EXECUTABLE_PATH,
-  $configuration['PUPPETEER_EXECUTABLE_PATH'],
-  "$env:LOCALAPPDATA\Yandex\YandexBrowser\Application\browser.exe",
-  "$env:ProgramFiles\Yandex\YandexBrowser\Application\browser.exe",
-  "${env:ProgramFiles(x86)}\Yandex\YandexBrowser\Application\browser.exe"
-)
-$browserPath = $browserCandidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-if (-not $browserPath) {
-  $errors.Add('Яндекс Браузер не найден; задайте PUPPETEER_EXECUTABLE_PATH')
+$browserOptionsText = if ($env:BROWSER_OPTIONS_JSON) { $env:BROWSER_OPTIONS_JSON } else { $configuration['BROWSER_OPTIONS_JSON'] }
+$browserOptions = $null
+if ($browserOptionsText) {
+  try {
+    $browserOptions = $browserOptionsText | ConvertFrom-Json
+    if ($browserOptions -isnot [PSCustomObject]) { throw 'Expected object' }
+  } catch { $errors.Add('BROWSER_OPTIONS_JSON должен содержать корректный JSON-объект') }
 }
+$explicitBrowser = if ($browserOptions -and $browserOptions.executable_path) {
+  $browserOptions.executable_path
+} elseif ($env:PUPPETEER_EXECUTABLE_PATH) {
+  $env:PUPPETEER_EXECUTABLE_PATH
+} else {
+  $configuration['PUPPETEER_EXECUTABLE_PATH']
+}
+$browserPath = $null
+if ($explicitBrowser) {
+  if (Test-Path -LiteralPath $explicitBrowser -PathType Leaf) { $browserPath = $explicitBrowser }
+} else {
+  $browserCandidates = @(
+    "$env:LOCALAPPDATA\Yandex\YandexBrowser\Application\browser.exe",
+    "$env:ProgramFiles\Yandex\YandexBrowser\Application\browser.exe",
+    "${env:ProgramFiles(x86)}\Yandex\YandexBrowser\Application\browser.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe",
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+  )
+  $browserPath = $browserCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+}
+if (-not $browserPath) { $errors.Add('Браузер недоступен; задайте executable_path в BROWSER_OPTIONS_JSON или PUPPETEER_EXECUTABLE_PATH') }
 
 $allowedRoots = @($configuration['FILESYSTEM_ALLOWED_ROOTS'] -split ';' | Where-Object { $_ })
 if ($allowedRoots.Count -eq 0) {

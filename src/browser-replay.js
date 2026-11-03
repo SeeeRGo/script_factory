@@ -1,3 +1,4 @@
+import { resolveBrowserSettings, prepareBrowserLaunch, configureBrowser, configureBrowserPage } from './browser-settings.js';
 import { parseReplayWithTimeouts } from './replay-timeouts.js';
 import { access, mkdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -93,14 +94,12 @@ export async function waitForYandexCaptcha(options) {
   return true;
 }
 
-function boundedNumber(value, fallback, maximum) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-  return Math.min(parsed, maximum);
-}
-
 export async function resolveBrowserExecutablePath(configuredPath) {
-  const candidates = [configuredPath, ...EXECUTABLE_CANDIDATES].filter(Boolean);
+  if (configuredPath) {
+    try { await access(configuredPath); if (!(await stat(configuredPath)).isFile()) throw new Error('Not a file'); return configuredPath; }
+    catch { throw new InterpreterError('BROWSER_LAUNCH_ERROR', 'Заданный исполняемый файл браузера недоступен; проверьте executable_path на УН', {statusCode:503,retryable:false}); }
+  }
+  const candidates = EXECUTABLE_CANDIDATES;
   for (const candidate of candidates) {
     try {
       await access(candidate);
@@ -201,6 +200,7 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
     this.completedSteps = 0;
     this.stepDelayMs = options.stepDelayMs;
     this.captchaWaitMs = options.captchaWaitMs;
+    this.captchaPollMs = options.captchaPollMs;
     this.headless = options.headless;
     this.onBrowserLog = options.onBrowserLog;
     this.allowedRoots = options.allowedRoots;
@@ -267,6 +267,7 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
       signal: this.signal,
       headless: this.headless,
       waitMs: this.captchaWaitMs,
+      pollIntervalMs: this.captchaPollMs,
       onBrowserLog: this.onBrowserLog
     });
     const output = { ...await pageSnapshot(this.page), ...(this.stepOutput ?? {}) };
@@ -280,7 +281,7 @@ class ObservableReplayExtension extends PuppeteerRunnerExtension {
       duration_ms: Date.now() - this.currentStepStartedAt,
       output
     });
-    if (this.stepDelayMs > 0 && this.currentIndex < flow.steps.length - 1) {
+    if (this.stepDelayMs > 0 && true) {
       await abortableDelay(this.stepDelayMs, this.signal);
     }
   }
@@ -300,30 +301,20 @@ export async function openFileInBrowser(options) {
     jobId,
     onBrowserLog = () => {}
   } = options;
-  const normalizedHoldOpenMs = boundedNumber(holdOpenMs, 0, 60_000);
-  const normalizedWindowWidth = Math.max(800, Math.round(boundedNumber(windowWidth, 1400, 3840)));
-  const normalizedWindowHeight = Math.max(600, Math.round(boundedNumber(windowHeight, 860, 2160)));
-  const executablePath = await resolveBrowserExecutablePath(configuredExecutablePath);
+  const settings=resolveBrowserSettings({legacy:{executable_path:configuredExecutablePath,headless,hold_open_ms:Number(holdOpenMs),window_width:Number(windowWidth),window_height:Number(windowHeight)},script:options.browser||{}});
+  const prepared=await prepareBrowserLaunch(settings,options.allowedRoots||[],signal);
+  const normalizedHoldOpenMs=settings.hold_open_ms;
+  const executablePath = await resolveBrowserExecutablePath(settings.executable_path);
   let browser;
   const onAbort = () => { void browser?.close().catch(() => {}); };
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    browser = await puppeteer.launch({
-      headless,
-      ...(executablePath ? { executablePath } : {}),
-      ...(!headless ? { defaultViewport: null } : { defaultViewport: { width: normalizedWindowWidth, height: normalizedWindowHeight } }),
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--allow-file-access-from-files',
-        `--window-size=${normalizedWindowWidth},${normalizedWindowHeight}`,
-        ...(!headless ? ['--start-maximized'] : [])
-      ]
-    });
+    browser = await puppeteer.launch({...prepared.options,executablePath});
+    await configureBrowser(browser,prepared.settings);
     const page = await browser.newPage();
+    await configureBrowserPage(page,prepared.settings);
     const fileUrl = pathToFileURL(filePath).href;
-    await page.goto(fileUrl, { waitUntil: 'load', timeout: 15_000 });
+    await page.goto(fileUrl, { waitUntil: 'load', timeout: settings.navigation_timeout_ms });
     const finalState = await pageSnapshot(page);
     const artifact = await screenshotArtifact(
       page,
@@ -374,12 +365,9 @@ export async function executeBrowserReplay(options) {
     allowedRoots = []
   } = options;
 
-  const normalizedStepDelayMs = boundedNumber(stepDelayMs, 0, 5000);
-  const normalizedHoldOpenMs = boundedNumber(holdOpenMs, 0, 60_000);
-  const normalizedCaptchaWaitMs = boundedNumber(captchaWaitMs, 0, 300_000);
-  const normalizedWindowWidth = Math.max(800, Math.round(boundedNumber(windowWidth, 1400, 3840)));
-  const normalizedWindowHeight = Math.max(600, Math.round(boundedNumber(windowHeight, 860, 2160)));
-
+  const settings=resolveBrowserSettings({legacy:{executable_path:configuredExecutablePath,headless,step_delay_ms:Number(stepDelayMs),hold_open_ms:Number(holdOpenMs),captcha_wait_ms:Number(captchaWaitMs),window_width:Number(windowWidth),window_height:Number(windowHeight)},script:script.browser||{},context:context.browser||{}});
+  const normalizedStepDelayMs=settings.step_delay_ms,normalizedHoldOpenMs=settings.hold_open_ms,normalizedCaptchaWaitMs=settings.captcha_wait_ms;
+  const prepared=await prepareBrowserLaunch(settings,allowedRoots,signal);
   let flow;
   try {
     const resolvedScript = resolveTemplates(script, context);
@@ -392,23 +380,14 @@ export async function executeBrowserReplay(options) {
     });
   }
   if (signal?.aborted) throw signal.reason;
-  const executablePath = await resolveBrowserExecutablePath(configuredExecutablePath);
+  const executablePath = await resolveBrowserExecutablePath(settings.executable_path);
   let browser;
   let page;
   try {
-    browser = await puppeteer.launch({
-      headless,
-      ...(executablePath ? { executablePath } : {}),
-      ...(!headless ? { defaultViewport: null } : {}),
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        `--window-size=${normalizedWindowWidth},${normalizedWindowHeight}`,
-        ...(!headless ? ['--start-maximized'] : [])
-      ]
-    });
+    browser = await puppeteer.launch({...prepared.options,executablePath});
+    await configureBrowser(browser,prepared.settings);
     page = await browser.newPage();
+    await configureBrowserPage(page,prepared.settings);
     await page.evaluateOnNewDocument(() => {
       try {
         Object.defineProperty(Navigator.prototype, 'registerProtocolHandler', {
@@ -437,7 +416,8 @@ export async function executeBrowserReplay(options) {
     onEvent,
     stepDelayMs: normalizedStepDelayMs,
     captchaWaitMs: normalizedCaptchaWaitMs,
-    headless,
+    headless:settings.headless,
+    captchaPollMs:settings.captcha_poll_ms,
     onBrowserLog,
     allowedRoots
   });
