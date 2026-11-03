@@ -1,8 +1,9 @@
+import { parseReplayWithTimeouts } from './replay-timeouts.js';
 import { Worker } from 'node:worker_threads';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import puppeteer from 'puppeteer';
-import { createRunner, parse, PuppeteerRunnerExtension } from '@puppeteer/replay';
+import { createRunner, PuppeteerRunnerExtension } from '@puppeteer/replay';
 import { InterpreterError, resolveTemplates, abortableDelay } from './interpreter.js';
 import { resolveBrowserExecutablePath, resolveBrowserUploadFiles } from './browser-replay.js';
 import { checkExternalIp } from './system-checks.js';
@@ -196,7 +197,7 @@ export async function executeJsonWorkflow(options) {
       }
       case 'browser_steps': {
         requirePage();
-        const recording = parse({ title: 'JSON browser steps', timeout: params.timeout_ms || 30000, steps: resolveTemplates(params.steps, context) });
+        const recording = parseReplayWithTimeouts({ title: 'JSON browser steps', timeout: params.timeout_ms ?? 30000, steps: resolveTemplates(params.steps, context) });
         const extension = new class extends PuppeteerRunnerExtension {
           async runStepInFrame(step, main, target, frame, timeout) {
             if (step.type !== 'customStep') return super.runStepInFrame(step, main, target, frame, timeout);

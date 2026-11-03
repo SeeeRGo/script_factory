@@ -25,12 +25,13 @@
         }
       }
     ],
-    "error_dir": "C:/Отчеты_с_ошибками"
+    "error_dir": "C:/Отчеты_с_ошибками",
+    "browser_step_timeout_ms": 60000
   },
   "script": {
     "format": "json-workflow",
     "title": "СБИС: ФНС, СФР и Росстат из JSON",
-    "version": "3.9.0",
+    "version": "3.10.0",
     "default_step_timeout_ms": 60000,
     "context": {
       "mode": "validate_only",
@@ -345,7 +346,8 @@
       "control_timeout_ms": 900000,
       "license_debt_enabled": false,
       "license_debt_expected_amount": null,
-      "error_dir": "C:/Отчеты_с_ошибками"
+      "error_dir": "C:/Отчеты_с_ошибками",
+      "browser_step_timeout_ms": 60000
     },
     "routines": {
       "browser": [
@@ -376,10 +378,11 @@
                 "steps": [
                   "{{browser_step}}"
                 ],
-                "timeout_ms": 30000
+                "timeout_ms": "{{browser_step_timeout_ms}}"
               },
               "private": true,
-              "id": "sbis_browser_1_steps_2"
+              "id": "sbis_browser_1_steps_2",
+              "timeout_ms": "{{browser_step_budget_ms}}"
             },
             {
               "action": "call",
@@ -771,10 +774,11 @@
               "description": "Нажимает подтвержденную кнопку мышью и ожидает закрытия окна. DOM.click может не обрабатываться интерфейсом Saby.",
               "params": {
                 "steps": "{{dismiss_steps}}",
-                "timeout_ms": 30000
+                "timeout_ms": "{{browser_step_timeout_ms}}"
               },
               "private": true,
-              "id": "sbis_dismiss_popups_1_steps_2"
+              "id": "sbis_dismiss_popups_1_steps_2",
+              "timeout_ms": "{{browser_step_budget_ms}}"
             }
           ],
           "private": true,
@@ -1283,6 +1287,17 @@
         "id": "sbis_main_1"
       },
       {
+        "id": "sbis_browser_step_budget",
+        "action": "compute",
+        "title": "Рассчитать внешний лимит браузерного шага",
+        "description": "Добавляет 5 секунд к внутреннему ожиданию Replay; общий тайм-аут задания остаётся независимым.",
+        "params": {
+          "expression": "Math.min(Number(context.browser_step_timeout_ms)+5000,2147483647)"
+        },
+        "save_as": "browser_step_budget_ms",
+        "private": true
+      },
+      {
         "action": "compute",
         "title": "Проверить параметры и UI-привязки всех ведомств до запуска",
         "description": "Проверить параметры и UI-привязки всех ведомств до запуска",
@@ -1589,10 +1604,11 @@
                   "description": "Завершает начальную навигацию перед анализом подсказок и кнопок входа."
                 }
               ],
-              "timeout_ms": 30000
+              "timeout_ms": "{{browser_step_timeout_ms}}"
             },
             "private": true,
-            "id": "sbis_run_reports_then_9"
+            "id": "sbis_run_reports_then_9",
+            "timeout_ms": "{{browser_step_budget_ms}}"
           },
           {
             "action": "call",
@@ -2816,10 +2832,12 @@
                                               "offsetX": 20,
                                               "offsetY": 10
                                             }
-                                          ]
+                                          ],
+                                          "timeout_ms": "{{browser_step_timeout_ms}}"
                                         },
                                         "private": true,
-                                        "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_4"
+                                        "id": "sbis_run_reports_then_23_steps_14_then_4_then_2_steps_16_then_2_then_4",
+                                        "timeout_ms": "{{browser_step_budget_ms}}"
                                       },
                                       {
                                         "action": "browser_eval",

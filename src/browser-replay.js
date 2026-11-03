@@ -1,7 +1,8 @@
+import { parseReplayWithTimeouts } from './replay-timeouts.js';
 import { access, mkdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createRunner, parse, PuppeteerRunnerExtension } from '@puppeteer/replay';
+import { createRunner, PuppeteerRunnerExtension } from '@puppeteer/replay';
 import puppeteer from 'puppeteer';
 import { abortableDelay, InterpreterError, resolveTemplates } from './interpreter.js';
 
@@ -382,7 +383,7 @@ export async function executeBrowserReplay(options) {
   let flow;
   try {
     const resolvedScript = resolveTemplates(script, context);
-    flow = parse(resolvedScript);
+    flow = parseReplayWithTimeouts(resolvedScript);
   } catch (rawError) {
     throw new InterpreterError('BROWSER_REPLAY_ERROR', `Не удалось подготовить Puppeteer Replay: ${rawError?.message || 'неизвестная ошибка'}`, {
       cause: rawError,
@@ -431,7 +432,7 @@ export async function executeBrowserReplay(options) {
   page.on('pageerror', (error) => onBrowserLog('warn', `Browser page error: ${redactText(error?.message ?? error ?? 'Unknown page error', context)}`));
 
   const extension = new ObservableReplayExtension(browser, page, {
-    timeoutMs: Math.max(1, Math.min(timeoutMs, 30_000)),
+    timeoutMs,
     signal,
     onEvent,
     stepDelayMs: normalizedStepDelayMs,

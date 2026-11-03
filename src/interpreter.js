@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { copyFile, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { isIP } from 'node:net';
 import path from 'node:path';
-import { parse as parsePuppeteerReplay } from '@puppeteer/replay';
+import { parseReplayWithTimeouts as parsePuppeteerReplay } from './replay-timeouts.js';
 
 const DEFAULT_STEP_TIMEOUT_MS = 10_000;
 

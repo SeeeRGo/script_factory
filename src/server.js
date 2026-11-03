@@ -1434,7 +1434,7 @@ async function executeJob(job) {
         allowedRoots: STEP_ALLOWED_ROOTS,
         context: runtimeContext,
         signal: controller.signal,
-        timeoutMs: Math.min(job.timeout_ms, 30_000),
+        timeoutMs: job.timeout_ms,
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
         headless: process.env.BROWSER_HEADLESS !== 'false',
         stepDelayMs: process.env.BROWSER_STEP_DELAY_MS,
