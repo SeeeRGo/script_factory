@@ -31,7 +31,7 @@
   "script": {
     "format": "json-workflow",
     "title": "СБИС: ФНС, СФР и Росстат из JSON",
-    "version": "3.12.0",
+    "version": "3.13.0",
     "default_step_timeout_ms": 60000,
     "context": {
       "mode": "validate_only",
@@ -285,7 +285,12 @@
         "bundle_import_selector": "[data-name=\"FolderBrowserComponent__StartLoadButton\"]",
         "upload_bundle_steps": [],
         "validation_error_selector": "[data-qa=\"journal_check_result\"]",
-        "validation_error_description_selector": "[data-qa=\"journal_check_name\"],[data-qa=\"journal_check_text\"]"
+        "validation_error_description_selector": "[data-qa=\"journal_check_name\"],[data-qa=\"journal_check_text\"]",
+        "submission_busy_selector": "[role=\"progressbar\"], [aria-busy=\"true\"]",
+        "submission_busy_texts": [
+          "Отправка",
+          "Отправляется"
+        ]
       },
       "authority_prefixes": [
         {
@@ -348,7 +353,8 @@
       "license_debt_enabled": false,
       "license_debt_expected_amount": null,
       "error_dir": "C:/Отчеты_с_ошибками",
-      "browser_step_timeout_ms": 60000
+      "browser_step_timeout_ms": 60000,
+      "submit_status_stable_ms": 1000
     },
     "routines": {
       "browser": [
@@ -1314,7 +1320,7 @@
         "title": "Вычислить тайм-аут submit",
         "description": "Добавить запас к ожиданию, заданному индивидуальным параметром.",
         "params": {
-          "expression": "(() => {const t=context.submit_timeout_ms;if(!Number.isInteger(t)||t<1||t>900000)throw Object.assign(new Error('Некорректный тайм-аут'),{code:'MISSING_PARAMETER'});return t+5000;})()"
+          "expression": "(() => {const t=context.submit_timeout_ms,s=context.submit_status_stable_ms;if(!Number.isInteger(t)||t<1||t>900000||!Number.isInteger(s)||s<0||s>=t)throw Object.assign(new Error('Некорректный тайм-аут отправки или период устойчивого статуса'),{code:'MISSING_PARAMETER'});return t+5000;})()"
         },
         "save_as": "submit_step_timeout_ms",
         "private": true,
@@ -2996,9 +3002,9 @@
                               {
                                 "action": "browser_wait",
                                 "title": "Дождаться точного подтверждённого статуса отправки",
-                                "description": "Дождаться точного подтверждённого статуса отправки",
+                                "description": "Ждёт точный статус текущей карточки, исчезновение индикатора отправки и устойчивый статус в течение submit_status_stable_ms. Допустимые статусы сравнивает с нормализацией пробелов и ё/е. Не повторяет отправку.",
                                 "params": {
-                                  "expression": "(() => {\n const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(v);\n if(roots.length!==1)return false;\n const es=[...roots[0].querySelectorAll(context.ui.sent_status_selector)].filter(v);\n return es.length===1&&[context.ui.sent_status_text,...(context.ui.sent_status_texts||[])].includes(es[0].innerText.trim());\n})()",
+                                  "expression": "(() => {\n const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const norm=s=>String(s||'').replace(/\\s+/g,' ').trim().replace(/ё/g,'е');\n const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(visible);\n if(roots.length!==1){delete window.__sfConfirmedSubmission;return false;}\n const statuses=[...(roots[0].matches(context.ui.sent_status_selector)?[roots[0]]:[]),...roots[0].querySelectorAll(context.ui.sent_status_selector)].filter(visible);\n const expected=[context.ui.sent_status_text,...(context.ui.sent_status_texts||[])].map(norm).filter(Boolean);\n const status=statuses.length===1&&expected.includes(norm(statuses[0].innerText))?statuses[0].innerText.trim():null;\n const selector=context.ui.submission_busy_selector;\n const busySelector=selector&&[...document.querySelectorAll(selector)].some(visible);\n const busyTexts=(context.ui.submission_busy_texts||[]).map(norm);\n const busyText=busyTexts.length&&[...document.querySelectorAll('body *')].some(e=>visible(e)&&busyTexts.includes(norm(e.textContent))&&![...e.children].some(c=>visible(c)&&busyTexts.includes(norm(c.textContent))));\n if(!status||busySelector||busyText){delete window.__sfConfirmedSubmission;return false;}\n const statusKey=String(context.report.report_key)+'\\n'+status;\n const now=Date.now(),previous=window.__sfConfirmedSubmission;\n if(!previous||previous.key!==statusKey){window.__sfConfirmedSubmission={key:statusKey,since:now};return context.submit_status_stable_ms===0;}\n return now-previous.since>=context.submit_status_stable_ms;\n})()",
                                   "timeout_ms": "{{submit_timeout_ms}}"
                                 },
                                 "timeout_ms": "{{submit_step_timeout_ms}}",
@@ -3022,7 +3028,7 @@
                                 "title": "Прочитать фактический подтвержденный статус",
                                 "description": "Сохраняет текст статуса текущей карточки, включая уже полученное Отчет сдан.",
                                 "params": {
-                                  "expression": "(()=>{const v=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(v);if(roots.length!==1)throw new Error('Неоднозначная карточка');const es=[...roots[0].querySelectorAll(context.ui.sent_status_selector)].filter(v);if(es.length!==1||![context.ui.sent_status_text,...(context.ui.sent_status_texts||[])].includes(es[0].innerText.trim()))throw new Error('Статус изменился до подтверждения');return es[0].innerText.trim()})()"
+                                  "expression": "(() => {\n const confirmed=(() => {const visible=e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden';\n const norm=s=>String(s||'').replace(/\\s+/g,' ').trim().replace(/ё/g,'е');\n const roots=[...document.querySelectorAll(context.ui.sent_scope_selector||context.ui.report_scope_selector)].filter(visible);\n if(roots.length!==1)return false;\n const statuses=[...(roots[0].matches(context.ui.sent_status_selector)?[roots[0]]:[]),...roots[0].querySelectorAll(context.ui.sent_status_selector)].filter(visible);\n const expected=[context.ui.sent_status_text,...(context.ui.sent_status_texts||[])].map(norm).filter(Boolean);\n const status=statuses.length===1&&expected.includes(norm(statuses[0].innerText))?statuses[0].innerText.trim():null;\n const selector=context.ui.submission_busy_selector;\n const busySelector=selector&&[...document.querySelectorAll(selector)].some(visible);\n const busyTexts=(context.ui.submission_busy_texts||[]).map(norm);\n const busyText=busyTexts.length&&[...document.querySelectorAll('body *')].some(e=>visible(e)&&busyTexts.includes(norm(e.textContent))&&![...e.children].some(c=>visible(c)&&busyTexts.includes(norm(c.textContent))));\n if(!status||busySelector||busyText)return false;\n return status;})();\n if(!confirmed)throw Object.assign(new Error('Отправка ещё выполняется либо подтверждённый статус изменился'),{code:'REQUIRES_RECONCILIATION'});\n return confirmed;\n})()"
                                 },
                                 "save_as": "confirmed_sent_status",
                                 "private": true,
@@ -3453,6 +3459,41 @@
             "private": true,
             "routine": "capture_report",
             "timeout_ms": "{{control_timeout_ms}}"
+          }
+        ]
+      },
+      {
+        "id": "sbis_error_browser_snapshot_needed",
+        "action": "compute",
+        "title": "Проверить необходимость снимка раннего сбоя",
+        "description": "Не создаёт повторный общий снимок для уже обработанных ошибок отчётов.",
+        "params": {
+          "expression": "!context.has_error_report && !['REPORTS_FAILED','VALIDATION_ERROR'].includes(context.error.code)"
+        },
+        "save_as": "capture_early_error",
+        "private": true
+      },
+      {
+        "id": "sbis_error_browser_snapshot",
+        "action": "if",
+        "title": "Сохранить экран раннего сбоя браузера",
+        "description": "Если сбой произошёл до выбора текущего отчёта, сохраняет один диагностический снимок в артефактах задания. Исходная ошибка сохраняется. Покупка, настройка рабочего места и повтор отправки не выполняются.",
+        "params": {
+          "condition": "{{capture_early_error}}"
+        },
+        "private": true,
+        "then": [
+          {
+            "id": "sbis_error_browser_snapshot_capture",
+            "action": "browser_screenshot",
+            "title": "Снять экран сбоя до открытия отчёта",
+            "description": "Сохраняет текущую страницу, в том числе окно «Компьютер не готов к работе», если браузер ещё доступен.",
+            "params": {
+              "filename": "workflow-error.png",
+              "optional": true,
+              "replace": true
+            },
+            "private": true
           }
         ]
       },

@@ -106,6 +106,7 @@ for (const scenario of ['validation_clean_protocol','validation_bundle_collision
       }
     }, script, context: { mode: scenario==='upload_bundle_only' ? 'upload_only' : scenario === 'preflight_three' ? 'preflight' : ['mixed_validation_send','duplicate_then_valid_conflict','duplicate_then_valid','send_multiple_tabs', 'send_multiple_tab_mismatch', 'send_missing_prefixes', 'send', 'send_accepted', 'unknown_send', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed','license_debt_late_price','license_debt_contradiction','send_three_partial'].includes(scenario) ? 'send' : 'validate_only',
       submit_enabled: ['mixed_validation_send','duplicate_then_valid_conflict','duplicate_then_valid','send_multiple_tabs', 'send_multiple_tab_mismatch', 'send_missing_prefixes', 'send', 'send_accepted', 'unknown_send', 'license_required', 'license_wrong_card', 'license_debt_denied', 'license_debt_allowed', 'license_debt_price_changed','license_debt_late_price','license_debt_contradiction','send_three_partial'].includes(scenario), inn, certificate_inn: inn, certificate_selection_required: true,
+      submit_status_stable_ms: 50,
       // The fixture picker already displays incoming, including on Windows drive C.
       upload_directory_steps: [{ type: 'waitForExpression', expression: 'true' }],
       login_url: `${origin}/login`, report_url: `${origin}/report`, authenticated_url: `${origin}/cabinet`, root_dir: incoming, loaded_dir: loaded, error_dir: errors, license_debt_enabled:['license_debt_allowed','license_debt_price_changed','license_debt_late_price'].includes(scenario), license_debt_expected_amount:scenario==='license_debt_price_changed'?1000:2500, authority_prefixes, ui },
@@ -114,7 +115,8 @@ for (const scenario of ['validation_clean_protocol','validation_bundle_collision
     const checkSavedResult = async projection => {
       const files = projection.artifacts.filter(a => /^result-\d+\.json$/.test(a.filename));
       assert.equal(files.length,1);
-      assert.equal(projection.artifacts.some(a=>['workflow-final.png','workflow-error.png'].includes(a.filename)),false);
+      assert.equal(projection.artifacts.some(a=>a.filename==='workflow-final.png'),false);
+      if(projection.artifacts.some(a=>a.filename==='workflow-error.png'))assert.ok(events.some(e=>e.type==='step_completed'&&e.step_id==='sbis_error_browser_snapshot_capture'));
       const text = await readFile(files.at(-1).local_path, 'utf8');
       const records=Object.fromEntries(Object.entries(projection).filter(([k])=>/^Rezult_[1-9]\d*$/.test(k)));
       assert.deepEqual(JSON.parse(text), records);
@@ -172,6 +174,9 @@ for (const scenario of ['validation_clean_protocol','validation_bundle_collision
         if (scenario === 'workstation_not_ready') {
           assert.match(e.message, /Шаг «Дождаться списка подписей либо завершения автоматического входа»: Waiting failed: 250ms exceeded/);
           assert.equal(e.step_id, 'sbis_run_reports_then_11');
+          const snapshot=e.partial_context.artifacts.find(a=>a.filename==='workflow-error.png');
+          assert.ok(snapshot,'An authentication timeout must preserve a screenshot before any report is opened');
+          assert.ok(snapshot.size_bytes>0);
         }
         const report=Object.values(e.partial_context).find(r=>r?.error_code===codes[scenario]);
         if(scenario==='file_conflict')assert.equal(report,undefined);else assert.ok(report,'An error after selection must preserve the affected report result');
