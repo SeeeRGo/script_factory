@@ -86,3 +86,7 @@ node --test --test-name-pattern=send_multiple test/sbis-json.test.js
 
 
 С API 0.9.15 доступна [общая конфигурация браузера и лимитов исполнителя](10-browser-settings.md): BROWSER_OPTIONS_JSON / WORKFLOW_LIMITS_JSON в .env, browser / limits в сценарии, context.browser в запросе, настройки browser_launch.params. Профиль, расширения, запуск, CDP, окно, задержки, прокси, сертификаты, диалоги, скачивание и лимиты задаются без изменения кода API. Пауза BROWSER_STEP_DELAY_MS теперь действует и в json-workflow; она входит в общий лимит времени. Изменение .env требует перезапуска worker.
+
+## API и worker в 0.11.0
+
+В `EXECUTION_MODE=broker` `src/server.js` хранит очередь и HTTP API, `src/worker-transport.js` обеспечивает авторизованный локальный канал, `src/browser-worker.js` исполняет сценарии в пользовательском сеансе через общий `src/job-runtime.js`. Режим inline сохраняет совместное исполнение. API сохраняет идентификатор попытки до отправки worker и подтверждает результат после записи в SQLite. При потере процесса неизвестный исход не переигрывается автоматически. Установка двух Windows-задач, диагностика и журналы описаны в [отдельной инструкции](12-api-worker-startup.md). Оркестратор обновлений — [здесь](11-fleet-updates.md).

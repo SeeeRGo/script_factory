@@ -1,7 +1,8 @@
 ﻿param(
   [string]$ProjectPath = (Split-Path -Parent $PSScriptRoot),
   [string]$EnvFile = '',
-  [switch]$RestartOnExit
+  [switch]$RestartOnExit,
+  [switch]$ApiOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,6 +41,7 @@ if (-not (Test-Path $configurationFile)) {
   throw "Не найден файл конфигурации $configurationFile"
 }
 
+if (-not $ApiOnly) {
 $browserOptionsText = if ($env:BROWSER_OPTIONS_JSON) { $env:BROWSER_OPTIONS_JSON } else { Read-DotEnvValue $configurationFile 'BROWSER_OPTIONS_JSON' }
 $browserOptions = $null
 if ($browserOptionsText) {
@@ -72,8 +74,13 @@ if ($explicitBrowser) {
   $env:PUPPETEER_EXECUTABLE_PATH = $browser
 }
 
+}
+$mode = Read-DotEnvValue $configurationFile 'EXECUTION_MODE'
+$entryPoint = if ($ApiOnly -or $mode -ne 'broker') { Join-Path $ProjectPath 'src\server.js' } else { Join-Path $ProjectPath 'src\browser-worker.js' }
+$role = if ($ApiOnly) { 'Api' } else { 'Worker' }
+if (-not $ApiOnly) { $env:WORKER_SESSION_ID = [string](Get-Process -Id $PID).SessionId }
 if (-not $RestartOnExit) {
-  & node "--env-file=$configurationFile" (Join-Path $ProjectPath 'src\server.js')
+  & node "--env-file=$configurationFile" $entryPoint
   exit $LASTEXITCODE
 }
 
@@ -81,7 +88,7 @@ if (-not $RestartOnExit) {
 $hash = [Security.Cryptography.SHA256]::Create()
 try { $key = [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($configurationFile.ToLowerInvariant()))).Replace('-', '') }
 finally { $hash.Dispose() }
-$mutex = New-Object Threading.Mutex($false, "Global\ScriptFactory-Worker-$key")
+$mutex = New-Object Threading.Mutex($false, "Global\ScriptFactory-$role-$key")
 $locked = $false
 try {
   try { $locked = $mutex.WaitOne(0) }
@@ -90,10 +97,10 @@ try {
   $dataPath = Read-DotEnvValue $configurationFile 'DATA_DIR'
   if (-not $dataPath) { $dataPath = Join-Path $ProjectPath 'data' }
   if (-not [IO.Path]::IsPathRooted($dataPath)) { $dataPath = Join-Path $ProjectPath $dataPath }
-  $logPath = Join-Path $dataPath 'worker-logs'
+  $logPath = Join-Path $dataPath ($role.ToLowerInvariant()+'-logs')
   New-Item -ItemType Directory -Path $logPath -Force | Out-Null
   $sessionId = (Get-Process -Id $PID).SessionId
-  if ($sessionId -eq 0) { throw 'Worker requires an interactive user session, not Session 0' }
+  if (-not $ApiOnly -and $sessionId -eq 0) { throw 'Worker requires an interactive user session, not Session 0' }
   function Write-SupervisorLog([string]$Message) {
     $file = Join-Path $logPath 'supervisor.log'
     if ((Test-Path $file) -and (Get-Item $file).Length -gt 1MB) { Move-Item $file "$file.previous" -Force }
@@ -101,13 +108,13 @@ try {
   }
   # Live workers are never restarted on a slow/unready health response.
   $envPattern = '--env-file(?:-if-exists)?=' + [regex]::Escape($configurationFile) + '(?=["\s]|$)'
-  $serverPattern = [regex]::Escape((Join-Path $ProjectPath 'src\server.js')) + '(?=["\s]|$)'
+  $serverPattern = [regex]::Escape($entryPoint) + '(?=["\s]|$)'
   $node = (Get-Command node -ErrorAction Stop).Source
   if (-not ('ScriptFactory.WorkerJob' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'worker-job.cs') }
   Write-SupervisorLog 'started; restart delay=10s'
   while ($true) {
     $existing = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
-      $_.CommandLine -imatch $envPattern -and ($_.CommandLine -imatch $serverPattern -or $_.CommandLine -match '(?:^|["\s])src[/\\]server\.js(?=["\s]|$)')
+      $_.CommandLine -imatch $envPattern -and ($_.CommandLine -imatch $serverPattern)
     })
     if ($existing.Count -gt 0) { Start-Sleep -Seconds 5; continue }
     # Keep stdout/stderr from the latest 20 launches.
@@ -116,7 +123,7 @@ try {
     $worker = $null
     $job = New-Object ScriptFactory.WorkerJob
     try {
-      $worker = Start-Process -FilePath $node -ArgumentList @("`"--env-file=$configurationFile`"", "`"$(Join-Path $ProjectPath 'src\server.js')`"") -WorkingDirectory $ProjectPath -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logPath "worker-$stamp-out.log") -RedirectStandardError (Join-Path $logPath "worker-$stamp-err.log")
+      $worker = Start-Process -FilePath $node -ArgumentList @("`"--env-file=$configurationFile`"", "`"$entryPoint`"") -WorkingDirectory $ProjectPath -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logPath "worker-$stamp-out.log") -RedirectStandardError (Join-Path $logPath "worker-$stamp-err.log")
       try { $job.Assign($worker) }
       catch {
         if (-not $worker.HasExited) { Stop-Process -Id $worker.Id -Force }

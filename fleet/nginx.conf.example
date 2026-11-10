@@ -1,0 +1,15 @@
+server {
+    listen 443 ssl;
+    server_name fleet.example.org;
+    ssl_certificate /etc/ssl/fleet/fullchain.pem;
+    ssl_certificate_key /etc/ssl/fleet/private.key;
+    client_max_body_size 512m;
+    location / {
+        proxy_pass http://127.0.0.1:34001;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_request_buffering off;
+    }
+}

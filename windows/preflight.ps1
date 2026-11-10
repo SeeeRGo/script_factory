@@ -53,12 +53,14 @@ try {
   $errors.Add('Node.js не найден в PATH')
 }
 
-foreach ($secretName in @('API_KEY', 'WEB_PASSWORD', 'CALLBACK_AUTH_TOKEN')) {
+foreach ($secretName in @('API_KEY', 'WEB_PASSWORD')) {
   $value = $configuration[$secretName]
   if (-not $value -or $value -match 'replace|change-this') {
     $errors.Add("Заполните $secretName в .env")
   }
 }
+if($configuration['CALLBACK_AUTH_TOKEN'] -and ($configuration['CALLBACK_AUTH_USERNAME'] -or $configuration['CALLBACK_AUTH_PASSWORD'])){$errors.Add('Выберите один способ callback: Bearer или Basic')}
+if([bool]$configuration['CALLBACK_AUTH_USERNAME'] -ne [bool]$configuration['CALLBACK_AUTH_PASSWORD']){$errors.Add('Для Basic callback нужны CALLBACK_AUTH_USERNAME и CALLBACK_AUTH_PASSWORD')}
 if (-not $configuration['UN_ID']) { $errors.Add('Заполните UN_ID в .env') }
 
 $browserOptionsText = if ($env:BROWSER_OPTIONS_JSON) { $env:BROWSER_OPTIONS_JSON } else { $configuration['BROWSER_OPTIONS_JSON'] }

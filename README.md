@@ -13,6 +13,7 @@ callbacks for 1C. The Stage 2 JSON-steps interpreter remains backward compatible
 - [контракт интеграции с 1С, Windows-УН, задержка, callback и нагрузочное демо](docs/stage-4-1c-integration.md);
 - [ответы по готовности УН, идентификаторам, дубликатам, callback и файловому циклу](docs/answers-1c-integration.md);
 - [массовое развёртывание и откат Windows-УН через Ansible](ansible/README.md);
+- [централизованные обновления: оркестратор, агент и обслуживание API](docs/project-guide/11-fleet-updates.md);
 - [простая пошаговая инструкция обновления Windows-УН](docs/update-un-step-by-step.md);
 - [ручное обновление Windows-УН без Ansible](docs/update-un-manual-step-by-step.md);
 - [правила версионирования каждого коммита](docs/versioning.md);
@@ -309,3 +310,5 @@ From version 0.6.14, `format: "json-workflow"` runs loops, conditions, reusable 
 ### Спящий режим незанятой Windows-УН
 
 С API 0.7.0 доступен фоновый модуль и метод POST /api/v2/system/power/suspend. Очередь и активность пользователей проверяются после ответа 202; 202 не означает, что УН уснула. По умолчанию модуль отключён, dry-run включён. Настройки пользователя и порога бездействия сохраняются на УН. С API 0.7.1 можно явно выбрать mode=hibernate вместо sleep; требуется поддержка S4 и заранее настроенный полный файл гибернации. [Установка, вызов из 1С и массовое внедрение](docs/project-guide/09-power-management.md).
+
+Запуск API при включении Windows, отдельный worker и диагностика ожидания входа: [инструкция](docs/project-guide/12-api-worker-startup.md).

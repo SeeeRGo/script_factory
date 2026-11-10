@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.9.17
+  version: 0.11.0
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
@@ -34,7 +34,7 @@ components:
         background_enabled: {type: boolean, default: false}
         dry_run: {type: boolean, default: true}
         mode: {type: string, enum: [sleep, hibernate, shutdown], default: sleep, description: 'Явный режим Windows: сон, гибернация или завершение работы; автоматической подмены нет.'}
-        excluded_user: {type: string, nullable: true, minLength: 1, maxLength: 256, description: 'Исключаемая Windows-учётная запись; null в PATCH сбрасывает переопределение к .env/пользователю API. Сопоставляется по SID.'}
+        excluded_user: {type: string, nullable: true, minLength: 1, maxLength: 256, description: 'Исключаемая Windows-учётная запись; null в PATCH сбрасывает переопределение к .env/WORKER_ACCOUNT в broker, пользователю API в inline. Сопоставляется по SID.'}
         user_idle_seconds: {type: integer, minimum: 1, maximum: 2592000, default: 1800}
         check_interval_seconds: {type: integer, minimum: 5, maximum: 86400, default: 60}
         grace_seconds: {type: integer, minimum: 0, maximum: 3600, default: 30}
@@ -696,10 +696,53 @@ components:
         available_slots:
           type: integer
           minimum: 0
+    MaintenanceStatus:
+      type: object
+      required: [active, blockers, ready_to_update]
+      properties:
+        active: {type: boolean}
+        owner: {type: string, description: Идентификатор операции, владеющей обслуживанием}
+        reason: {type: string}
+        phase: {type: string, enum: [draining, installing]}
+        started_at: {type: string, format: date-time}
+        blockers:
+          type: array
+          items: {type: string, enum: [JOBS_PENDING, CALLBACK_PENDING, ARTIFACT_TRANSFER, WORKER_EXECUTION_UNCERTAIN]}
+        ready_to_update: {type: boolean}
+    MaintenanceRequest:
+      type: object
+      additionalProperties: false
+      required: [owner]
+      properties:
+        owner: {type: string, pattern: '^[A-Za-z0-9_-]{1,100}$'}
+        reason: {type: string, maxLength: 200}
+    WorkerStatus:
+      type: object
+      description: Состояние интерактивного исполнителя; API доступно независимо от входа пользователя.
+      properties:
+        mode: {type: string, enum: [inline, broker]}
+        connected: {type: boolean}
+        ready: {type: boolean}
+        state: {type: string, enum: [READY, WAITING_FOR_SESSION, WORKER_STARTING, WORKER_SESSION_REQUIRED, WORKER_START_FAILED, WORKER_UNRESPONSIVE, WORKER_TRANSPORT_FAILED]}
+        message: {type: string}
+        retryable: {type: boolean, description: Повторять проверку до общего срока ожидания клиента}
+        retry_after_ms: {type: integer, nullable: true}
+        account: {type: string}
+        session_id: {type: integer, nullable: true}
+        pid: {type: integer, nullable: true}
+        capacity: {type: integer}
+        active: {type: integer}
+        browser: {type: object, nullable: true, additionalProperties: true}
     HealthResponse:
       type: object
       required: [status, ready, service, version, release_date, request_id, un_id, checks, queue]
       properties:
+        api_available: {type: boolean}
+        execution_mode: {type: string, enum: [inline, broker]}
+        worker:
+          $ref: '#/components/schemas/WorkerStatus'
+        maintenance:
+          $ref: '#/components/schemas/MaintenanceStatus'
         status:
           type: string
           enum: [ok, error]
@@ -968,6 +1011,35 @@ components:
 security:
   - ApiKeyAuth: []
 paths:
+  /live:
+    get:
+      tags: [Сервис]
+      summary: Проверить доступность HTTP API без ожидания пользовательского сеанса
+      description: Доступен также как /api/v2/live. HTTP 200 не подтверждает готовность браузера или ЭЦП; для этого проверьте /health и сценарий СБИС.
+      security: []
+      responses:
+        "200":
+          description: API отвечает
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string}
+                  api_available: {type: boolean}
+                  un_id: {type: string}
+                  version: {type: string}
+  /api/v2/system/worker/status:
+    get:
+      tags: [Система]
+      summary: Получить состояние исполнителя
+      responses:
+        "200":
+          description: Состояние worker
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerStatus'
   /health:
     get:
       tags: [Сервис]
@@ -1441,6 +1513,77 @@ paths:
                         enum: [IP_SETTINGS_READ_FAILED, IP_SETTINGS_INVALID, IP_LOOKUP_FAILED, IP_LOOKUP_INVALID, IP_MISMATCH, IP_CHECK_TIMEOUT]
                       message:
                         type: string
+  /system/maintenance:
+    get:
+      tags: [Система]
+      summary: Состояние обслуживания, владелец и незавершённые работы
+      responses:
+        "200":
+          description: Состояние; обслуживание сохраняется при перезапуске API
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceStatus'}
+  /system/maintenance/begin:
+    post:
+      tags: [Система]
+      summary: Закрыть приём заданий и заблокировать выключение до завершения обслуживания
+      description: Уже принятые работы продолжают выполняться. /health возвращает 503 и ready=false. Новый POST jobs возвращает SERVICE_MAINTENANCE. Состояние сохраняется на диске; автоматического тайм-аута снятия нет.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MaintenanceRequest'}
+      responses:
+        "200": {description: Приём закрыт; дождитесь ready_to_update}
+        "409": {description: Обслуживание принадлежит другой операции}
+        "503": {description: УН уже переходит в выключение или останавливается}
+  /system/maintenance/seal:
+    post:
+      tags: [Система]
+      summary: После завершения работ закрыть скачивания и изменения API
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MaintenanceRequest'}
+      responses:
+        "200": {description: Можно останавливать API для установки}
+        "409": {description: Другой владелец или ещё выполняются работы}
+  /system/maintenance/verify:
+    post:
+      tags: [Система]
+      summary: Фиксированная безопасная проверка JSON-исполнителя и записи/чтения артефакта
+      description: Только в installing с тем же owner. Произвольный сценарий не принимается. Не запускает браузер, ЭЦП, callback или отправку отчётности.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MaintenanceRequest'}
+      responses:
+        "200":
+          description: Проверка исполнителя и артефакта успешна
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  verified: {type: boolean}
+                  version: {type: string}
+                  un_id: {type: string}
+                  checks: {type: array, items: {type: string}}
+        "409": {description: Не тот владелец, не закрыты скачивания или УН занята}
+  /system/maintenance/end:
+    post:
+      tags: [Система]
+      summary: Снять обслуживание после подтверждённого восстановления
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MaintenanceRequest'}
+      responses:
+        "200": {description: Возобновлены приём заданий и прежняя политика питания}
+        "409": {description: Другой владелец или ещё выполняется проверка}
   /system/power/suspend:
     post:
       tags: [Система]

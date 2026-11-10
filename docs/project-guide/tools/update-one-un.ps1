@@ -8,6 +8,8 @@ param(
   [string]$TaskPath = '\',
   [int]$Port = 33001,
   [string]$BackupRoot = 'C:\ScriptFactory-backups',
+  [string]$MaintenanceOwner = '',
+  [string]$ResultFile = '',
   [switch]$ConfirmNoNewJobs,
   [switch]$ConfirmReplaceCode
 )
@@ -37,18 +39,38 @@ function Read-Configuration([string]$file) {
 function In-Directory([string]$path,[string]$root) {
   return $path.Equals($root,[StringComparison]::OrdinalIgnoreCase) -or $path.StartsWith($root+'\',[StringComparison]::OrdinalIgnoreCase)
 }
-function Read-Health { return Invoke-RestMethod "http://127.0.0.1:$Port/health" -TimeoutSec 5 }
+function Read-Health {
+  try { return Invoke-RestMethod "http://127.0.0.1:$Port/health" -TimeoutSec 5 }
+  catch {
+    if (-not $MaintenanceOwner -or -not $_.Exception.Response -or [int]$_.Exception.Response.StatusCode -ne 503) { throw }
+    $reader = New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())
+    try { return ($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
+  }
+}
+function Test-Ready($h) {
+  if ($h.ready) { return $true }
+  if (-not $MaintenanceOwner -or -not $h.maintenance.active -or $h.maintenance.owner -ne $MaintenanceOwner) { return $false }
+  foreach ($check in $h.checks.PSObject.Properties) { if ($check.Name -ne 'maintenance' -and $check.Value.status -ne 'ok') { return $false } }
+  return $true
+}
+function Write-Result($value) {
+  $text = $value | ConvertTo-Json -Depth 8
+  if ($ResultFile) { [IO.File]::WriteAllText($ResultFile+'.tmp',$text,(New-Object Text.UTF8Encoding($false))); Move-Item -LiteralPath ($ResultFile+'.tmp') -Destination $ResultFile -Force }
+  $text
+}
 function Wait-Ready([string]$version) {
   for ($i=0; $i -lt 30; $i++) {
     try {
       $h = Read-Health
-      if ($h.status -eq 'ok' -and $h.ready -and $h.version -eq $version -and $h.un_id -eq $configuration['UN_ID']) { return $h }
+      if ((Test-Ready $h) -and $h.version -eq $version -and $h.un_id -eq $configuration['UN_ID']) { return $h }
     } catch {}
     Start-Sleep -Seconds 2
   }
   throw "Worker did not become ready with version $version"
 }
 function Stop-ExactWorker {
+  if ($interactiveTask) { Disable-ScheduledTask -TaskName $interactiveTask.TaskName -TaskPath $TaskPath | Out-Null; Stop-ScheduledTask -TaskName $interactiveTask.TaskName -TaskPath $TaskPath }
+  Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Out-Null
   Stop-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
   Start-Sleep -Seconds 2
   $p = Get-CimInstance Win32_Process -Filter "ProcessId=$workerId" -ErrorAction SilentlyContinue
@@ -71,15 +93,28 @@ $dataPath = if ($configuration['DATA_DIR']) {
   else { [IO.Path]::GetFullPath((Join-Path $ProjectPath $configuration['DATA_DIR'])) }
 } else { Join-Path $ProjectPath 'data' }
 if ((In-Directory $BackupRoot $ProjectPath) -or (In-Directory $BackupRoot $dataPath)) { throw 'BackupRoot must be outside project and DATA_DIR' }
+New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
+$backupAcl = New-Object Security.AccessControl.DirectorySecurity
+$backupAcl.SetAccessRuleProtection($true,$false)
+$backupAcl.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))
+foreach ($sid in @('S-1-5-18','S-1-5-32-544')) {
+  $identity = New-Object Security.Principal.SecurityIdentifier($sid)
+  $rule = New-Object Security.AccessControl.FileSystemAccessRule($identity,'FullControl','ContainerInherit,ObjectInherit','None','Allow')
+  $backupAcl.AddAccessRule($rule)
+}
+Set-Acl -LiteralPath $BackupRoot -AclObject $backupAcl
 if ((Get-FileHash $PackageZip -Algorithm SHA256).Hash -ne $ExpectedSha256) { throw 'Archive checksum mismatch' }
 $node = (Get-Command node -ErrorAction Stop).Source
 $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
 $nodeVersion = (& $node --version).Trim()
 if ($LASTEXITCODE -ne 0 -or [int]$nodeVersion.TrimStart('v').Split('.')[0] -lt 24) { throw 'Node.js 24+ is required' }
 $before = Read-Health
-if (-not $before.ready -or $before.un_id -ne $configuration['UN_ID']) { throw 'Current worker is not ready or has another UN_ID' }
+if (-not (Test-Ready $before) -or $before.un_id -ne $configuration['UN_ID']) { throw 'Current worker is not ready or has another UN_ID' }
+if ($MaintenanceOwner -and (-not $before.maintenance.active -or $before.maintenance.owner -ne $MaintenanceOwner -or $before.maintenance.phase -ne 'installing' -or -not $before.maintenance.ready_to_update)) { throw 'Maintenance is not sealed and drained by this deployment' }
 if ($before.queue.running -ne 0 -or $before.queue.queued -ne 0) { throw 'Queue is not empty' }
 $task = Get-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
+$interactiveName = if ($configuration['WORKER_TASK_NAME']) { $configuration['WORKER_TASK_NAME'] } else { $TaskName+'-Worker' }
+$interactiveTask = Get-ScheduledTask -TaskName $interactiveName -TaskPath $TaskPath -ErrorAction SilentlyContinue
 $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen)
 $workerIds = @($listeners.OwningProcess | Select-Object -Unique)
 if ($workerIds.Count -ne 1) { throw 'Ambiguous listener process' }
@@ -132,7 +167,7 @@ if ($changeDependencies) {
   Push-Location $app
   try {
     $env:PUPPETEER_SKIP_DOWNLOAD = 'true'
-    & $npm ci --omit=dev
+    & cmd.exe /d /c "npm.cmd ci --omit=dev 2>&1"
     if ($LASTEXITCODE -ne 0) { throw 'Staged npm ci failed; current worker is unchanged' }
   } finally { Pop-Location; $env:PUPPETEER_SKIP_DOWNLOAD = $previousSkip }
 }
@@ -152,15 +187,18 @@ foreach ($rel in $files) {
   }
 }
 Export-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Set-Content (Join-Path $backup 'task.xml') -Encoding UTF8
+if($interactiveTask){Export-ScheduledTask -TaskName $interactiveName -TaskPath $TaskPath|Set-Content (Join-Path $backup 'worker-task.xml') -Encoding UTF8}
 $manifest = @{ old_version=$before.version; new_version=$ExpectedVersion; project_path=$ProjectPath; env_file=$configurationFile; data_dir=$dataPath; task_name=$TaskName; task_path=$TaskPath; archive_sha256=$ExpectedSha256; dependencies_changed=$changeDependencies; files=$files }
 [IO.File]::WriteAllText((Join-Path $backup 'manifest.json'),($manifest|ConvertTo-Json -Depth 10),(New-Object Text.UTF8Encoding($false)))
 $stopped = $false
 $codeChanged = $false
 $dependencyMoved = $false
 $taskChanged = $false
+$envChanged = $false
 try {
   $lastHealth = Read-Health
   if ($lastHealth.queue.running -ne 0 -or $lastHealth.queue.queued -ne 0) { throw 'Queue changed before stopping' }
+  if ($MaintenanceOwner -and ($lastHealth.maintenance.owner -ne $MaintenanceOwner -or $lastHealth.maintenance.phase -ne 'installing' -or -not $lastHealth.maintenance.ready_to_update)) { throw 'Maintenance lock changed before stopping' }
   # Mark stop intent first so a partially stopped task is restarted on error.
   $stopped = $true
   Stop-ExactWorker
@@ -180,7 +218,13 @@ try {
   # Migrate the standard interactive task to hidden process supervision.
   # Preserve its user, triggers and other settings; restore XML on rollback.
   $startScript = Join-Path $ProjectPath 'windows\start-worker.ps1'
-  if ((Get-Content $startScript -Raw -Encoding UTF8).Contains('[switch]$RestartOnExit')) {
+  $splitSupported = (Test-Path (Join-Path $ProjectPath 'src\browser-worker.js')) -and (Get-Content $startScript -Raw -Encoding UTF8).Contains('[switch]$ApiOnly')
+  if ($splitSupported -and ($configuration['EXECUTION_MODE'] -ne 'broker' -or [string]$task.Principal.LogonType -ne 'ServiceAccount' -or -not $interactiveTask)) {
+    $workerUser = if ($configuration['WORKER_ACCOUNT']) { $configuration['WORKER_ACCOUNT'] } else { $task.Principal.UserId }
+    $taskChanged=$true;$envChanged=$true
+    & (Join-Path $ProjectPath 'windows\install-task.ps1') -ProjectPath $ProjectPath -EnvFile $configurationFile -TaskName $TaskName -TaskPath $TaskPath -RunAsUser $workerUser -ExecutionMode broker -SkipDependencyInstall -SkipPreflight -Port $Port
+    $configuration=Read-Configuration $configurationFile
+  } elseif (-not $splitSupported -and (Get-Content $startScript -Raw -Encoding UTF8).Contains('[switch]$RestartOnExit')) {
     if (@($task.Actions).Count -ne 1 -or -not $task.Actions[0].Arguments.Contains($startScript) -or [string]$task.Principal.LogonType -ne 'Interactive') {
       throw 'Automatic supervision migration requires the standard interactive worker task'
     }
@@ -196,13 +240,19 @@ try {
     $taskChanged = $true
     Set-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Action $action -Settings $settings | Out-Null
   }
+  Enable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath | Out-Null
   Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
+  if($splitSupported){$workerName=if($configuration['WORKER_TASK_NAME']){$configuration['WORKER_TASK_NAME']}else{$interactiveName};Enable-ScheduledTask -TaskName $workerName -TaskPath $TaskPath|Out-Null;Start-ScheduledTask -TaskName $workerName -TaskPath $TaskPath}
   $after = Wait-Ready $ExpectedVersion
   if ($after.release_date -ne $package.releaseDate) { throw 'Release date differs from archive' }
-  [pscustomobject]@{ updated=$true; version=$after.version; un_id=$after.un_id; ready=$after.ready; backup=$backup; dependencies_changed=$changeDependencies } | ConvertTo-Json -Depth 5
+  Write-Result ([pscustomobject]@{ updated=$true; version=$after.version; un_id=$after.un_id; ready=$after.ready; backup=$backup; dependencies_changed=$changeDependencies })
 } catch {
   $failure = $_.Exception.Message
   if ($stopped) {
+    $currentConfiguration=Read-Configuration $configurationFile
+    $currentWorkerName=if($currentConfiguration['WORKER_TASK_NAME']){$currentConfiguration['WORKER_TASK_NAME']}else{$interactiveName}
+    if(Get-ScheduledTask -TaskName $currentWorkerName -TaskPath $TaskPath -ErrorAction SilentlyContinue){Disable-ScheduledTask -TaskName $currentWorkerName -TaskPath $TaskPath|Out-Null;Stop-ScheduledTask -TaskName $currentWorkerName -TaskPath $TaskPath -ErrorAction SilentlyContinue}
+    Disable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue|Out-Null
     Stop-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -ErrorAction SilentlyContinue
     $newListener = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
     foreach ($id in @($newListener.OwningProcess | Select-Object -Unique)) {
@@ -231,9 +281,15 @@ try {
     if ($taskChanged) {
       Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Xml (Get-Content (Join-Path $backup 'task.xml') -Raw -Encoding UTF8) -Force | Out-Null
     }
+    if($envChanged){Copy-Item -LiteralPath (Join-Path $backup 'saved.env') -Destination $configurationFile -Force;$configuration=Read-Configuration $configurationFile}
+    if(Test-Path (Join-Path $backup 'worker-task.xml')){Register-ScheduledTask -TaskName $interactiveName -TaskPath $TaskPath -Xml (Get-Content (Join-Path $backup 'worker-task.xml') -Raw -Encoding UTF8) -Force|Out-Null}
+    elseif($taskChanged){Unregister-ScheduledTask -TaskName $currentWorkerName -TaskPath $TaskPath -Confirm:$false -ErrorAction SilentlyContinue}
     # DATA_DIR is deliberately not restored over any new jobs; see manual rollback instructions.
+    Enable-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath|Out-Null
     Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
+    if($interactiveTask){Enable-ScheduledTask -TaskName $interactiveName -TaskPath $TaskPath|Out-Null;Start-ScheduledTask -TaskName $interactiveName -TaskPath $TaskPath}
     $rollback = Wait-Ready $before.version
+    if ($ResultFile) { Write-Result ([pscustomobject]@{ updated=$false; rolled_back=$true; version=$rollback.version; backup=$backup }) | Out-Null }
     throw "Update failed; old version $($rollback.version) is ready. Backup: $backup. Error: $failure"
   }
   throw

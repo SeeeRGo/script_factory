@@ -1,0 +1,23 @@
+[Unit]
+Description=Script Factory fleet orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sf-fleet
+Group=sf-fleet
+WorkingDirectory=/opt/script_factory
+EnvironmentFile=/etc/script-factory/fleet.env
+ExecStart=/usr/bin/node /opt/script_factory/fleet/server.mjs
+Restart=on-failure
+RestartSec=5
+StateDirectory=script-factory-fleet
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/script-factory-fleet
+
+[Install]
+WantedBy=multi-user.target

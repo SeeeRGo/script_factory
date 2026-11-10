@@ -1,0 +1,15 @@
+{
+  "central_url": "https://fleet.example.org",
+  "node_id": "un-001",
+  "un_id": "un-001",
+  "token": "REPLACE_WITH_UNIQUE_NODE_TOKEN_FROM_ORCHESTRATOR",
+  "api_url": "http://127.0.0.1:33001",
+  "project_path": "C:/script_factory",
+  "env_file": "C:/script_factory/.env",
+  "worker_task_name": "ScriptFactory-Test-UN",
+  "worker_task_path": "\\",
+  "backup_root": "C:/ScriptFactory-backups",
+  "data_dir": "C:/ProgramData/ScriptFactoryAgent/data",
+  "release_public_key": "C:/ProgramData/ScriptFactoryAgent/release-public.pem",
+  "poll_seconds": 30
+}

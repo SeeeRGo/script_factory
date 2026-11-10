@@ -1,0 +1,61 @@
+---
+- name: Install independent outbound fleet agents on existing Windows nodes
+  hosts: script_factory_windows
+  gather_facts: false
+  serial: 3
+  tasks:
+    - name: Validate per-node enrollment and controller settings
+      ansible.builtin.assert:
+        that:
+          - script_factory_fleet_url is match('^https://')
+          - script_factory_fleet_node_id | length > 0
+          - script_factory_un_id | length > 0
+          - script_factory_fleet_token | length >= 32
+          - script_factory_project_path | length > 0
+          - script_factory_env_file | length > 0
+          - script_factory_fleet_public_key | length > 0
+      no_log: true
+    - name: Create restricted enrollment staging directory
+      ansible.windows.win_powershell:
+        script: |
+          $p='C:\ProgramData\ScriptFactoryAgentBootstrap'
+          New-Item -ItemType Directory -Path $p -Force | Out-Null
+          & icacls.exe $p /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+          if($LASTEXITCODE -ne 0){throw 'Cannot restrict bootstrap directory'}
+    - name: Stage the already installed project installer and agent sources
+      ansible.windows.win_file:
+        path: 'C:\ProgramData\ScriptFactoryAgentBootstrap\{{ item }}'
+        state: directory
+      loop:
+        - fleet
+        - windows
+        - docs/project-guide/tools
+    - name: Copy the installer and independent agent sources
+      ansible.windows.win_copy:
+        src: "{{ playbook_dir }}/../{{ item }}"
+        dest: 'C:\ProgramData\ScriptFactoryAgentBootstrap\{{ item }}'
+      loop:
+        - fleet/
+        - windows/install-fleet-agent.ps1
+        - windows/fleet-agent-host.ps1
+        - windows/worker-job.cs
+        - docs/project-guide/tools/update-one-un.ps1
+    - name: Stage the pinned release signing public key
+      ansible.windows.win_copy:
+        src: '{{ script_factory_fleet_public_key }}'
+        dest: C:\ProgramData\ScriptFactoryAgentBootstrap\release-public.pem
+    - name: Stage the unique node enrollment
+      ansible.windows.win_copy:
+        content: "{{ {'central_url': script_factory_fleet_url, 'node_id': script_factory_fleet_node_id, 'un_id': script_factory_un_id, 'token': script_factory_fleet_token, 'api_url': 'http://127.0.0.1:' ~ (script_factory_port | default(33001) | string), 'project_path': script_factory_project_path, 'env_file': script_factory_env_file, 'worker_task_name': script_factory_task_name | default('ScriptFactory-Test-UN'), 'worker_task_path': '\\', 'backup_root': 'C:/ScriptFactory-backups', 'poll_seconds': 30, 'data_dir': '', 'release_public_key': ''} | to_nice_json }}"
+        dest: C:\ProgramData\ScriptFactoryAgentBootstrap\agent.config.json
+      no_log: true
+    - name: Install and start the agent
+      ansible.windows.win_powershell:
+        script: |
+          & 'C:\ProgramData\ScriptFactoryAgentBootstrap\windows\install-fleet-agent.ps1' -ConfigFile 'C:\ProgramData\ScriptFactoryAgentBootstrap\agent.config.json' -ReleasePublicKey 'C:\ProgramData\ScriptFactoryAgentBootstrap\release-public.pem' -SourceRoot 'C:\ProgramData\ScriptFactoryAgentBootstrap'
+      no_log: true
+    - name: Remove the temporary enrollment token copy
+      ansible.windows.win_file:
+        path: C:\ProgramData\ScriptFactoryAgentBootstrap\agent.config.json
+        state: absent
+      no_log: true

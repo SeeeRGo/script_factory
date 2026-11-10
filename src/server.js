@@ -12,13 +12,10 @@ import { URL } from 'node:url';
 import {
   abortableDelay,
   createDefaultStepRegistry,
-  executeScript,
   isPuppeteerReplayScript,
   validateScript
 } from './interpreter.js';
 import {
-  executeBrowserReplay,
-  openFileInBrowser,
   resolveBrowserExecutablePath
 } from './browser-replay.js';
 import { createDemoMail } from './demo-mail.js';
@@ -27,19 +24,20 @@ import { serializeJobResult } from './job-result.js';
 import { isJobExpired } from './job-retention.js';
 import { createPowerManager, powerWorkBlockers } from './power-management.js';
 import { handlePowerRequest } from './power-http.js';
+import { createMaintenance } from './maintenance.js';
+import { runJobRuntime } from './job-runtime.js';
+import { createWorkerBroker, workerSettings } from './worker-transport.js';
+import { powerDefaults, createWindowsPowerAdapter } from './power-management.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '127.0.0.1';
+const WORKER_SETTINGS = workerSettings();
 const API_KEY = process.env.API_KEY || 'dev-secret';
 const WEB_LOGIN = process.env.WEB_LOGIN;
 const WEB_PASSWORD = process.env.WEB_PASSWORD;
 const UN_ID = process.env.UN_ID;
 const DEMO_MAIL_LOGIN = process.env.DEMO_MAIL_LOGIN || 'demo.user';
 const DEMO_MAIL_PASSWORD = process.env.DEMO_MAIL_PASSWORD || 'demo-password';
-const YAHOO_MAIL_URL = process.env.YAHOO_MAIL_URL || 'https://login.yahoo.com/?src=ym&activity=header-signin';
-const YAHOO_MAIL_LOGIN = process.env.YAHOO_MAIL_LOGIN || 'seeergo@yahoo.com';
-const YAHOO_MAIL_PASSWORD = process.env.YAHOO_MAIL_PASSWORD || '';
-const YAHOO_MAIL_RECIPIENT = process.env.YAHOO_MAIL_RECIPIENT || '10sydneyfc@gmail.com';
 const configuredSessionHours = Number(process.env.WEB_SESSION_TTL_HOURS || 12);
 const WEB_SESSION_TTL_SECONDS = Number.isFinite(configuredSessionHours)
   ? Math.floor(Math.max(60, configuredSessionHours * 60 * 60))
@@ -144,10 +142,17 @@ let cleanupTimer = null;
 let db = null;
 let powerManager = null;
 let activeArtifactTransfers = 0;
+let maintenance = null;
+let workerBroker = null;
+let workerSessionTimer = null;
+let serviceStopping = false;
 
-function powerBlockers() {
-  return powerWorkBlockers({ jobs: state.jobs.values(), running: Math.max(state.activeCount, state.running.size), transfers: activeArtifactTransfers });
+function workBlockers() {
+  const blockers=powerWorkBlockers({ jobs: state.jobs.values(), running: Math.max(state.activeCount, state.running.size), transfers: activeArtifactTransfers });
+  if(blockers.length)return blockers;
+  return workerBroker?.active || [...state.jobs.values()].some(j => j.worker_unconfirmed) ? ['WORKER_EXECUTION_UNCERTAIN'] : [];
 }
+function powerBlockers() { return maintenance?.active ? ['SERVICE_MAINTENANCE', ...workBlockers()] : workerBroker&&!workerBroker.snapshot().ready&&workerBroker.snapshot().retryable ? ['WORKER_STARTING',...workBlockers()] : workBlockers(); }
 
 function nowIso() {
   return new Date().toISOString();
@@ -299,7 +304,7 @@ function openDatabase() {
   db = new DatabaseSync(STATE_FILE);
   db.exec(`
     PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = NORMAL;
+    PRAGMA synchronous = ${WORKER_SETTINGS.mode === 'broker' ? 'FULL' : 'NORMAL'};
     PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS app_config (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -338,7 +343,8 @@ function buildJobSnapshot(job) {
     callback_delivery: job.callback_delivery,
     cancellation_requested: job.cancellation_requested,
     execution: job.execution,
-    logs: job.logs
+    logs: job.logs,
+    worker_execution_id: job.worker_execution_id ?? null, worker_result_committed: job.worker_result_committed === true, worker_unconfirmed: job.worker_unconfirmed === true
   };
 }
 
@@ -363,10 +369,14 @@ function restoreJob(snapshot) {
     callback_delivery: snapshot.callback_delivery ?? null,
     cancellation_requested: Boolean(snapshot.cancellation_requested),
     execution: restoreExecution(snapshot.execution, snapshot.request?.script),
-    logs: Array.isArray(snapshot.logs) ? snapshot.logs : []
+    logs: Array.isArray(snapshot.logs) ? snapshot.logs : [],
+    worker_execution_id: snapshot.worker_execution_id ?? null, worker_result_committed: snapshot.worker_result_committed === true, worker_unconfirmed: snapshot.worker_unconfirmed === true
   };
 
-  if (job.status === 'running' || job.status === 'retrying') {
+  if (WORKER_SETTINGS.mode === 'broker' && job.status === 'running') {
+    job.status = 'failed'; job.error = { code: 'WORKER_EXECUTION_UNCERTAIN', message: 'API перезапустилось во время исполнения; исход действий требует сверки', retryable: false };
+    job.worker_unconfirmed = true; job.finished_at = nowIso(); job.execution.status = 'failed';
+  } else if (job.status === 'running' || job.status === 'retrying') {
     job.status = 'queued';
     job.error = null;
     job.cancellation_requested = false;
@@ -693,6 +703,7 @@ async function sendDemoDownloadFile(res, filename) {
 
 async function sendJobArtifactFile(res, job, artifact) {
   powerManager?.assertAcceptingWork();
+  maintenance?.assertTransfer();
   activeArtifactTransfers++;
   let released = false;
   const release = () => { if (!released) { released = true; activeArtifactTransfers--; } };
@@ -1389,7 +1400,6 @@ async function executeJob(job) {
     const script = job.request.script || {};
     const steps = Array.isArray(script.steps) ? script.steps : [];
     const simulatedOutcome = script.simulate?.outcome || 'success';
-    const simulatedDelay = Number.isFinite(script.simulate?.delay_ms) ? script.simulate.delay_ms : 250;
     const browserReplay = isPuppeteerReplayScript(script);
     const jsonWorkflow = script.format === 'json-workflow';
     logJob(job, 'debug', 'Сценарий подготовлен к выполнению', {
@@ -1398,106 +1408,15 @@ async function executeJob(job) {
       request_hash: job.request_hash
     });
     const serviceBaseUrl = process.env.SERVICE_BASE_URL || `http://127.0.0.1:${PORT}`;
-    const artifactDirectory = path.join(ARTIFACTS_DIR, job.job_id);
-    const publicArtifactBasePath = `/artifacts/${encodeURIComponent(job.job_id)}`;
-    const runtimeContext = {
-      demo_mail_url: `${serviceBaseUrl}/demo/mail`,
-      mail_login: DEMO_MAIL_LOGIN,
-      mail_password: DEMO_MAIL_PASSWORD,
-      yahoo_mail_url: YAHOO_MAIL_URL,
-      yahoo_login: YAHOO_MAIL_LOGIN,
-      yahoo_password: YAHOO_MAIL_PASSWORD,
-      mail_to: YAHOO_MAIL_RECIPIENT,
-      ...(job.request.context ?? {})
-    };
-
-    if (browserReplay
-      && JSON.stringify(script).includes('{{yahoo_password}}')
-      && !runtimeContext.yahoo_password) {
-      throw createApiError(
-        'MISSING_SECRET',
-        'Для реальной отправки через Yahoo задайте YAHOO_MAIL_PASSWORD в .env',
-        400,
-        false
-      );
-    }
-
-    const interpreterResult = jsonWorkflow
-      ? await executeJsonWorkflow({
-        script, context: job.request.context || {}, signal: controller.signal,
-        allowedRoots: STEP_ALLOWED_ROOTS, artifactDirectory, publicArtifactBasePath, jobId: job.job_id,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, headless: process.env.BROWSER_HEADLESS !== 'false',
-        onBrowserLog:(level,message)=>logJob(job,level,message),
-        onEvent: (event) => applyInterpreterEvent(job, event)
-      })
-      : browserReplay
-      ? await executeBrowserReplay({
-        script,
-        allowedRoots: STEP_ALLOWED_ROOTS,
-        context: runtimeContext,
-        signal: controller.signal,
-        timeoutMs: job.timeout_ms,
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
-        headless: process.env.BROWSER_HEADLESS !== 'false',
-        stepDelayMs: process.env.BROWSER_STEP_DELAY_MS,
-        holdOpenMs: process.env.BROWSER_HOLD_OPEN_MS,
-        captchaWaitMs: process.env.BROWSER_CAPTCHA_WAIT_MS,
-        windowWidth: process.env.BROWSER_WINDOW_WIDTH,
-        windowHeight: process.env.BROWSER_WINDOW_HEIGHT,
-        artifactDirectory,
-        publicArtifactBasePath,
-        jobId: job.job_id,
-        onEvent: (event) => applyInterpreterEvent(job, event),
-        onBrowserLog: (level, message) => logJob(job, level, message)
-      })
-      : await executeScript({
-        script: { ...script, steps },
-        signal: controller.signal,
-        registry: createDefaultStepRegistry({
-          allowedRoots: STEP_ALLOWED_ROOTS,
-          artifactDirectory,
-          publicArtifactBasePath,
-          downloadBaseUrl: serviceBaseUrl,
-          openFile: ({ file, signal }) => openFileInBrowser({
-            filePath: file,
-            allowedRoots:STEP_ALLOWED_ROOTS,
-            signal,
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH,
-            headless: process.env.BROWSER_HEADLESS !== 'false',
-            holdOpenMs: process.env.BROWSER_HOLD_OPEN_MS,
-            windowWidth: process.env.BROWSER_WINDOW_WIDTH,
-            windowHeight: process.env.BROWSER_WINDOW_HEIGHT,
-            artifactDirectory,
-            publicArtifactBasePath,
-            jobId: job.job_id,
-            onBrowserLog: (level, message) => logJob(job, level, message)
-          })
-        }),
-        defaultStepTimeoutMs: Math.min(job.timeout_ms, 10_000),
-        initialContext: {
-          service_base_url: serviceBaseUrl,
-          demo_file_url: `${serviceBaseUrl}/demo/files/stage4-download-demo.html`,
-          ...(job.request.context ?? {})
-        },
-        attempt: job.attempts,
-        onEvent: (event) => applyInterpreterEvent(job, event)
-      });
-
-    if (!browserReplay && !jsonWorkflow) {
-      if (steps.length === 0 && simulatedDelay > 0) await abortableDelay(simulatedDelay, controller.signal);
-
-      if (simulatedOutcome === 'validation_failed') {
-        throw createApiError('VALIDATION_ERROR', 'Имитация ошибки проверки', 422, false);
-      }
-
-      if (simulatedOutcome === 'timeout') {
-        await abortableDelay(job.timeout_ms + 50, controller.signal);
-      }
-
-      if (simulatedOutcome === 'retry_once' && job.attempts === 1) {
-        throw createApiError('PLUGIN_NOT_RUNNING', 'Временная ошибка СБИС Плагина', 503, true);
-      }
-    }
+    const runtimeOptions = {script,context:job.request.context||{},attempt:job.attempts,timeoutMs:job.timeout_ms,allowedRoots:STEP_ALLOWED_ROOTS,
+      artifactDirectory:path.join(ARTIFACTS_DIR,job.job_id),publicArtifactBasePath:`/artifacts/${encodeURIComponent(job.job_id)}`,jobId:job.job_id,serviceBaseUrl};
+    let interpreterResult;
+    if (workerBroker) {
+      job.worker_execution_id = randomUUID(); job.worker_result_committed = false; job.worker_unconfirmed = false;
+      schedulePersist(); flushPersistence();
+      interpreterResult = await workerBroker.execute({executionId:job.worker_execution_id,jobId:job.job_id,options:runtimeOptions,signal:controller.signal,
+        onEvent:event=>applyInterpreterEvent(job,event),onLog:(level,message)=>logJob(job,level,message)});
+    } else interpreterResult = await runJobRuntime({...runtimeOptions,signal:controller.signal,onEvent:event=>applyInterpreterEvent(job,event),onBrowserLog:(level,message)=>logJob(job,level,message)});
 
     job.status = 'success';
     job.result = {
@@ -1568,7 +1487,7 @@ async function executeJob(job) {
       job.status = 'queued';
       enqueue(job);
       schedulePersist();
-      drainQueue();
+      // The outer finally acknowledges this attempt before dispatching another.
       return;
     }
 
@@ -1603,12 +1522,17 @@ async function executeJob(job) {
   } finally {
     clearTimeout(timeoutTimer);
     state.controllers.delete(job.job_id);
+    if (workerBroker && job.worker_execution_id) {
+      job.worker_result_committed = workerBroker.finished(job.worker_execution_id);
+      job.worker_unconfirmed = workerBroker.has(job.worker_execution_id) && !job.worker_result_committed;
+      schedulePersist(); flushPersistence(); workerBroker.ack(job.worker_execution_id);
+    }
   }
 }
 
 function drainQueue() {
-  if (powerManager?.committing || powerManager?.stopping) return;
-  while (state.activeCount < state.config.max_parallel_jobs && state.queue.length > 0) {
+  if (serviceStopping || powerManager?.committing || powerManager?.stopping) return;
+  while ((!workerBroker || workerBroker.availableSlots > 0) && state.activeCount < state.config.max_parallel_jobs && state.queue.length > 0) {
     const jobId = state.queue.shift();
     const job = state.jobs.get(jobId);
     if (!job) continue;
@@ -1685,7 +1609,7 @@ function buildQueueHealth() {
     queued,
     running,
     max_parallel_jobs: maxParallelJobs,
-    available_slots: Math.max(0, maxParallelJobs - running)
+    available_slots: workerBroker ? Math.min(workerBroker.availableSlots,Math.max(0,maxParallelJobs-running)) : Math.max(0, maxParallelJobs - running)
   };
 }
 
@@ -1711,6 +1635,12 @@ async function buildReadinessChecks() {
     checks.filesystem = { status: 'error', path: DATA_DIR, message: error.message };
   }
 
+  if (workerBroker) {
+    const worker=workerBroker.snapshot();
+    checks.worker={status:worker.ready?'ok':'error',message:worker.message};
+    checks.browser=worker.browser||{status:'ok',executable_path:null};
+    return checks;
+  }
   try {
     const browserExecutable = await resolveBrowserExecutablePath(resolveBrowserSettings().executable_path);
     if (browserExecutable) {
@@ -1727,10 +1657,11 @@ async function buildReadinessChecks() {
 
 async function buildHealthResponse(requestId) {
   let browserDefaults;try{browserDefaults=resolveBrowserSettings();}catch{browserDefaults=resolveBrowserSettings({env:{}});}
-  const headless=browserDefaults.headless;
+  const headless=workerBroker?.snapshot().browser?.headless ?? browserDefaults.headless;
   const noVncConfigured = process.env.NOVNC_ENABLED === 'true';
   const checks = await buildReadinessChecks();
   if (powerManager?.committing) checks.power = { status: 'error', message: 'УН переходит в suspend' };
+  if (maintenance?.active) checks.maintenance = { status: 'error', message: 'УН находится на обслуживании' };
   const failedCheck = Object.entries(checks).find(([, check]) => check.status !== 'ok');
   const ready = !failedCheck;
   return {
@@ -1741,10 +1672,15 @@ async function buildHealthResponse(requestId) {
     release_date: SERVICE_RELEASE_DATE,
     request_id: requestId,
     un_id: UN_ID,
+    api_available: true,
+    execution_mode: WORKER_SETTINGS.mode,
+    ...(workerBroker?{worker:workerBroker.snapshot()}:{}),
+    maintenance: maintenance?.snapshot() ?? { active: false },
     checks,
     ...(!ready ? {
       error: {
-        code: `${failedCheck[0].toUpperCase()}_UNAVAILABLE`,
+        code: failedCheck[0]==='worker'?workerBroker.snapshot().state:`${failedCheck[0].toUpperCase()}_UNAVAILABLE`,
+        retryable: failedCheck[0]==='worker'?workerBroker.snapshot().retryable:false,
         message: failedCheck[1].message || `Проверка ${failedCheck[0]} завершилась ошибкой`
       }
     } : {}),
@@ -1772,6 +1708,7 @@ let yandexVersionCheck = null;
 let yandexVersionCheckedAt = 0;
 
 async function buildVersionedSystemResources() {
+  if(workerBroker)return prefixResourceFields({api_version:'v2',service_version:SERVICE_VERSION,release_date:SERVICE_RELEASE_DATE,yandex_browser_version:workerBroker.snapshot().browser?.yandex_version||null,worker:workerBroker.snapshot(),...buildSystemResources()});
   if (!yandexVersionCheck || Date.now() - yandexVersionCheckedAt >= 60_000) {
     yandexVersionCheckedAt = Date.now();
     yandexVersionCheck = detectYandexVersion();
@@ -1985,8 +1922,11 @@ const server = http.createServer(async (req, res) => {
     const pathname = requestUrl.pathname;
     const method = req.method || 'GET';
 
+    if(method==='GET'&&['/live','/api/v2/live'].includes(pathname)){sendJson(res,200,{status:'ok',api_available:true,un_id:UN_ID,version:SERVICE_VERSION});return;}
+
     if (pathname === '/health') {
       const health = await buildHealthResponse(requestId);
+      if (health.error?.retryable === true) res.setHeader('Retry-After', '2');
       sendJson(res, health.ready ? 200 : 503, health);
       return;
     }
@@ -2140,15 +2080,53 @@ const server = http.createServer(async (req, res) => {
 
     if (method === 'GET' && resourcePath === '/health') {
       const health = await buildHealthResponse(requestId);
+      if (health.error?.retryable === true) res.setHeader('Retry-After', '2');
       sendJson(res, health.ready ? 200 : 503, health);
       return;
     }
 
     requireApiKey(req);
 
+    if(method==='GET'&&resourcePath==='/system/worker/status'){sendJson(res,200,workerBroker?.snapshot()||{mode:'inline',ready:true});return;}
+
     if ((powerManager?.committing || powerManager?.stopping) && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) powerManager.assertAcceptingWork();
 
+    if (maintenance?.sealed && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !resourcePath.startsWith('/system/maintenance/')) maintenance.assertAdmission();
     if (await handlePowerRequest({ req, res, method, resourcePath, powerManager, readJsonBody, sendJson })) return;
+
+    if (resourcePath === '/system/maintenance' && method === 'GET') { sendJson(res, 200, maintenance.snapshot()); return; }
+    if (resourcePath.startsWith('/system/maintenance/') && method === 'POST') {
+      const body = await readJsonBody(req);
+      if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(k => !['owner', 'reason'].includes(k))) throw createApiError('INVALID_MAINTENANCE', 'Требуется owner и необязательная reason', 400);
+      let result;
+      if (resourcePath.endsWith('/begin')) { powerManager?.assertAcceptingWork(); result = await maintenance.begin(body.owner, body.reason); }
+      else if (resourcePath.endsWith('/seal')) result = await maintenance.seal(body.owner);
+      else if (resourcePath.endsWith('/end')) result = await maintenance.end(body.owner);
+      else if (resourcePath.endsWith('/verify')) {
+        maintenance.assertOwner(body.owner);
+        if (!maintenance.sealed || workBlockers().length) throw createApiError('MAINTENANCE_NOT_DRAINED', 'Проверка требует завершения работ и блокировки скачиваний', 409);
+        activeArtifactTransfers++;
+        const smokeId = `smoke-${randomUUID()}`, executionId = randomUUID();
+        const directory = path.join(ARTIFACTS_DIR, smokeId);
+        const controller = new AbortController();
+        const smokeTimer = setTimeout(() => controller.abort(createApiError('TIMEOUT', 'Проверка исполнителя превысила срок ожидания', 503)), 30000);
+        try {
+          const proof = 'Script Factory maintenance verification';
+          const options = { script: { format: 'json-workflow', steps: [{ action: 'artifact_write', params: { filename: 'smoke.txt', text: proof } }], output: {} }, artifactDirectory: directory, allowedRoots: [DATA_DIR], jobId: smokeId };
+          const run = workerBroker
+            ? await workerBroker.execute({ executionId, jobId: smokeId, options, signal: controller.signal })
+            : await executeJsonWorkflow({ ...options, signal: controller.signal });
+          const artifact = run.context.artifacts[0];
+          if (!artifact || await readFile(artifact.local_path, 'utf8') !== proof) throw new Error('Smoke artifact mismatch');
+          result = { verified: true, version: SERVICE_VERSION, un_id: UN_ID, checks: ['json-workflow', 'artifact_write', 'artifact_read'] };
+        } finally {
+          clearTimeout(smokeTimer);
+          if (workerBroker?.finished(executionId)) workerBroker.ack(executionId);
+          try { await rm(directory, { recursive: true, force: true }); } finally { activeArtifactTransfers--; }
+        }
+      } else throw createApiError('NOT_FOUND', 'Метод обслуживания не найден', 404);
+      sendJson(res, 200, result); return;
+    }
 
     if (method === 'GET' && resourcePath === '/interpreter/actions') {
       sendJson(res, 200, { actions: [...new Set([...stepRegistry.actions(), ...WORKFLOW_ACTIONS])], formats: { 'json-workflow': WORKFLOW_ACTIONS, 'json-steps': stepRegistry.actions() } });
@@ -2230,12 +2208,15 @@ const server = http.createServer(async (req, res) => {
       }
 
       powerManager?.assertAcceptingWork();
+      maintenance?.assertAdmission();
+      if (serviceStopping || workerBroker && !workerBroker.snapshot().ready) throw createApiError('WORKER_UNAVAILABLE', 'API доступно, исполнитель пока не готов', 503, workerBroker?.snapshot().retryable===true, workerBroker?.snapshot());
       powerManager?.notifyWork();
       const job = createJobRecord(normalizedRequest, incomingRequestHash);
       state.jobs.set(job.job_id, job);
       enqueue(job);
       drainQueue();
       schedulePersist();
+      flushPersistence();
       sendJson(res, 201, { job: summarizeJob(job), idempotent: false });
       return;
     }
@@ -2395,10 +2376,12 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 404, { error: { code: 'NOT_FOUND', message: 'Маршрут не найден' } });
   } catch (error) {
     const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 500;
+    if(error?.retryable===true)res.setHeader('Retry-After','2');
     sendJson(res, statusCode, {
       error: {
         code: error?.code || 'INTERNAL_ERROR',
         message: error?.message || 'Непредвиденная ошибка',
+        ...(error?.code?.startsWith('WORKER_') ? { retryable: error.retryable === true } : {}),
         ...(error?.details === undefined ? {} : { details: error.details })
       }
     });
@@ -2447,7 +2430,19 @@ async function main() {
   validateRuntimeConfig();
   state.config = defaultConfig();
   await loadPersistedState();
-  powerManager = await createPowerManager({ dataDir: DATA_DIR, getBlockers: powerBlockers, beforeSuspend: async () => { schedulePersist(); flushPersistence(); }, onRelease: drainQueue });
+  maintenance = await createMaintenance({ dataDir: DATA_DIR, getBlockers: workBlockers, onEnter: () => powerManager?.notifyWork() });
+  powerManager = await createPowerManager({ dataDir: DATA_DIR, defaults:powerDefaults({...process.env,...(WORKER_SETTINGS.mode==='broker'&&!process.env.POWER_EXCLUDED_USER?{POWER_EXCLUDED_USER:WORKER_SETTINGS.account}:{})}),getBlockers: powerBlockers, beforeSuspend: async () => { schedulePersist(); flushPersistence(); }, onRelease: drainQueue });
+  if(WORKER_SETTINGS.mode==='broker'){
+    workerBroker=createWorkerBroker({settings:WORKER_SETTINGS,version:SERVICE_VERSION,onReady:drainQueue,onIdle:drainQueue,
+      onConnected:()=>{workerBroker.clearDisconnected();for(const job of state.jobs.values())job.worker_unconfirmed=false;schedulePersist();},
+      isCommitted:id=>[...state.jobs.values()].some(j=>j.worker_execution_id===id&&j.worker_result_committed)});
+    await workerBroker.listen();
+    if(process.platform==='win32'){
+      const adapter=createWindowsPowerAdapter();let inspecting=false;
+      const inspect=async()=>{if(inspecting||workerBroker.snapshot().connected)return;inspecting=true;try{const s=await adapter.inspect({...powerManager.config,excluded_user:WORKER_SETTINGS.account});workerBroker.setSessionPresent(s.complete&&s.sessions.some(x=>String(x.account).toLowerCase()===WORKER_SETTINGS.account.toLowerCase()));}catch{workerBroker.setSessionPresent(null);}finally{inspecting=false;}};
+      workerSessionTimer=setInterval(()=>void inspect(),5000);workerSessionTimer.unref();void inspect();
+    }
+  }
   await cleanupExpiredJobs();
   schedulePersist();
   await flushPersistence();
@@ -2461,6 +2456,11 @@ async function main() {
 }
 
 async function shutdown(code = 0) {
+  serviceStopping=true;
+  if(workerSessionTimer)clearInterval(workerSessionTimer);
+  await workerBroker?.close();
+  for(const controller of state.controllers.values())controller.abort(createApiError('WORKER_EXECUTION_UNCERTAIN','API останавливается; исход задания требует сверки',503,false));
+  for(let i=0;i<200&&state.activeCount>0;i++)await new Promise(r=>setTimeout(r,25));
   await powerManager?.close();
   await flushPersistence();
   if (persistTimer) {

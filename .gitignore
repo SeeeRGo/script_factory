@@ -7,4 +7,10 @@ node_modules/
 data/
 demo-data/
 work/
+fleet-data/
+fleet-agent-data/
+fleet-releases/
+**/release-private.pem
+**/agent.config.json
+fleet/controller.env
 ansible/inventories/*/group_vars/all/vault.yml
