@@ -59,7 +59,6 @@ foreach ($secretName in @('API_KEY', 'WEB_PASSWORD')) {
     $errors.Add("Заполните $secretName в .env")
   }
 }
-if($configuration['CALLBACK_AUTH_TOKEN'] -and ($configuration['CALLBACK_AUTH_USERNAME'] -or $configuration['CALLBACK_AUTH_PASSWORD'])){$errors.Add('Выберите один способ callback: Bearer или Basic')}
 if([bool]$configuration['CALLBACK_AUTH_USERNAME'] -ne [bool]$configuration['CALLBACK_AUTH_PASSWORD']){$errors.Add('Для Basic callback нужны CALLBACK_AUTH_USERNAME и CALLBACK_AUTH_PASSWORD')}
 if (-not $configuration['UN_ID']) { $errors.Add('Заполните UN_ID в .env') }
 

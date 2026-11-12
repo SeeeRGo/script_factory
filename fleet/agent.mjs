@@ -1,9 +1,11 @@
+import os from 'node:os';
 import { mkdir,readFile,unlink } from 'node:fs/promises';
 import { createHash,randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { atomicJson,optionalJson,serviceUrl,validateRelease,compareVersion,identifier,textIdentity,fault } from './common.mjs';
+import {validateChanges} from './config-local.mjs';
+import { atomicJson,optionalJson,serviceUrl,validateRelease,compareVersion,version,identifier,textIdentity,privateDirectory,fault } from './common.mjs';
 import { windowsAdapter } from './windows-adapter.mjs';
 const terminal=new Set(['succeeded','rolled_back','failed','recovery_required','deferred']);
 export function parseEnv(text){const result={};for(const line of text.split(/\r?\n/)){const m=/^\s*([A-Za-z_][A-Za-z_0-9]*)\s*=\s*(.*?)\s*$/.exec(line);if(m)result[m[1]]=m[2].replace(/^(['"])(.*)\1$/,'$2');}return result;}
@@ -11,7 +13,7 @@ export async function createAgent(config,{adapter,fetchImpl=fetch,wait=delay}={}
  const central=serviceUrl(config.central_url),local=serviceUrl(config.api_url,{local:true});
  if(!identifier(config.node_id)||!textIdentity(config.un_id)||typeof config.token!=='string'||config.token.length<32||config.token.startsWith('REPLACE_')||!Number.isInteger(config.poll_seconds)||config.poll_seconds<5||config.poll_seconds>300)throw fault('INVALID_CONFIG','Invalid agent identity, token or poll interval');
  const publicKey=await readFile(config.release_public_key,'utf8');
- const dataDir=path.resolve(config.data_dir);await mkdir(dataDir,{recursive:true,mode:0o700});
+ const dataDir=path.resolve(config.data_dir);await privateDirectory(dataDir);
  const journal=path.join(dataDir,'state.json');
  let state=await optionalJson(journal,{active:null,reports:[],completed:[]}),writes=Promise.resolve(),working=null,ticking=false;
  if(!Array.isArray(state.reports)||!Array.isArray(state.completed))throw fault('AGENT_STATE_INVALID','Agent journal is invalid');
@@ -29,7 +31,7 @@ export async function createAgent(config,{adapter,fetchImpl=fetch,wait=delay}={}
  }
  async function control(route,body){const r=await fetchImpl(central+'/agent/'+config.node_id+'/'+route,{method:'POST',redirect:'error',signal:AbortSignal.timeout(30000),headers:{Authorization:'Bearer '+config.token,'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok)throw fault('CONTROL_UNAVAILABLE','Central service rejected the request',r.status);return r.json();}
  async function report(status,extra={}){state.active.phase=status;state.reports.push({deployment_id:state.active.command.deployment_id,report_id:randomUUID(),status,...extra});await save();}
- async function finish(status,extra={}){await report(status,extra);if(status!=='deferred')state.completed.push(state.active.command.deployment_id);state.completed=state.completed.slice(-100);state.active=null;await save();}
+ async function finish(status,extra={}){await report(status,extra);if(state.active.payload_file&&status!=='recovery_required')await unlink(state.active.payload_file).catch(()=>{});if(status!=='deferred')state.completed.push(state.active.command.deployment_id);state.completed=state.completed.slice(-100);state.active=null;await save();}
  async function download(command){
   const m=validateRelease(command.release,publicKey),file=path.join(dataDir,m.id+'.zip'),tmp=file+'.part';
   const res=await fetchImpl(central+'/agent/'+config.node_id+'/packages/'+m.id,{redirect:'error',signal:AbortSignal.timeout(300000),headers:{Authorization:'Bearer '+config.token}});
@@ -43,21 +45,22 @@ export async function createAgent(config,{adapter,fetchImpl=fetch,wait=delay}={}
  async function releaseMaintenance(owner){const m=await api('/api/v2/system/maintenance');if(m.active){if(m.owner!==owner)throw fault('MAINTENANCE_OWNER_MISMATCH','Another maintenance operation is active');await api('/api/v2/system/maintenance/end','POST',{owner});}}
  async function verify(owner,target){const h=await api('/health');if(!healthy(h,target))throw fault('HEALTH_FAILED','Target version is not healthy');const proof=await api('/api/v2/system/maintenance/verify','POST',{owner});if(!proof.verified||proof.version!==target||proof.un_id!==config.un_id)throw fault('SMOKE_FAILED','Fixed maintenance smoke test failed');}
  async function execute(command,recover=false){
-  const owner='fleet-'+command.deployment_id;let m;
+  const owner='fleet-'+command.deployment_id,isConfig=command.kind==='configuration';let m;
   let installing=false,maintenanceAttempted=recover;
   try{
    if(!identifier(command.deployment_id)||!Number.isInteger(command.drain_timeout_seconds)||command.drain_timeout_seconds<5||command.drain_timeout_seconds>86400||!Number.isFinite(Date.parse(command.deadline_at)))throw fault('INVALID_COMMAND','Invalid deployment id or maintenance window');
+   if(isConfig&&(!version(command.target_version)||!identifier(command.config_version)))throw fault('INVALID_COMMAND','Invalid configuration target');
    if(!state.active){state.active={command,owner,phase:'assigned',started_at:new Date().toISOString()};await save();}
-   m=validateRelease(command.release,publicKey);
+   m=isConfig?{version:command.target_version,min_api_version:'0.13.0'}:validateRelease(command.release,publicKey);
    const initial=await api('/health');
    state.active.initial_version??=initial.version;await save();
    if(initial.un_id!==config.un_id||compareVersion(state.active.initial_version,m.min_api_version)<0)throw fault('BOOTSTRAP_REQUIRED','Install a maintenance-capable API first');
    if(!healthy(initial,initial.version))throw fault('LOCAL_API_FAILED','Local API readiness checks failed');
    if(!recover&&initial.maintenance?.active&&initial.maintenance.owner===owner)throw fault('INSTALL_OUTCOME_UNKNOWN','Maintenance exists but its local journal is missing');
-   if(compareVersion(m.version,state.active.initial_version)<=0&&!recover)throw fault('VERSION_NOT_NEWER','Target must be newer than installed API');
+   if(!isConfig&&compareVersion(m.version,state.active.initial_version)<=0&&!recover)throw fault('VERSION_NOT_NEWER','Target must be newer than installed API');
    if(recover&&['installing','rolling_back'].includes(state.active.phase)){
     installing=true;
-    const result=await adapter.recover(state.active);
+    const result=await (isConfig?adapter.recoverConfiguration(state.active):adapter.recover(state.active));
     if(!result)throw fault('INSTALL_OUTCOME_UNKNOWN','Inspect local updater before releasing maintenance');
     if(result.rolled_back){await verify(owner,state.active.initial_version);await releaseMaintenance(owner);await finish('rolled_back',{version:state.active.initial_version,error_code:'UPDATE_FAILED'});return;}
     if(!result.updated||!result.backup)throw fault('INSTALL_OUTCOME_UNKNOWN','Updater completion is not confirmed');
@@ -69,11 +72,13 @@ export async function createAgent(config,{adapter,fetchImpl=fetch,wait=delay}={}
     await api('/api/v2/system/maintenance/begin','POST',{owner,reason:'Централизованное обновление API'});
     const until=Math.min(Date.now()+command.drain_timeout_seconds*1000,Date.parse(command.deadline_at));
     for(;;){const check=await api('/api/v2/system/maintenance');if(check.owner!==owner)throw fault('MAINTENANCE_OWNER_MISMATCH','Maintenance owner changed');if(check.ready_to_update)break;if(Date.now()>=until)throw fault('DRAIN_TIMEOUT','Work did not finish in the maintenance window');await wait(2000);}
-    await report('downloading');const file=await download(command);
+    await report('downloading');let file;
+    if(isConfig){const r=await fetchImpl(central+'/agent/'+config.node_id+'/configuration/'+command.deployment_id,{redirect:'error',signal:AbortSignal.timeout(30000),headers:{Authorization:'Bearer '+config.token}});if(!r.ok)throw fault('CONFIGURATION_FETCH_FAILED','Configuration payload unavailable');const payload=await r.json();if(payload.un_id!==config.un_id||payload.config_version!==command.config_version)throw fault('CONFIGURATION_MISMATCH','Configuration identity mismatch');validateChanges(payload.env);file=path.join(dataDir,command.deployment_id+'.configuration.json');await atomicJson(file,payload);state.active.payload_file=file;await save();}
+    else file=await download(command);
     if(Date.now()>Date.parse(command.deadline_at))throw fault('DRAIN_TIMEOUT','Maintenance window expired before installation');
     await api('/api/v2/system/maintenance/seal','POST',{owner});
     installing=true;await report('installing');
-    const result=await adapter.install({command,file,owner});
+    const result=await (isConfig?adapter.installConfiguration({command,file,owner}):adapter.install({command,file,owner}));
     if(result.rolled_back){await verify(owner,state.active.initial_version);await releaseMaintenance(owner);await finish('rolled_back',{version:state.active.initial_version,error_code:'UPDATE_FAILED'});return;}
     if(!result.updated||!result.backup)throw fault('INSTALL_OUTCOME_UNKNOWN','Updater did not confirm the outcome');
     state.active.backup=result.backup;await report('verifying');
@@ -83,7 +88,7 @@ export async function createAgent(config,{adapter,fetchImpl=fetch,wait=delay}={}
    state.active.phase='ending';await save();
    await releaseMaintenance(owner);
    const final=await api('/health');if(!final.ready||!healthy(final,m.version))throw fault('HEALTH_FAILED','API did not return to service');
-   await finish('succeeded',{version:m.version});
+   await finish('succeeded',{version:m.version,...(isConfig?{config_version:command.config_version}:{})});
   }catch(e){
    const code=/^[A-Z0-9_]{1,100}$/.test(e.code||'')?e.code:'AGENT_OPERATION_FAILED';
    if(!state.active)return;
@@ -95,7 +100,7 @@ export async function createAgent(config,{adapter,fetchImpl=fetch,wait=delay}={}
     try{
      await report('verifying'); // keep the central slot while performing the local rollback
      state.active.phase='rolling_back';await save();
-     const r=await adapter.rollback({backup:state.active.backup,owner,command});
+     const r=await (isConfig?adapter.rollbackConfiguration({backup:state.active.backup,owner,command}):adapter.rollback({backup:state.active.backup,owner,command}));
      if(!r.rolled_back)throw fault('ROLLBACK_FAILED','Rollback unconfirmed');
      await verify(owner,state.active.initial_version);await releaseMaintenance(owner);
      await finish('rolled_back',{version:state.active.initial_version,error_code:code});return;
@@ -113,7 +118,8 @@ export async function createAgent(config,{adapter,fetchImpl=fetch,wait=delay}={}
    try{
     while(state.reports.length){const r=state.reports[0];await control('reports/'+r.deployment_id,r);state.reports.shift();await save();}
     let health;try{health=await api('/health');}catch{health={};}
-    const response=await control('heartbeat',{un_id:config.un_id,version:health.version||null,api_ready:health.ready===true,maintenance:health.maintenance?.active===true});
+    let facts={};try{const env=parseEnv(await readFile(config.env_file,'utf8'));facts=Object.fromEntries(['PORT','HOST','DATA_DIR'].filter(k=>env[k]!==undefined).map(k=>[k,env[k]]));}catch{}
+    const response=await control('heartbeat',{agent_version:'2',observed_host:os.hostname(),observed_addresses:[...new Set(Object.values(os.networkInterfaces()).flat().filter(a=>a&&!a.internal).map(a=>a.address))].slice(0,20),capabilities:['configuration-v1'],config_facts:facts,un_id:config.un_id,version:health.version||null,api_ready:health.ready===true,maintenance:health.maintenance?.active===true});
     if(!working){const recover=!!state.active,command=state.active?.command||response.command;if(command&&!state.completed.includes(command.deployment_id)){working=execute(command,recover).finally(()=>{working=null;});if(waitForWork)await working;}}
    }finally{ticking=false;}
   },

@@ -92,7 +92,7 @@ try {
     ...process.env, HOST: '127.0.0.1', PORT: String(apiPort), API_KEY: apiKey,
     UN_ID: 'un-local-stand', WEB_LOGIN: 'stand', WEB_PASSWORD: randomUUID(),
     DATA_DIR: path.join(root, 'api-data'), FILESYSTEM_ALLOWED_ROOTS: root,
-    MAX_PARALLEL_JOBS: '1', CALLBACK_AUTH_TOKEN: '', CALLBACK_AUTH_USERNAME: '', CALLBACK_AUTH_PASSWORD: '',
+    MAX_PARALLEL_JOBS: '1', CALLBACK_AUTH_USERNAME: '', CALLBACK_AUTH_PASSWORD: '',
     CALLBACK_ALLOWED_ORIGINS: origin, IP_CHECK_URL: origin + '/ip', IP_MONITOR_SETTINGS_PATH: settings,
     SERVICE_BASE_URL: api, NOVNC_ENABLED: 'false', BROWSER_HEADLESS: process.argv.includes('--headed') ? 'false' : 'true',
     PUPPETEER_EXECUTABLE_PATH: browserPath

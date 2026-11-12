@@ -7,7 +7,7 @@ if(!process.env.FLEET_ADMIN_TOKEN||!Array.isArray(nodes)||!nodes.length)throw ne
 await privateDirectory(out);
 for(const n of nodes){
  if(!identifier(n.id)||!textIdentity(n.un_id))throw new Error('Invalid inventory node identity');
- const r=await fetch(base+'/api/nodes',{method:'POST',redirect:'error',headers:{Authorization:'Bearer '+process.env.FLEET_ADMIN_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({id:n.id,un_id:n.un_id,group:n.group||'default'})});
+ const r=await fetch(base+'/api/nodes',{method:'POST',redirect:'error',headers:{Authorization:'Bearer '+process.env.FLEET_ADMIN_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({id:n.id,un_id:n.un_id,group:n.group||'default',...Object.fromEntries(['display_name','network_address','rdp_address','api_address'].filter(k=>n[k]!==undefined).map(k=>[k,n[k]]))})});
  if(!r.ok)throw new Error('Enrollment failed for '+n.id+': HTTP '+r.status+'; previously created identities are retained. Do not rotate their tokens implicitly.');
  const enrollment=await r.json();
  const project=n.project_path||'C:/script_factory';

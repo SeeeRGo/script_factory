@@ -14,3 +14,11 @@ fleet-releases/
 **/agent.config.json
 fleet/controller.env
 ansible/inventories/*/group_vars/all/vault.yml
+# Customer rollout document contains live credentials.
+/Параметры для env.docx
+/.~lock.Параметры для env.docx#
+
+**/fleet-master.key
+**/fleet-bootstrap*.json
+/.playwright-cli/
+/output/playwright/

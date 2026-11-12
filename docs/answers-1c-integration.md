@@ -252,8 +252,8 @@ callback самостоятельно. Состояние доставки пр�
 
 Для ручного воспроизведения ответов `401` и `402` можно импортировать в Postman файл
 `docs/postman/callback-402.postman_collection.json`. После импорта в переменной
-коллекции `validCallbackToken` нужно указать тот же ключ, что и в
-`CALLBACK_AUTH_TOKEN` на УН.
+коллекции `callbackUsername` и `callbackPassword` нужно указать те же логин и пароль, что и в
+`CALLBACK_AUTH_USERNAME` / `CALLBACK_AUTH_PASSWORD` на УН.
 
 Допустимые уровни — `debug`, `info`, `warn`, `error`; по умолчанию используется
 `info`. Журнал можно дополнительно фильтровать:
@@ -339,10 +339,8 @@ ipify и сравнивает их. С API 0.9.0 при корректном, н
 Пользователь из публикации базы больше не используется. Авторизация передачи результата
 настраивается на УН переменными окружения и передаётся в заголовках callback:
 
-- `CALLBACK_AUTH_TOKEN` — отправляет заголовок `Authorization: Bearer <token>`;
 - `CALLBACK_AUTH_USERNAME` и `CALLBACK_AUTH_PASSWORD` — отправляет `Authorization: Basic <base64>`;
-- `CALLBACK_ALLOWED_ORIGINS` обязателен при включённой авторизации; HTTPS обязателен,
-  кроме literal `127.0.0.1` и `[::1]`.
+- `CALLBACK_ALLOWED_ORIGINS` обязателен при включённой авторизации; разрешены HTTP и HTTPS origins. Для защиты Basic-учётных данных используйте HTTPS или защищённую внутреннюю сеть.
 
 Логин и пароль не указываются в задании, сценарии, URL и `parameters`: неизвестные поля
 `callback` отклоняются с HTTP 400. УН скрывает настроенные секреты из журналов и

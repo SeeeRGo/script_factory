@@ -44,7 +44,6 @@ async function service(t, env = {}, expectFailure = false) {
       WEB_LOGIN: 'callback-test-web-user',
       WEB_PASSWORD: 'callback-test-web-password',
       DATA_DIR: dataDir,
-      CALLBACK_AUTH_TOKEN: '',
       CALLBACK_AUTH_USERNAME: '',
       CALLBACK_AUTH_PASSWORD: '',
       CALLBACK_ALLOWED_ORIGINS: '',
@@ -77,9 +76,9 @@ async function service(t, env = {}, expectFailure = false) {
     return output;
   }
   assert.match(output, /script-factory listening/, output);
-  const request = (pathname, body) => fetch(`http://127.0.0.1:${port}${pathname}`, {
+  const request = (pathname, body, headers = {}) => fetch(`http://127.0.0.1:${port}${pathname}`, {
     method: body ? 'POST' : 'GET',
-    headers: { 'X-API-Key': 'callback-test-api-key', 'Content-Type': 'application/json' },
+    headers: { 'X-API-Key': 'callback-test-api-key', 'Content-Type': 'application/json', ...headers },
     ...(body ? { body: JSON.stringify(body) } : {})
   });
   return { request, dataDir, child, exited };
@@ -106,8 +105,7 @@ async function completed(app, response) {
 }
 
 for (const [name, env, authorization, secrets] of [
-  ['Basic', { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password }, basic, [username, password, basic, basic.slice(6)]],
-  ['Bearer', { CALLBACK_AUTH_TOKEN: token }, `Bearer ${token}`, [token, `Bearer ${token}`]]
+  ['Basic', { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password }, basic, [username, password, basic, basic.slice(6)]]
 ]) {
   test(`${name} sends env auth only to allowlisted receiver and redacts captured history, errors and persisted state`, async (t) => {
     const received = [];
@@ -182,18 +180,18 @@ test('delivers an authenticated HTTP callback to an allowlisted hostname', async
     res.end('accepted');
   });
   const origin = boundOrigin.replace('127.0.0.1', 'localhost');
-  const app = await service(t, { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: origin });
+  const app = await service(t, { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password, CALLBACK_ALLOWED_ORIGINS: origin });
   const job = await completed(app, await submit(app, { url: `${origin}/callback` }));
   assert.equal(job.callback_delivery.status, 'delivered');
   assert.equal(job.callback_delivery.last_response_body, 'accepted');
   assert.equal(received.length, 1);
-  assert.equal(received[0].authorization, `Bearer ${token}`);
+  assert.equal(received[0].authorization, basic);
   assert.equal(received[0].body.job.job_id, job.job_id);
 });
 
 test('starts with customer-configured HTTP domain and private-IP callback origins', async (t) => {
   const app = await service(t, {
-    CALLBACK_AUTH_TOKEN: token,
+    CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password,
     CALLBACK_ALLOWED_ORIGINS: 'http://callback.example,http://192.168.1.10:8080,http://10.0.0.1:8080,https://callback.example'
   });
   const response = await app.request('/health');
@@ -202,14 +200,14 @@ test('starts with customer-configured HTTP domain and private-IP callback origin
 });
 
 test('rejects URL credentials, unsupported schemes and unlisted origins before accepting jobs', async (t) => {
-  const app = await service(t, { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example' });
+  const app = await service(t, { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example' });
   for (const url of [
     'https://user:password@callback.example/callback',
     'https://user@callback.example/callback',
     'https://@callback.example/callback',
     'https://callback.example/callback?username=user&password=secret',
     'https://callback.example/callback?token=secret',
-    `https://callback.example/${token}`,
+    `https://callback.example/${password}`,
     'http://callback.example/callback',
     'http://localhost/callback',
     'http://127.1/callback',
@@ -274,24 +272,37 @@ test('redacts a configured secret cut by the response capture limit', async (t) 
   assert.ok(!job.callback_delivery.last_response_body.includes(password.slice(0, 8)));
 });
 
-test('fails startup on ambiguous, partial, unsafe or unallowlisted auth configuration without leaking values', async (t) => {
+test('fails startup on partial, unsafe or unallowlisted auth configuration without leaking values', async (t) => {
   for (const env of [
-    { CALLBACK_AUTH_TOKEN: token, CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password },
     { CALLBACK_AUTH_USERNAME: username },
     { CALLBACK_AUTH_PASSWORD: password },
-    { CALLBACK_AUTH_TOKEN: token },
     { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password },
-    { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'ftp://callback.example' },
-    { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'http://user:password@callback.example' },
-    { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'http://callback.example/path' },
-    { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'https://user:password@callback.example' },
-    { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example/path' },
-    { CALLBACK_AUTH_TOKEN: token, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example?token=secret' },
+    { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password, CALLBACK_ALLOWED_ORIGINS: 'ftp://callback.example' },
+    { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password, CALLBACK_ALLOWED_ORIGINS: 'http://user:password@callback.example' },
+    { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password, CALLBACK_ALLOWED_ORIGINS: 'http://callback.example/path' },
+    { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password, CALLBACK_ALLOWED_ORIGINS: 'https://user:password@callback.example' },
+    { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example/path' },
+    { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: password, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example?token=secret' },
     { CALLBACK_AUTH_USERNAME: 'invalid:user', CALLBACK_AUTH_PASSWORD: password, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example' },
-    { CALLBACK_AUTH_TOKEN: `${token}\r\ninvalid`, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example' }
+    { CALLBACK_AUTH_USERNAME: username, CALLBACK_AUTH_PASSWORD: `${password}\r\ninvalid`, CALLBACK_ALLOWED_ORIGINS: 'https://callback.example' }
   ]) {
     const output = await service(t, env, true);
     assert.match(output, /CALLBACK_AUTH|CALLBACK_ALLOWED_ORIGINS/);
     for (const secret of [username, password, token, basic]) assert.ok(!output.includes(secret));
   }
+});
+
+
+test('legacy callback token cannot override Basic and demo receiver checks Basic credentials', async t => {
+  const app = await service(t, {
+    CALLBACK_AUTH_TOKEN: 'obsolete-unused-callback-token',
+    CALLBACK_AUTH_USERNAME: username,
+    CALLBACK_AUTH_PASSWORD: password,
+    CALLBACK_ALLOWED_ORIGINS: 'https://callback.example',
+    DEMO_1C_CALLBACK_ENABLED: 'true'
+  });
+  const event = { event_id: 'basic-auth-demo', event: 'job.completed' };
+  assert.equal((await app.request('/demo/1c/callback', event)).status, 401);
+  assert.equal((await app.request('/demo/1c/callback', event, { Authorization: 'Bearer obsolete-unused-callback-token' })).status, 401);
+  assert.equal((await app.request('/demo/1c/callback', event, { Authorization: basic })).status, 204);
 });

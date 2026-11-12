@@ -11,8 +11,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const root = path.resolve(import.meta.dirname, '..');
 
-test('removes expired jobs, logs, results and artifacts on startup', async (t) => {
+for(const maintenanceActive of [false,true]) test(maintenanceActive?'preserves expired results during sealed maintenance so configuration rollback retains data':'removes expired jobs, logs, results and artifacts on startup', async (t) => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'job-retention-'));
+  if(maintenanceActive){await mkdir(path.join(dataDir,'maintenance'),{recursive:true});await writeFile(path.join(dataDir,'maintenance','state.json'),JSON.stringify({active:true,owner:'fleet-retention-test',phase:'installing'}));}
   const jobId = 'job_expired';
   const artifactDir = path.join(dataDir, 'artifacts', jobId);
   await mkdir(artifactDir, { recursive: true });
@@ -84,16 +85,16 @@ test('removes expired jobs, logs, results and artifacts on startup', async (t) =
   while (!output.includes('script-factory listening') && child.exitCode === null && Date.now() < deadline) {
     await delay(20);
   }
-  assert.match(output, /Cleaned up 1 expired job\(s\)/, output);
+  if(!maintenanceActive)assert.match(output, /Cleaned up 1 expired job\(s\)/, output);
   assert.match(output, /script-factory listening/, output);
 
   const response = await fetch(`http://127.0.0.1:${port}/api/v2/jobs/${jobId}`, {
     headers: { 'X-API-Key': 'retention-test-key' }
   });
-  assert.equal(response.status, 404);
-  await assert.rejects(access(artifactDir), /ENOENT/);
+  assert.equal(response.status, maintenanceActive?200:404);
+  if(maintenanceActive)await access(artifactDir);else await assert.rejects(access(artifactDir), /ENOENT/);
 
   const persisted = new DatabaseSync(path.join(dataDir, 'state.sqlite'));
-  assert.equal(persisted.prepare('SELECT COUNT(*) AS count FROM jobs').get().count, 0);
+  assert.equal(persisted.prepare('SELECT COUNT(*) AS count FROM jobs').get().count, maintenanceActive?1:0);
   persisted.close();
 });

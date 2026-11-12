@@ -43,7 +43,8 @@ services:
       HOST: 0.0.0.0
       DATA_DIR: /app/data
       FILESYSTEM_ALLOWED_ROOTS: /app/demo-data:/app/data:/app/work
-      CALLBACK_AUTH_TOKEN: ${CALLBACK_AUTH_TOKEN:-}
+      CALLBACK_AUTH_USERNAME: ${CALLBACK_AUTH_USERNAME:-}
+      CALLBACK_AUTH_PASSWORD: ${CALLBACK_AUTH_PASSWORD:-}
       CALLBACK_ALLOWED_ORIGINS: ${CALLBACK_ALLOWED_ORIGINS:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:33001/health"]

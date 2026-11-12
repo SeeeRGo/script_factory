@@ -133,7 +133,7 @@ curl -X POST http://TEST_UN_HOST:33001/api/v2/jobs \
 ```http
 Content-Type: application/json
 Accept: application/json
-Authorization: Bearer <CALLBACK_AUTH_TOKEN из .env УН>
+Authorization: Basic <base64(CALLBACK_AUTH_USERNAME:CALLBACK_AUTH_PASSWORD)>
 X-Script-Factory-Event: job.completed
 Idempotency-Key: <job_id>:<status>:<finished_at>
 ```
@@ -163,12 +163,10 @@ Idempotency-Key: <job_id>:<status>:<finished_at>
 их количество и состав полей зависят от сценария. Идентификаторы задания и контекст
 выполнения остаются в соседних полях `job`, а не в `job.result`.
 
-1С должна проверить Bearer-токен, сохранить событие транзакционно по `Idempotency-Key` и только затем вернуть любой HTTP 2xx. При сетевой ошибке или не-2xx УН повторяет callback с экспоненциальной паузой. Параметры `max_attempts`, `backoff_ms`, `timeout_ms` задаются в `callback`. Текущее состояние доставки доступно в `job.callback_delivery`: `pending`, `delivering`, `retrying`, `delivered` или `failed`.
+1С должна проверить логин и пароль HTTP Basic, сохранить событие транзакционно по `Idempotency-Key` и только затем вернуть любой HTTP 2xx. При сетевой ошибке или не-2xx УН повторяет callback с экспоненциальной паузой. Параметры `max_attempts`, `backoff_ms`, `timeout_ms` задаются в `callback`. Текущее состояние доставки доступно в `job.callback_delivery`: `pending`, `delivering`, `retrying`, `delivered` или `failed`.
 
-Авторизация callback настраивается на УН переменными окружения: `CALLBACK_AUTH_TOKEN`
-отправляет `Authorization: Bearer <token>`, а `CALLBACK_AUTH_USERNAME` и
-`CALLBACK_AUTH_PASSWORD` — `Authorization: Basic <base64>`; одновременно задавать оба
-способа нельзя. При включённой авторизации обязателен `CALLBACK_ALLOWED_ORIGINS`.
+Авторизация callback настраивается на УН парой переменных `CALLBACK_AUTH_USERNAME` и
+`CALLBACK_AUTH_PASSWORD` — `Authorization: Basic <base64>`. Поддержка Bearer в callback удалена. При включённой авторизации обязателен `CALLBACK_ALLOWED_ORIGINS`.
 Начиная с 0.9.2 разрешены HTTP и HTTPS для доменов и IP-адресов, включая внутреннюю
 сеть. Протокол и адрес выбирает клиент. В списке указывается только origin
 (`http://1c-server:8080`), а полный путь обработчика — в `callback.url` задания.

@@ -70,7 +70,6 @@ const NOVNC_PROXY_PREFIX = '/browser-live';
 const NOVNC_INTERNAL_PORT = Number(process.env.NOVNC_INTERNAL_PORT || 33303);
 const PERSIST_DEBOUNCE_MS = Number(process.env.PERSIST_DEBOUNCE_MS || 50);
 const JOB_CLEANUP_INTERVAL_MS = Number(process.env.JOB_CLEANUP_INTERVAL_MS || 24 * 60 * 60 * 1000);
-const CALLBACK_AUTH_TOKEN = process.env.CALLBACK_AUTH_TOKEN || '';
 const CALLBACK_AUTH_USERNAME = process.env.CALLBACK_AUTH_USERNAME || '';
 const CALLBACK_AUTH_PASSWORD = process.env.CALLBACK_AUTH_PASSWORD || '';
 const DEMO_1C_CALLBACK_ENABLED = process.env.DEMO_1C_CALLBACK_ENABLED === 'true';
@@ -81,7 +80,6 @@ const CALLBACK_ALLOWED_ORIGINS = String(process.env.CALLBACK_ALLOWED_ORIGINS || 
   .map(normalizeCallbackAllowedOrigin);
 const CALLBACK_AUTHORIZATION = buildCallbackAuthorization();
 const CALLBACK_REDACTION_VALUES = [...new Set([
-  CALLBACK_AUTH_TOKEN,
   CALLBACK_AUTH_USERNAME,
   CALLBACK_AUTH_PASSWORD,
   CALLBACK_AUTHORIZATION,
@@ -751,6 +749,8 @@ function deletePersistedJob(jobId) {
 }
 
 async function cleanupExpiredJobs() {
+  // Keep rollback data intact until the release/configuration maintenance is accepted.
+  if (maintenance?.active) return 0;
   const expiredJobs = [...state.jobs.values()].filter((job) => (
     isJobExpired(job, state.config.job_retention_days)
   ));
@@ -1051,24 +1051,20 @@ function normalizeCallbackAllowedOrigin(value) {
 
 function buildCallbackAuthorization() {
   const basicConfigured = Boolean(CALLBACK_AUTH_USERNAME || CALLBACK_AUTH_PASSWORD);
-  if (CALLBACK_AUTH_TOKEN && basicConfigured) {
-    throw new Error('Задайте только CALLBACK_AUTH_TOKEN или пару CALLBACK_AUTH_USERNAME/CALLBACK_AUTH_PASSWORD');
-  }
   if (basicConfigured && (!CALLBACK_AUTH_USERNAME || !CALLBACK_AUTH_PASSWORD)) {
     throw new Error('CALLBACK_AUTH_USERNAME и CALLBACK_AUTH_PASSWORD должны быть заданы вместе');
   }
   if (/[\u0000-\u001f\u007f:]/.test(CALLBACK_AUTH_USERNAME)
-    || /[\u0000-\u001f\u007f]/.test(CALLBACK_AUTH_PASSWORD)
-    || (CALLBACK_AUTH_TOKEN && !/^[A-Za-z0-9\-._~+/]+=*$/.test(CALLBACK_AUTH_TOKEN))) {
+    || /[\u0000-\u001f\u007f]/.test(CALLBACK_AUTH_PASSWORD)) {
     throw new Error('Некорректные значения переменных CALLBACK_AUTH');
   }
-  if ((CALLBACK_AUTH_TOKEN || basicConfigured) && CALLBACK_ALLOWED_ORIGINS.length === 0) {
+  if (basicConfigured && CALLBACK_ALLOWED_ORIGINS.length === 0) {
     throw new Error('При настройке CALLBACK_AUTH требуется CALLBACK_ALLOWED_ORIGINS');
   }
   if (basicConfigured) {
     return `Basic ${Buffer.from(`${CALLBACK_AUTH_USERNAME}:${CALLBACK_AUTH_PASSWORD}`, 'utf8').toString('base64')}`;
   }
-  return CALLBACK_AUTH_TOKEN ? `Bearer ${CALLBACK_AUTH_TOKEN}` : '';
+  return '';
 }
 
 function redactCallbackText(value, truncated = false) {
@@ -1932,8 +1928,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (method === 'POST' && pathname === '/demo/1c/callback' && DEMO_1C_CALLBACK_ENABLED) {
-      if (CALLBACK_AUTH_TOKEN && req.headers.authorization !== `Bearer ${CALLBACK_AUTH_TOKEN}`) {
-        sendJson(res, 401, { error: { code: 'INVALID_CALLBACK_TOKEN', message: 'Неверный callback-токен' } });
+      if (CALLBACK_AUTHORIZATION && req.headers.authorization !== CALLBACK_AUTHORIZATION) {
+        sendJson(res, 401, { error: { code: 'INVALID_CALLBACK_AUTH', message: 'Неверные учётные данные callback' } });
         return;
       }
       const event = await readJsonBody(req);

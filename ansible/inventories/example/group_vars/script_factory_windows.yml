@@ -7,7 +7,8 @@ script_factory_serial: 25%
 script_factory_api_key: "{{ vault_script_factory_api_keys[inventory_hostname] }}"
 script_factory_web_login: demo
 script_factory_web_password: "{{ vault_script_factory_web_passwords[inventory_hostname] }}"
-script_factory_callback_auth_token: "{{ vault_script_factory_callback_tokens[inventory_hostname] }}"
+script_factory_callback_auth_username: "{{ vault_script_factory_callback_usernames[inventory_hostname] }}"
+script_factory_callback_auth_password: "{{ vault_script_factory_callback_passwords[inventory_hostname] }}"
 
 script_factory_data_dir: C:\ProgramData\ScriptFactory\shared\data
 script_factory_allowed_roots:

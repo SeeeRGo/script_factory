@@ -62,7 +62,7 @@ Copy-Item выполняется только при первой установ
 | BROWSER_PRODUCT | Метка `yandex`; браузер выбирает реальный executable, одна эта метка путь не переключает |
 | BROWSER_HEADLESS | `false` для видимой отладки СБИС |
 | MAX_PARALLEL_JOBS | Для одного кабинета/сеанса СБИС — `1` |
-| CALLBACK_AUTH_TOKEN | Токен авторизации callback; текущий Windows preflight требует его заполнить |
+| CALLBACK_AUTH_USERNAME / CALLBACK_AUTH_PASSWORD | Логин и пароль HTTP Basic для callback; оба значения задаются вместе |
 | CALLBACK_ALLOWED_ORIGINS | Origin 1С по HTTP или HTTPS (0.9.2+), например `http://1c-test.local:8080`, без пути обработчика; несколько адресов разделяются запятыми |
 | NOVNC_ENABLED | Для Windows/RDP обычно `false` |
 
@@ -82,7 +82,7 @@ MAX_PARALLEL_JOBS=1
 NOVNC_ENABLED=false
 ```
 
-Заполните API_KEY и WEB_PASSWORD своими значениями. Для callback выберите один способ: CALLBACK_AUTH_TOKEN либо пару CALLBACK_AUTH_USERNAME/CALLBACK_AUTH_PASSWORD. Шаблон windows/.env.example задаёт параллельность 3 — для СБИС измените её на 1. Параметр -Port установщика сам не меняет PORT в .env: оба значения должны совпадать.
+Заполните API_KEY и WEB_PASSWORD своими значениями. Для callback задайте пару CALLBACK_AUTH_USERNAME/CALLBACK_AUTH_PASSWORD (HTTP Basic). Шаблон windows/.env.example задаёт параллельность 3 — для СБИС измените её на 1. Параметр -Port установщика сам не меняет PORT в .env: оба значения должны совпадать.
 
 Создайте каталоги и предоставьте worker-пользователю чтение программы, доступ к .env, запись в DATA_DIR и рабочие корни. Не распечатывайте весь .env в журнал или переписку.
 

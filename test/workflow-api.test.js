@@ -21,7 +21,7 @@ test('dynamic workflow steps and result survive an API worker restart', async t 
   t.after(async () => { await stop(); await rm(root, { recursive: true, force: true }); });
   const start = async () => {
     child = spawn(process.execPath, ['src/server.js'], { cwd: path.resolve(import.meta.dirname, '..'), stdio: 'ignore',
-      env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), API_KEY: 'workflow-test-key', UN_ID: 'workflow-test', WEB_LOGIN: 'test', WEB_PASSWORD: 'test', DATA_DIR: root, FILESYSTEM_ALLOWED_ROOTS: root, CALLBACK_ALLOWED_ORIGINS: callbackOrigin, CALLBACK_AUTH_TOKEN: '', CALLBACK_AUTH_USERNAME: '', CALLBACK_AUTH_PASSWORD: '' } });
+      env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), API_KEY: 'workflow-test-key', UN_ID: 'workflow-test', WEB_LOGIN: 'test', WEB_PASSWORD: 'test', DATA_DIR: root, FILESYSTEM_ALLOWED_ROOTS: root, CALLBACK_ALLOWED_ORIGINS: callbackOrigin, CALLBACK_AUTH_USERNAME: '', CALLBACK_AUTH_PASSWORD: '' } });
     const deadline = Date.now() + 8000;
     while (Date.now() < deadline) {
       try { if ((await fetch(`${base}/health`)).ok) return; } catch { /* startup */ }

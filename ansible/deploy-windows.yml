@@ -87,7 +87,8 @@
           - script_factory_browser_path | length > 0
           - script_factory_api_key | length > 0
           - script_factory_web_password | length > 0
-          - script_factory_callback_auth_token | length > 0
+          - script_factory_callback_auth_username | length > 0
+          - script_factory_callback_auth_password | length > 0
         fail_msg: Define the UN identifier, run-as account, browser path and Vault-backed secrets for every host
       no_log: true
 
@@ -103,7 +104,8 @@
         - "{{ script_factory_un_id }}"
         - "{{ script_factory_web_login }}"
         - "{{ script_factory_web_password }}"
-        - "{{ script_factory_callback_auth_token }}"
+        - "{{ script_factory_callback_auth_username }}"
+        - "{{ script_factory_callback_auth_password }}"
       no_log: true
 
     - name: Create deployment directories

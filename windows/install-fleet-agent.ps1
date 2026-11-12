@@ -13,7 +13,7 @@ if([int]((& $node --version).Trim().TrimStart('v').Split('.')[0]) -lt 24){throw 
 $config=Get-Content -LiteralPath $ConfigFile -Raw -Encoding UTF8|ConvertFrom-Json
 if($config.node_id -notmatch '^[A-Za-z0-9_-]{1,100}$' -or -not $config.un_id -or $config.token.Length -lt 32 -or $config.token.StartsWith('REPLACE_')){throw 'Complete the node identity and token first'}
 if(-not(Test-Path -LiteralPath $ReleasePublicKey -PathType Leaf)){throw 'Release public key file not found'}
-foreach($relative in @('fleet\agent.mjs','fleet\common.mjs','fleet\windows-adapter.mjs','fleet\run-update.ps1','fleet\rollback-update.ps1','windows\fleet-agent-host.ps1','windows\worker-job.cs','docs\project-guide\tools\update-one-un.ps1')){if(-not(Test-Path -LiteralPath (Join-Path $SourceRoot $relative) -PathType Leaf)){throw "Installer source missing: $relative"}}
+foreach($relative in @('fleet\agent.mjs','fleet\common.mjs','fleet\configuration.mjs','fleet\config-local.mjs','fleet\config-update.ps1','fleet\windows-adapter.mjs','fleet\run-update.ps1','fleet\rollback-update.ps1','windows\fleet-agent-host.ps1','windows\worker-job.cs','docs\project-guide\tools\update-one-un.ps1')){if(-not(Test-Path -LiteralPath (Join-Path $SourceRoot $relative) -PathType Leaf)){throw "Installer source missing: $relative"}}
 $InstallDir=[IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
 $project=[IO.Path]::GetFullPath($config.project_path).TrimEnd('\')
 if($InstallDir -eq $project -or $InstallDir.StartsWith($project+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Agent must be outside the worker project'}
@@ -32,7 +32,7 @@ foreach($sid in @('S-1-5-18','S-1-5-32-544')){
  $acl.AddAccessRule($rule)
 }
 Set-Acl -LiteralPath $InstallDir -AclObject $acl
-foreach($file in @('agent.mjs','common.mjs','windows-adapter.mjs','run-update.ps1','rollback-update.ps1')){Copy-Item -LiteralPath (Join-Path $SourceRoot ('fleet\'+$file)) -Destination (Join-Path $InstallDir $file) -Force}
+foreach($file in @('agent.mjs','common.mjs','configuration.mjs','config-local.mjs','config-update.ps1','windows-adapter.mjs','run-update.ps1','rollback-update.ps1')){Copy-Item -LiteralPath (Join-Path $SourceRoot ('fleet\'+$file)) -Destination (Join-Path $InstallDir $file) -Force}
 Copy-Item -LiteralPath (Join-Path $SourceRoot 'docs\project-guide\tools\update-one-un.ps1') -Destination (Join-Path $InstallDir 'update-one-un.ps1') -Force
 Copy-Item -LiteralPath (Join-Path $SourceRoot 'windows\fleet-agent-host.ps1') -Destination (Join-Path $InstallDir 'agent-host.ps1') -Force
 Copy-Item -LiteralPath (Join-Path $SourceRoot 'windows\worker-job.cs') -Destination (Join-Path $InstallDir 'worker-job.cs') -Force

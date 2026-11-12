@@ -1,7 +1,7 @@
 {
   "name": "script-factory",
-  "version": "0.11.1",
-  "releaseDate": "11.11.2026",
+  "version": "0.13.0",
+  "releaseDate": "12.11.2026",
   "private": true,
   "type": "module",
   "description": "Queued JSON automation service with native Chrome Recorder and Puppeteer Replay execution.",
@@ -33,7 +33,8 @@
     "demo:browser": "node demo/run-browser.mjs",
     "demo:yandex": "node demo/run-yandex.mjs",
     "demo:all": "node demo/run.mjs success && node demo/run.mjs file-not-found && node demo/run.mjs retry && node demo/run.mjs timeout",
-    "demo:sbis:local-stand": "node --env-file-if-exists=.env demo/sbis-local-stand.mjs"
+    "demo:sbis:local-stand": "node --env-file-if-exists=.env demo/sbis-local-stand.mjs",
+    "fleet:config": "node scripts/fleet-config.mjs"
   },
   "dependencies": {
     "@puppeteer/replay": "^4.0.2",

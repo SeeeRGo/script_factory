@@ -2,12 +2,12 @@
   "info": {
     "_postman_id": "33cd0140-743e-4aa7-9664-8de0719ce9b0",
     "name": "Script Factory — диагностика callback 1С (401/402)",
-    "description": "Два запроса к HTTP-сервису 1С: контрольный запрос с неверным ключом должен вернуть 401, запрос с тем же CALLBACK_AUTH_TOKEN, который использует УН, позволяет воспроизвести 402. Перед запуском заполните переменную validCallbackToken.",
+    "description": "Диагностика HTTP-сервиса 1С с HTTP Basic. Заполните callbackUsername и callbackPassword теми же значениями, что CALLBACK_AUTH_USERNAME и CALLBACK_AUTH_PASSWORD на УН. Не экспортируйте коллекцию с действующими паролями.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
     {
-      "name": "1. Неверный ключ — ожидается 401",
+      "name": "1. Неверный пароль — ожидается 401",
       "request": {
         "method": "POST",
         "header": [
@@ -29,11 +29,16 @@
           }
         ],
         "auth": {
-          "type": "bearer",
-          "bearer": [
+          "type": "basic",
+          "basic": [
             {
-              "key": "token",
-              "value": "{{invalidCallbackToken}}",
+              "key": "username",
+              "value": "{{callbackUsername}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{invalidCallbackPassword}}",
               "type": "string"
             }
           ]
@@ -43,7 +48,7 @@
           "raw": "{\n  \"event_id\": \"postman-invalid-{{$guid}}\",\n  \"event\": \"job.completed\",\n  \"occurred_at\": \"{{$isoTimestamp}}\",\n  \"job\": {\n    \"job_id\": \"job_postman_invalid\",\n    \"uid\": \"postman-invalid\",\n    \"un_id\": \"un-postman\",\n    \"status\": \"success\",\n    \"result\": {\n      \"message\": \"Проверка неверного ключа\"\n    },\n    \"error\": null\n  }\n}"
         },
         "url": "{{callbackUrl}}",
-        "description": "Контрольная проверка ветки отказа в авторизации."
+        "description": "Использует HTTP Basic; логин и пароль должны соответствовать настройкам HTTP-сервиса 1С."
       },
       "response": [],
       "event": [
@@ -62,15 +67,15 @@
       ]
     },
     {
-      "name": "2. Ключ УН — ожидается воспроизведение 402",
+      "name": "2. Учётные данные УН — воспроизведение ответа 1С",
       "event": [
         {
           "listen": "prerequest",
           "script": {
             "type": "text/javascript",
             "exec": [
-              "if (!pm.collectionVariables.get('validCallbackToken')) {",
-              "  throw new Error('Заполните переменную коллекции validCallbackToken значением CALLBACK_AUTH_TOKEN с УН');",
+              "if (!pm.collectionVariables.get('callbackUsername') || !pm.collectionVariables.get('callbackPassword')) {",
+              "  throw new Error('Заполните callbackUsername и callbackPassword учётными данными callback с УН');",
               "}"
             ]
           }
@@ -109,21 +114,26 @@
           }
         ],
         "auth": {
-          "type": "bearer",
-          "bearer": [
+          "type": "basic",
+          "basic": [
             {
-              "key": "token",
-              "value": "{{validCallbackToken}}",
+              "key": "username",
+              "value": "{{callbackUsername}}",
+              "type": "string"
+            },
+            {
+              "key": "password",
+              "value": "{{callbackPassword}}",
               "type": "string"
             }
           ]
         },
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"event_id\": \"postman-valid-{{$guid}}\",\n  \"event\": \"job.completed\",\n  \"occurred_at\": \"{{$isoTimestamp}}\",\n  \"job\": {\n    \"job_id\": \"job_postman_valid\",\n    \"uid\": \"postman-valid\",\n    \"un_id\": \"un-postman\",\n    \"status\": \"success\",\n    \"result\": {\n      \"message\": \"Проверка callback с ключом УН\"\n    },\n    \"error\": null\n  }\n}"
+          "raw": "{\n  \"event_id\": \"postman-valid-{{$guid}}\",\n  \"event\": \"job.completed\",\n  \"occurred_at\": \"{{$isoTimestamp}}\",\n  \"job\": {\n    \"job_id\": \"job_postman_valid\",\n    \"uid\": \"postman-valid\",\n    \"un_id\": \"un-postman\",\n    \"status\": \"success\",\n    \"result\": {\n      \"message\": \"Проверка callback с учётными данными УН\"\n    },\n    \"error\": null\n  }\n}"
         },
         "url": "{{callbackUrl}}",
-        "description": "Использует тот же Bearer-токен, который сервис УН берёт из CALLBACK_AUTH_TOKEN."
+        "description": "Использует HTTP Basic; логин и пароль должны соответствовать настройкам HTTP-сервиса 1С."
       },
       "response": []
     }
@@ -135,13 +145,18 @@
       "type": "string"
     },
     {
-      "key": "invalidCallbackToken",
-      "value": "intentionally-invalid-token",
+      "key": "callbackUsername",
+      "value": "",
       "type": "string"
     },
     {
-      "key": "validCallbackToken",
+      "key": "callbackPassword",
       "value": "",
+      "type": "string"
+    },
+    {
+      "key": "invalidCallbackPassword",
+      "value": "intentionally-invalid-password",
       "type": "string"
     }
   ]

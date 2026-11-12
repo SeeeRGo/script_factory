@@ -50,10 +50,11 @@ MAX_PARALLEL_JOBS, DEFAULT_JOB_TIMEOUT_MS, JOB_RETENTION_DAYS и RETRY_* зад�
 | WEB_PASSWORD | Пароль веб-панели API |
 | WEB_SESSION_TTL_HOURS | Время жизни веб-сессии, часы |
 | WEB_COOKIE_SECURE | Cookie только через HTTPS при true; без настроенного HTTPS вход может не сохраняться |
-| CALLBACK_AUTH_TOKEN | Bearer-секрет обратного вызова 1С; не заполнять одновременно с Basic |
-| CALLBACK_AUTH_USERNAME | Логин Basic для callback |
+| CALLBACK_AUTH_USERNAME | Логин HTTP Basic для callback |
 | CALLBACK_AUTH_PASSWORD | Пароль Basic для callback; используется вместе с USERNAME |
 | CALLBACK_ALLOWED_ORIGINS | Допустимые origins через запятую, например https://dev.companya.ru, без пути обработчика. HTTP/HTTPS и порт имеют значение. Пустое значение отключает этот дополнительный список разрешений |
+
+После обновления с версии, использовавшей Bearer для callback, удалите старую переменную токена и настройте пару Basic до возобновления доставки. Старый токен не читается и не отправляется. Если логин и пароль не заданы, callback отправляется без Authorization (так работают демонстрационные стенды).
 
 callback.url, max_attempts, backoff_ms, timeout_ms передаются в задании; это не те же параметры, что RETRY_* исполнения сценария. backoff_ms callback — интервал перед повторной попыткой, не пауза до первого callback.
 
@@ -137,6 +138,7 @@ UN_LOGIN/UN_PASSWORD в локальной рабочей конфигураци
 | FLEET_DATA_DIR | Постоянные база и пакеты центрального сервиса |
 | FLEET_ADMIN_TOKEN | Секрет администратора центра, минимум 32 символа |
 | FLEET_RELEASE_PUBLIC_KEY | Путь публичного ключа проверки подписанных релизов |
+| FLEET_MASTER_KEY_FILE | Путь отдельного 32-байтного ключа AES-GCM для профилей и секретов; вне БД и Git |
 | FLEET_MAX_CONCURRENT | Общий максимум одновременных назначений обновления |
 
 Агент на УН использует отдельный agent.config.json: central_url, node_id, un_id, token, api_url, project_path, env_file, worker_task_name, worker_task_path, backup_root, data_dir, release_public_key, poll_seconds. Его token индивидуален и отличается от API_KEY и FLEET_ADMIN_TOKEN. Полный пример — [агент](../../fleet/agent.config.example.json), процедуры — [оркестратор](../project-guide/11-fleet-updates.md).
