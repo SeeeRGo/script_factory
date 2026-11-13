@@ -36,10 +36,16 @@ $ErrorActionPreference='Stop'
 $nodes=@(Import-Csv C:\Deploy\nodes.csv)
 if($nodes.Count -ne 10){throw 'Ожидаются ровно десять УН'}
 if(@($nodes.Computer | Select-Object -Unique).Count -ne 10){throw 'Повторяется имя УН'}
+$expectedVersion = '0.13.1' # версия выбранного архива
+$expectedSha256 = (Get-FileHash C:\Deploy\release.zip -Algorithm SHA256).Hash
+# Архив должен содержать windows/deploy-one-un.ps1 из текущей версии проекта.
+$tools = Join-Path $env:TEMP ('sf-deploy-tools-'+[guid]::NewGuid().ToString('N'))
+Expand-Archive C:\Deploy\release.zip $tools
 $credential=Get-Credential
 foreach($node in $nodes){
 $target=$node.Computer
 $nodeEnv=$node.EnvFile
+Write-Host "Начало установки: $target"
 $session = New-PSSession -ComputerName $target -UseSSL -Credential $credential
 try {
   Invoke-Command -Session $session -ScriptBlock {
@@ -47,23 +53,34 @@ try {
     New-Item $p -ItemType Directory -Force | Out-Null
     & icacls.exe $p /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
     if($LASTEXITCODE -ne 0){throw 'Не удалось ограничить доступ'}
-    if(Test-Path C:\script_factory){throw 'Установка существует; используйте обновление'}
+
   }
+  Copy-Item (Join-Path $tools 'windows\deploy-one-un.ps1') -Destination C:\ProgramData\ScriptFactoryDeploy\deploy-one-un.ps1 -ToSession $session
+  Copy-Item (Join-Path $tools 'windows\deployment-state.ps1') -Destination C:\ProgramData\ScriptFactoryDeploy\deployment-state.ps1 -ToSession $session
   Copy-Item C:\Deploy\release.zip -Destination C:\ProgramData\ScriptFactoryDeploy\release.zip -ToSession $session
   Copy-Item $nodeEnv -Destination C:\ProgramData\ScriptFactoryDeploy\node.env -ToSession $session
-  Invoke-Command -Session $session -ScriptBlock {
-    Expand-Archive C:\ProgramData\ScriptFactoryDeploy\release.zip C:\script_factory
-    Copy-Item C:\ProgramData\ScriptFactoryDeploy\node.env C:\script_factory\.env
-    & icacls.exe C:\script_factory\.env /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
-    if($LASTEXITCODE -ne 0){throw 'Не удалось защитить env'}
-    & C:\script_factory\windows\install-task.ps1 -ProjectPath C:\script_factory -Port 33001
+  Invoke-Command -Session $session -ArgumentList $expectedVersion,$expectedSha256 -ScriptBlock {
+    param($version,$sha256)
+    & C:\ProgramData\ScriptFactoryDeploy\deploy-one-un.ps1 `
+      -PackageZip C:\ProgramData\ScriptFactoryDeploy\release.zip `
+      -ExpectedVersion $version -ExpectedSha256 $sha256 `
+      -ProjectPath C:\script_factory `
+      -EnvFile C:\ProgramData\ScriptFactoryDeploy\node.env `
+      -Port 33001 -ConfirmNoNewJobs -ConfirmReplaceCode
     & C:\script_factory\windows\install-saby-task.ps1 -ProjectPath C:\script_factory
     Remove-Item C:\ProgramData\ScriptFactoryDeploy\node.env
     Invoke-RestMethod http://127.0.0.1:33001/live
   }
+  Write-Host "Установка завершена: $target"
+} catch {
+  throw "Установка остановлена на адресе ${target}: $($_.Exception.Message)"
 } finally { Remove-PSSession $session }
 }
 ```
+
+Перед запуском остановите поступление заданий из 1С и проверьте локальные изменения: флаги `ConfirmNoNewJobs` и `ConfirmReplaceCode` подтверждают именно это. Скрипт автоматически выбирает установку, обновление либо восстановление. Подробности и одиночный запуск — [проверка и восстановление установки](11-install-or-repair.md). У действующей установки сохраняется её `.env`; доставленный `node.env` используется только при отсутствии `.env`.
+
+В списке должны быть разные физические УН: разные имена или IP могут указывать на одну машину. Ответ `/live` относится к текущей итерации; ошибка после него может относиться к следующей строке. Сообщения выше показывают адрес каждой итерации и имя целевого компьютера при отказе.
 
 Замените порт, пути и пользователя, если они различаются. Цикл выполняет установку, но не заменяет итоговую приёмку десяти машин. После удаления node.env индивидуальная действующая конфигурация остаётся в C:\script_factory\.env. Не печатайте её в журнал.
 
