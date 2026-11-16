@@ -608,7 +608,7 @@ test('executes a script through the API and exposes visual step state and logs',
   assert.ok(logBody.logs.some((entry) => entry.message === 'Задание успешно выполнено'));
 });
 
-test('retries retryable normalized errors using the job policy', async () => {
+test('retries legacy script errors using the job policy', async () => {
   const response = await request('/api/v2/jobs', {
     method: 'POST',
     body: JSON.stringify({
@@ -834,7 +834,8 @@ test('keeps partial artifacts and diagnostic logs after a controlled file-flow f
   assert.equal(job.callback_delivery.status, 'delivered');
   assert.equal(job.error.code, 'VALIDATION_ERROR');
   assert.match(job.error.message, /download-save-open2/);
-  assert.equal(job.result.artifacts.length, 2);
+  assert.equal(job.result.artifacts.length, 3);
+  assert.ok(job.result.artifacts.some(a=>a.filename==='workflow-error.png'));
   assert.ok(job.result.artifacts.every((item) => typeof item.filename === 'string' && item.api_url.startsWith('/api/v2/jobs/')));
 
   const callbackEvents = await request('/api/v2/demo/callback-events').then((eventResponse) => eventResponse.json());

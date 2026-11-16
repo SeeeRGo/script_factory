@@ -23,7 +23,7 @@ export async function startBrowserWorker({env=process.env,run=runJobRuntime,onDi
   let stopped=false,current=null,accepted=false,heartbeat=null,ready=false,browserInfo=null;
   const running=new Map(),outcomes=new Set();
   for(const name of await readdir(journal)){if(!name.endsWith('.json')||!validId(name.slice(0,-5)))continue;const record=JSON.parse(await readFile(path.join(journal,name),'utf8'));
-    if(record.phase==='running'){record.phase='finished';record.error={code:'WORKER_EXECUTION_UNCERTAIN',message:'Предыдущий процесс исполнителя завершился; исход действий требует сверки',retryable:false};await atomicJson(path.join(journal,name),record);}outcomes.add(name.slice(0,-5));}
+    if(record.phase==='running'){record.phase='finished';record.error={code:'WORKER_EXECUTION_UNCERTAIN',message:'Предыдущий процесс исполнителя завершился; исход действий требует сверки'};await atomicJson(path.join(journal,name),record);}outcomes.add(name.slice(0,-5));}
   async function probe(){try{const defaults=resolveBrowserSettings();const executable=await resolveBrowserExecutablePath(defaults.executable_path);ready=!!executable;browserInfo={status:ready?'ok':'error',executable_path:executable||null,headless:defaults.headless,yandex_version:await detectYandexVersion()};}catch{ready=false;browserInfo={status:'error',executable_path:null};}}
   await probe();
   const frame=(type,extra={})=>current?.send({type,...extra});
@@ -32,14 +32,16 @@ export async function startBrowserWorker({env=process.env,run=runJobRuntime,onDi
   async function execute(message){
     const id=message.execution_id,jobId=message.job_id;
     if(!validId(id)||!validId(jobId)||!message.options||running.has(id)||outcomes.has(id)||running.size>=capacity){current?.close();return;}
-    const expected=path.join(artifactRoot,jobId);
+    const attempt=message.options.attempt ?? 1;
+    if(!Number.isSafeInteger(attempt)||attempt<1){current?.close();return;}
+    const expected=path.join(artifactRoot,jobId,attempt===1?'':`attempt-${attempt}`);
     if(path.resolve(message.options.artifactDirectory)!==expected){current?.close();return;}
     const controller=new AbortController();
     const task=(async()=>{
       const record={execution_id:id,job_id:jobId,phase:'running',instance_id:instance};
       await atomicJson(journalPath(id),record);
       try{record.result=await run({...message.options,jobId,signal:controller.signal,onEvent:event=>frame('event',{execution_id:id,event}),onBrowserLog:(level,message)=>frame('log',{execution_id:id,level,message})});}
-      catch(error){record.error={code:error.code||'WORKER_ERROR',message:error.message||'Ошибка исполнителя',retryable:error.retryable===true,...(error.details?{details:error.details}:{}),...(error.partial_context?{partial_context:error.partial_context}:{})};}
+      catch(error){record.error={code:error.code||'WORKER_ERROR',message:error.message||'Ошибка исполнителя',...(error.details?{details:error.details}:{}),...(error.partial_context?{partial_context:error.partial_context}:{})};}
       record.phase='finished';await atomicJson(journalPath(id),record);outcomes.add(id);await sendOutcome(id);
     })().catch(()=>{onDiagnostic('WORKER_JOURNAL_FAILED');current?.close();}).finally(()=>running.delete(id));
     running.set(id,{controller,task});

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "running-low",
   "title": "Высокий приоритет приходит во время выполнения низкого",
-  "description": "P50 выполняет первую попытку, получает retryable ошибку и запускает вторую. Во время второй попытки поступает P10 и остаётся в очереди, потому что планировщик не вытесняет активный job. P50 окончательно падает с PLUGIN_NOT_RUNNING, после чего P10 запускается и успешно завершается.",
+  "description": "P50 выполняет первую попытку, получает ошибку и запускает вторую. Во время второй попытки поступает P10 и остаётся в очереди, потому что планировщик не вытесняет активный job. P50 окончательно падает с PLUGIN_NOT_RUNNING, после чего P10 запускается и успешно завершается.",
   "config": {
     "max_parallel_jobs": 1
   },
@@ -11,54 +11,185 @@
     {
       "alias": "low",
       "role": "observed",
-      "submit": { "type": "immediate" },
+      "submit": {
+        "type": "immediate"
+      },
       "payload": {
         "uid": "queue-case-2-low-P50",
         "priority": 50,
         "timeout_ms": 8000,
-        "retry_policy": { "max_attempts": 2, "backoff_ms": 700 },
+        "retry_policy": {
+          "max_attempts": 2,
+          "backoff_ms": 700
+        },
         "script": {
-          "title": "P50 · Фоновая обработка реестра",
+          "format": "json-workflow",
           "steps": [
-            { "title": "Начать фоновую обработку", "description": "P50 занимает единственный исполнительный слот.", "action": "noop", "duration_ms": 500 },
-            { "title": "Прочитать реестр", "description": "Имитирует чтение входных данных без внешних интеграций.", "action": "noop", "duration_ms": 500 },
-            { "title": "Проверить строки", "description": "Продолжает работу, пока P10 уже ожидает в очереди.", "action": "noop", "duration_ms": 500 },
-            { "title": "Сопоставить записи", "description": "Показывает, что поступление P10 не прерывает активный P50.", "action": "noop", "duration_ms": 500 },
-            { "title": "Подготовить результат", "description": "Завершает подготовительную часть фонового задания.", "action": "noop", "duration_ms": 500 },
-            { "title": "Проверить исполнительный плагин", "description": "Первая ошибка запускает retry, вторая завершает P50 с PLUGIN_NOT_RUNNING.", "action": "auth_ecp", "params": { "plugin_running": false }, "duration_ms": 500 },
-            { "title": "Сохранить реестр", "description": "Не выполняется после контролируемой ошибки PLUGIN_NOT_RUNNING.", "action": "noop", "duration_ms": 350 }
-          ]
+            {
+              "action": "wait",
+              "title": "Начать фоновую обработку",
+              "description": "P50 занимает единственный исполнительный слот.",
+              "params": {
+                "duration_ms": 500
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Прочитать реестр",
+              "description": "Имитирует чтение входных данных без внешних интеграций.",
+              "params": {
+                "duration_ms": 500
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Проверить строки",
+              "description": "Продолжает работу, пока P10 уже ожидает в очереди.",
+              "params": {
+                "duration_ms": 500
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Сопоставить записи",
+              "description": "Показывает, что поступление P10 не прерывает активный P50.",
+              "params": {
+                "duration_ms": 500
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Подготовить результат",
+              "description": "Завершает подготовительную часть фонового задания.",
+              "params": {
+                "duration_ms": 500
+              }
+            },
+            {
+              "action": "fail",
+              "title": "Проверить исполнительный плагин",
+              "description": "Контролируемая ошибка; повтор определяется только retry_policy.",
+              "params": {
+                "error_code": "PLUGIN_NOT_RUNNING",
+                "message": "Учебная ошибка исполнителя"
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Сохранить реестр",
+              "description": "Не выполняется после контролируемой ошибки PLUGIN_NOT_RUNNING.",
+              "params": {
+                "duration_ms": 350
+              }
+            }
+          ],
+          "output": {},
+          "title": "P50 · Фоновая обработка реестра"
         }
       }
     },
     {
       "alias": "high",
       "role": "observed",
-      "submit": { "type": "after_attempt", "job": "low", "attempt": 2, "status": "running", "delay_ms": 800 },
+      "submit": {
+        "type": "after_attempt",
+        "job": "low",
+        "attempt": 2,
+        "status": "running",
+        "delay_ms": 800
+      },
       "payload": {
         "uid": "queue-case-2-high-P10",
         "priority": 10,
         "timeout_ms": 8000,
-        "retry_policy": { "max_attempts": 1, "backoff_ms": 100 },
+        "retry_policy": {
+          "max_attempts": 1,
+          "backoff_ms": 100
+        },
         "script": {
-          "title": "P10 · Срочное обновление статуса",
+          "format": "json-workflow",
           "steps": [
-            { "title": "Принять срочное задание", "description": "P10 запускается сразу после ошибки активного P50.", "action": "noop", "duration_ms": 350 },
-            { "title": "Прочитать параметры", "description": "Проверяет тестовый JSON срочного задания.", "action": "noop", "duration_ms": 350 },
-            { "title": "Подготовить обновление", "description": "Формирует результат без внешних взаимодействий.", "action": "noop", "duration_ms": 350 },
-            { "title": "Применить обновление", "description": "Имитирует полезную работу высокоприоритетного задания.", "action": "noop", "duration_ms": 350 },
-            { "title": "Проверить результат", "description": "Подтверждает успешное выполнение срочного задания.", "action": "noop", "duration_ms": 350 },
-            { "title": "Завершить P10", "description": "Освобождает слот с успешным статусом.", "action": "noop", "duration_ms": 350 }
-          ]
+            {
+              "action": "wait",
+              "title": "Принять срочное задание",
+              "description": "P10 запускается сразу после ошибки активного P50.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Прочитать параметры",
+              "description": "Проверяет тестовый JSON срочного задания.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Подготовить обновление",
+              "description": "Формирует результат без внешних взаимодействий.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Применить обновление",
+              "description": "Имитирует полезную работу высокоприоритетного задания.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Проверить результат",
+              "description": "Подтверждает успешное выполнение срочного задания.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Завершить P10",
+              "description": "Освобождает слот с успешным статусом.",
+              "params": {
+                "duration_ms": 350
+              }
+            }
+          ],
+          "output": {},
+          "title": "P10 · Срочное обновление статуса"
         }
       }
     }
   ],
   "expectations": [
-    { "type": "created_while_running", "created": "high", "running": "low" },
-    { "type": "starts_after_finished", "job": "high", "after": "low" },
-    { "type": "attempts", "job": "low", "count": 2 },
-    { "type": "terminal", "job": "low", "status": "failed", "error_code": "PLUGIN_NOT_RUNNING" },
-    { "type": "terminal", "job": "high", "status": "success" }
+    {
+      "type": "created_while_running",
+      "created": "high",
+      "running": "low"
+    },
+    {
+      "type": "starts_after_finished",
+      "job": "high",
+      "after": "low"
+    },
+    {
+      "type": "attempts",
+      "job": "low",
+      "count": 2
+    },
+    {
+      "type": "terminal",
+      "job": "low",
+      "status": "failed",
+      "error_code": "PLUGIN_NOT_RUNNING"
+    },
+    {
+      "type": "terminal",
+      "job": "high",
+      "status": "success"
+    }
   ]
 }

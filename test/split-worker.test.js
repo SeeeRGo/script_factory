@@ -31,16 +31,18 @@ test('API is alive without login, returns bounded waiting diagnostics and reject
  const created=await(await f.request('/api/v2/jobs',{uid:'split-result',script:{format:'json-workflow',steps:[{action:'artifact_write',params:{filename:'proof.txt',text:'worker account'}}],output:{Rezult_1:{state:'completed'}}}})).json();
  const job=await f.terminal(created.job.job_id);assert.equal(job.status,'success');assert.equal(job.result.Rezult_1.state,'completed');assert.equal(await(await f.request(job.result.artifacts[0].api_url)).text(),'worker account');
 });
-test('worker loss does not replay an uncertain execution and API continues responding',async t=>{
+test('worker loss waits for reconnect then retries according to the caller policy',async t=>{
  const f=await fixture(t);await f.startWorker();
- const created=await(await f.request('/api/v2/jobs',{retry_policy:{max_attempts:3},script:{format:'json-workflow',steps:[{action:'artifact_write',params:{filename:'once.txt',text:'one execution'}},{action:'wait',params:{duration_ms:10000}}],output:{}}})).json();const id=created.job.job_id;
+ const created=await(await f.request('/api/v2/jobs',{retry_policy:{max_attempts:3,backoff_ms:1},script:{format:'json-workflow',steps:[{action:'artifact_write',params:{filename:'once.txt',text:'one execution'}},{action:'compute',params:{expression:'context.attempt===1'},save_as:'first'},{action:'if',params:{condition:'{{first}}'},then:[{action:'wait',params:{duration_ms:10000}}],else:[{action:'fail',params:{error_code:'RETRY_AFTER_DISCONNECT'}}]}],output:{}}})).json();const id=created.job.job_id;
  for(let i=0;i<200;i++){try{await readFile(path.join(f.dir,'artifacts',id,'once.txt'));break;}catch{await wait(10);}}
- await f.killWorker();const job=await f.terminal(id);assert.equal(job.status,'failed');assert.equal(job.error.code,'WORKER_EXECUTION_UNCERTAIN');assert.equal(job.attempts,1);assert.equal((await f.request('/live')).status,200);
- await f.startWorker();assert.equal((await f.job(id)).attempts,1);
+ await f.killWorker();
+ for(let i=0;i<200&&(await f.job(id)).status!=='queued';i++)await wait(10);
+ const pending=await f.job(id);assert.equal(pending.status,'queued');assert.equal(pending.attempts,1);assert.equal((await f.request('/live')).status,200);
+ await f.startWorker();const job=await f.terminal(id);assert.equal(job.attempts,3);assert.equal(job.status,'failed');
 });
-test('API restart keeps queued work but never automatically resends a running report',async t=>{
+test('API restart preserves queued work and respects an exhausted attempt budget',async t=>{
  const f=await fixture(t);await f.startWorker();
- const create=script=>f.request('/api/v2/jobs',{script});
+ const create=script=>f.request('/api/v2/jobs',{script,retry_policy:{max_attempts:1}});
  const first=(await(await create({format:'json-workflow',steps:[{action:'wait',params:{duration_ms:10000}}],output:{}})).json()).job;
  const second=(await(await create({format:'json-workflow',steps:[{action:'compute',params:{expression:'({state:"completed"})'},save_as:'answer'}],output:{Rezult_1:'{{answer}}'}})).json()).job;
  assert.equal((await f.job(second.job_id)).status,'queued');await f.killApi();await f.startApi();
@@ -67,4 +69,18 @@ test('retry acknowledges the failed attempt before the next dispatch, cancellati
  for(let i=0;i<100&&(await f.job(job.job_id)).status!=='running';i++)await wait(10);
  assert.equal((await f.request('/api/v2/jobs/'+job.job_id+'/cancel',{})).status,202);assert.equal((await f.terminal(job.job_id)).status,'cancelled');
  for(let i=0;i<100;i++){const status=await(await f.request('/api/v2/system/worker/status')).json();if(status.active===0)return;await wait(10);}assert.fail('Worker slot not released');
+});
+
+test('API restart retries interrupted workflow when the caller budget permits',async t=>{
+ const f=await fixture(t);await f.startWorker();
+ const script={format:'json-workflow',steps:[
+  {action:'artifact_write',params:{filename:'started.txt',text:'{{attempt}}'}},
+  {action:'compute',params:{expression:'context.attempt===1'},save_as:'first'},
+  {action:'if',params:{condition:'{{first}}'},then:[{action:'wait',params:{duration_ms:10000}}],else:[]},
+  {action:'set',params:{answer:{state:'completed',attempt:'{{attempt}}'}}}
+ ],output:{Rezult_1:'{{answer}}'}};
+ const created=await(await f.request('/api/v2/jobs',{script,retry_policy:{max_attempts:2,backoff_ms:1}})).json();const id=created.job.job_id;
+ let started=false;for(let i=0;i<200;i++){try{await readFile(path.join(f.dir,'artifacts',id,'started.txt'));started=true;break;}catch{await wait(10);}}
+ assert.ok(started);await f.killApi();await f.startApi();
+ const completed=await f.terminal(id);assert.equal(completed.status,'success');assert.equal(completed.attempts,2);assert.equal(completed.result.Rezult_1.attempt,2);
 });

@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: API «Фабрика сценариев»
   description: API этапа 4 для интеграции 1С с очередью УН, получения статуса, результата и гарантируемого callback, включая JSON Steps и записи Chrome Recorder через Puppeteer Replay.
-  version: 0.13.2
+  version: 0.14.0
 servers:
   - url: http://TEST_UN_HOST:33001/api/v2
     description: Тестовая УН Windows (заменить TEST_UN_HOST на имя или IP машины)
@@ -42,14 +42,17 @@ components:
 
     RetryPolicy:
       type: object
+      description: С API 0.14.0 управляет повторами любого формата сценария независимо от кода ошибки. Повтор запускает весь сценарий сначала; отмена и истечение срока текущей попытки останавливают задание.
       properties:
         max_attempts:
           type: integer
           minimum: 1
+          description: Максимум исполнений включая первое. 1 отключает повторы.
           example: 2
         backoff_ms:
           type: integer
           minimum: 0
+          description: Фиксированная пауза перед повторной попыткой, миллисекунды.
           example: 500
     ScriptStep:
       type: object
@@ -597,6 +600,7 @@ components:
           description: В API 0.9.3 ошибка именованного шага JSON workflow содержит префикс «Шаг …» и исходную причину; код ошибки сохраняется.
         retryable:
           type: boolean
+          description: Только для диагностики доступности worker/health; с API 0.14.0 отсутствует в ошибках исполнения задания и не управляет retry_policy.
         step_index:
           type: integer
           description: Динамический номер выполнения шага, начиная с 1.

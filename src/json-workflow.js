@@ -273,13 +273,12 @@ export async function executeJsonWorkflow(options) {
             error.message = `Шаг «${step.title.trim()}»: ${error.message}`;
           }
         }
-        error.retryable = false;
         error.step_index ??= index + 1;
         error.action ??= step.action;
         error.step_id ??= identity.step_id;
         error.source_path ??= sourcePath;
         await emit({ type: 'step_failed', step_index: index, ...identity, action: step.action, duration_ms: Date.now() - start,
-          error: { code: error.code, message: error.message, retryable: false } });
+          error: { code: error.code, message: error.message } });
         throw error;
       } finally {
         clearTimeout(timer);
@@ -302,7 +301,6 @@ export async function executeJsonWorkflow(options) {
     if (!signal?.aborted && script.on_error) { try { await run(script.on_error, signal, 0, 'on_error'); } catch { /* Preserve the original error. */ } }
     try { if (script.capture_error_screenshot !== false && page && !page.isClosed()) await screenshot('workflow-error.png'); } catch { /* Preserve the original error. */ }
     error.partial_context = projection();
-    error.retryable = false;
     throw error;
   } finally {
     signal?.removeEventListener('abort', close);

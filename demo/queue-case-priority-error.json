@@ -11,75 +11,250 @@
     {
       "alias": "gate",
       "role": "setup",
-      "submit": { "type": "immediate" },
+      "submit": {
+        "type": "immediate"
+      },
       "payload": {
         "uid": "queue-case-1-gate",
         "priority": 100,
         "timeout_ms": 8000,
-        "retry_policy": { "max_attempts": 1, "backoff_ms": 100 },
+        "retry_policy": {
+          "max_attempts": 1,
+          "backoff_ms": 100
+        },
         "script": {
-          "title": "Подготовка демонстрационного окна",
+          "format": "json-workflow",
           "steps": [
-            { "title": "Занять исполнительный слот", "description": "Создаёт время, чтобы оба целевых задания одновременно появились в очереди.", "action": "noop", "duration_ms": 500 },
-            { "title": "Подготовить монитор", "description": "Оставляет очередь видимой на экране участников.", "action": "noop", "duration_ms": 500 },
-            { "title": "Стабилизировать состояние", "description": "Удерживает единственный слот перед сортировкой по приоритету.", "action": "noop", "duration_ms": 500 },
-            { "title": "Показать два ожидающих задания", "description": "Даёт время увидеть P10 и P50 в колонке «В очереди».", "action": "noop", "duration_ms": 500 },
-            { "title": "Завершить подготовку", "description": "Освобождает слот, после чего планировщик выбирает P10.", "action": "noop", "duration_ms": 500 },
-            { "title": "Передать управление очереди", "description": "Завершает техническое подготовительное задание.", "action": "noop", "duration_ms": 500 }
-          ]
+            {
+              "action": "wait",
+              "title": "Занять исполнительный слот",
+              "description": "Создаёт время, чтобы оба целевых задания одновременно появились в очереди.",
+              "params": {
+                "duration_ms": 500
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Подготовить монитор",
+              "description": "Оставляет очередь видимой на экране участников.",
+              "params": {
+                "duration_ms": 500
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Стабилизировать состояние",
+              "description": "Удерживает единственный слот перед сортировкой по приоритету.",
+              "params": {
+                "duration_ms": 500
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Показать два ожидающих задания",
+              "description": "Даёт время увидеть P10 и P50 в колонке «В очереди».",
+              "params": {
+                "duration_ms": 500
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Завершить подготовку",
+              "description": "Освобождает слот, после чего планировщик выбирает P10.",
+              "params": {
+                "duration_ms": 500
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Передать управление очереди",
+              "description": "Завершает техническое подготовительное задание.",
+              "params": {
+                "duration_ms": 500
+              }
+            }
+          ],
+          "output": {},
+          "title": "Подготовка демонстрационного окна"
         }
       }
     },
     {
       "alias": "low",
       "role": "observed",
-      "submit": { "type": "after_status", "job": "gate", "status": "running" },
+      "submit": {
+        "type": "after_status",
+        "job": "gate",
+        "status": "running"
+      },
       "payload": {
         "uid": "queue-case-1-low-P50",
         "priority": 50,
         "timeout_ms": 8000,
-        "retry_policy": { "max_attempts": 1, "backoff_ms": 100 },
+        "retry_policy": {
+          "max_attempts": 1,
+          "backoff_ms": 100
+        },
         "script": {
-          "title": "P50 · Плановая сверка архива",
+          "format": "json-workflow",
           "steps": [
-            { "title": "Принять плановое задание", "description": "Начинает фоновую сверку после завершения более приоритетного задания.", "action": "noop", "duration_ms": 350 },
-            { "title": "Прочитать параметры", "description": "Проверяет входные параметры фоновой операции.", "action": "noop", "duration_ms": 350 },
-            { "title": "Подготовить набор данных", "description": "Формирует тестовый набор без обращения к внешним системам.", "action": "noop", "duration_ms": 350 },
-            { "title": "Сверить записи", "description": "Имитирует основную работу низкоприоритетного задания.", "action": "noop", "duration_ms": 350 },
-            { "title": "Сформировать итог", "description": "Готовит успешный результат плановой сверки.", "action": "noop", "duration_ms": 350 },
-            { "title": "Завершить P50", "description": "Освобождает исполнительный слот с успешным статусом.", "action": "noop", "duration_ms": 350 }
-          ]
+            {
+              "action": "wait",
+              "title": "Принять плановое задание",
+              "description": "Начинает фоновую сверку после завершения более приоритетного задания.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Прочитать параметры",
+              "description": "Проверяет входные параметры фоновой операции.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Подготовить набор данных",
+              "description": "Формирует тестовый набор без обращения к внешним системам.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Сверить записи",
+              "description": "Имитирует основную работу низкоприоритетного задания.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Сформировать итог",
+              "description": "Готовит успешный результат плановой сверки.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Завершить P50",
+              "description": "Освобождает исполнительный слот с успешным статусом.",
+              "params": {
+                "duration_ms": 350
+              }
+            }
+          ],
+          "output": {},
+          "title": "P50 · Плановая сверка архива"
         }
       }
     },
     {
       "alias": "high",
       "role": "observed",
-      "submit": { "type": "after_status", "job": "gate", "status": "running" },
+      "submit": {
+        "type": "after_status",
+        "job": "gate",
+        "status": "running"
+      },
       "payload": {
         "uid": "queue-case-1-high-P10",
         "priority": 10,
         "timeout_ms": 8000,
-        "retry_policy": { "max_attempts": 2, "backoff_ms": 700 },
+        "retry_policy": {
+          "max_attempts": 2,
+          "backoff_ms": 700
+        },
         "script": {
-          "title": "P10 · Срочная обработка платёжного пакета",
+          "format": "json-workflow",
           "steps": [
-            { "title": "Принять срочное задание", "description": "Планировщик выбирает P10 раньше уже ожидающего P50.", "action": "noop", "duration_ms": 350 },
-            { "title": "Проверить структуру пакета", "description": "Имитирует синтаксическую проверку входного JSON.", "action": "noop", "duration_ms": 350 },
-            { "title": "Подготовить маршрут", "description": "Определяет тестовую УН для выполнения задания.", "action": "noop", "duration_ms": 350 },
-            { "title": "Загрузить настройки", "description": "Подготавливает параметры контролируемой проверки.", "action": "noop", "duration_ms": 350 },
-            { "title": "Проверить исполнительный плагин", "description": "Создаёт retryable ошибку PLUGIN_NOT_RUNNING и переводит P10 на повторную попытку.", "action": "auth_ecp", "params": { "plugin_running": false }, "duration_ms": 500 },
-            { "title": "Отправить пакет", "description": "Не выполняется после ошибки проверки адреса.", "action": "noop", "duration_ms": 350 }
-          ]
+            {
+              "action": "wait",
+              "title": "Принять срочное задание",
+              "description": "Планировщик выбирает P10 раньше уже ожидающего P50.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Проверить структуру пакета",
+              "description": "Имитирует синтаксическую проверку входного JSON.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Подготовить маршрут",
+              "description": "Определяет тестовую УН для выполнения задания.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Загрузить настройки",
+              "description": "Подготавливает параметры контролируемой проверки.",
+              "params": {
+                "duration_ms": 350
+              }
+            },
+            {
+              "action": "fail",
+              "title": "Проверить исполнительный плагин",
+              "description": "Контролируемая ошибка; повтор определяется только retry_policy.",
+              "params": {
+                "error_code": "PLUGIN_NOT_RUNNING",
+                "message": "Учебная ошибка исполнителя"
+              }
+            },
+            {
+              "action": "wait",
+              "title": "Отправить пакет",
+              "description": "Не выполняется после ошибки проверки адреса.",
+              "params": {
+                "duration_ms": 350
+              }
+            }
+          ],
+          "output": {},
+          "title": "P10 · Срочная обработка платёжного пакета"
         }
       }
     }
   ],
   "expectations": [
-    { "type": "simultaneously_queued", "jobs": ["low", "high"] },
-    { "type": "starts_before", "first": "high", "second": "low" },
-    { "type": "attempts", "job": "high", "count": 2 },
-    { "type": "terminal", "job": "high", "status": "failed", "error_code": "PLUGIN_NOT_RUNNING" },
-    { "type": "terminal", "job": "low", "status": "success" }
+    {
+      "type": "simultaneously_queued",
+      "jobs": [
+        "low",
+        "high"
+      ]
+    },
+    {
+      "type": "starts_before",
+      "first": "high",
+      "second": "low"
+    },
+    {
+      "type": "attempts",
+      "job": "high",
+      "count": 2
+    },
+    {
+      "type": "terminal",
+      "job": "high",
+      "status": "failed",
+      "error_code": "PLUGIN_NOT_RUNNING"
+    },
+    {
+      "type": "terminal",
+      "job": "low",
+      "status": "success"
+    }
   ]
 }

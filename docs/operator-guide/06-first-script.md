@@ -75,3 +75,5 @@ node docs/project-guide/tools/convert-recorder.mjs recording.json workflow.json
 ```
 
 Не заменяйте type:click на action:click вручную. Дальнейшие примеры, условия, циклы и перенос Recorder — [шпаргалка автора](../project-guide/01-scripts.md). Названия универсальных операций — GET /api/v2/interpreter/actions с API-ключом. Видео в комплекте нет; весь пример выше дан текстом для повторения.
+
+Повтор всего сценария задаётся retry_policy. Системный context.attempt позволяет продемонстрировать ошибку только на первой попытке — см. [политику повторов](13-retry-policy.md) и demo/retry.json.

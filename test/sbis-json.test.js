@@ -170,7 +170,7 @@ for (const scenario of ['validation_clean_protocol','validation_bundle_collision
       await assert.rejects(executeJsonWorkflow(opts), e => {
         partial = e.partial_context;
         assert.equal(e.code, ['wrong_file_path','duplicate','license_required','license_debt_denied','license_debt_price_changed','license_debt_late_price','license_debt_contradiction','unknown_send','send_three_partial'].includes(scenario)?'REPORTS_FAILED':codes[scenario]);
-        assert.equal(e.retryable, false);
+        assert.equal(Object.hasOwn(e, 'retryable'), false);
         if (scenario === 'workstation_not_ready') {
           assert.match(e.message, /Шаг «Дождаться списка подписей либо завершения автоматического входа»: Waiting failed: 250ms exceeded/);
           assert.equal(e.step_id, 'sbis_run_reports_then_11');

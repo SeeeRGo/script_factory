@@ -31,7 +31,6 @@ export class InterpreterError extends Error {
     this.name = 'InterpreterError';
     this.code = code;
     this.statusCode = options.statusCode ?? 400;
-    this.retryable = options.retryable ?? false;
     this.details = options.details;
   }
 }
@@ -234,7 +233,6 @@ export function createDefaultStepRegistry(options = {}) {
         if (typeof fetchImpl !== 'function') {
           throw new InterpreterError(ERROR_CODES.IP_LOOKUP_ERROR, 'Интернет-проверка IP недоступна в текущем окружении', {
             statusCode: 503,
-            retryable: true
           });
         }
         let response;
@@ -244,14 +242,12 @@ export function createDefaultStepRegistry(options = {}) {
           throw new InterpreterError(ERROR_CODES.IP_LOOKUP_ERROR, `Не удалось получить публичный IP через ${providerUrl}`, {
             cause: error,
             statusCode: 502,
-            retryable: true,
             details: { service_url: providerUrl }
           });
         }
         if (!response.ok) {
           throw new InterpreterError(ERROR_CODES.IP_LOOKUP_ERROR, `Сервис проверки IP вернул HTTP ${response.status}`, {
             statusCode: 502,
-            retryable: response.status >= 500,
             details: { service_url: providerUrl, http_status: response.status }
           });
         }
@@ -266,7 +262,6 @@ export function createDefaultStepRegistry(options = {}) {
       if (!isIP(String(currentIp || '').trim())) {
         throw new InterpreterError(ERROR_CODES.IP_LOOKUP_ERROR, 'Интернет-сервис вернул некорректный IP-адрес', {
           statusCode: 502,
-          retryable: true,
           details: { service_url: providerUrl, response_value: currentIp ?? null }
         });
       }
@@ -289,7 +284,7 @@ export function createDefaultStepRegistry(options = {}) {
       return { browser_launched: true, browser: input.params.browser ?? 'chromium' };
     })
     .register('navigate', async (input) => {
-      failWhen(input.params, ['fail', 'navigation_failed'], ERROR_CODES.AUTH_ERROR, 'Ошибка перехода в браузере', { retryable: true });
+      failWhen(input.params, ['fail', 'navigation_failed'], ERROR_CODES.AUTH_ERROR, 'Ошибка перехода в браузере');
       await simulate(input);
       return { current_url: input.params.url ?? input.context.current_url ?? null };
     })
@@ -297,7 +292,6 @@ export function createDefaultStepRegistry(options = {}) {
       if (input.params.plugin_running === false || input.attempt <= Number(input.params.fail_attempts || 0)) {
         throw new InterpreterError(ERROR_CODES.PLUGIN_NOT_RUNNING, 'СБИС Плагин не запущен', {
           statusCode: 503,
-          retryable: true,
           details: { attempt: input.attempt }
         });
       }
@@ -342,7 +336,6 @@ export function createDefaultStepRegistry(options = {}) {
     .register('upload_files', async (input) => {
       failWhen(input.params, ['fail', 'upload_failed'], ERROR_CODES.UPLOAD_ERROR, 'Не удалось загрузить файлы', {
         statusCode: 502,
-        retryable: true
       });
       const files = input.params.files ?? input.context.found_files;
       if (!Array.isArray(files) || files.length === 0) {
@@ -354,7 +347,6 @@ export function createDefaultStepRegistry(options = {}) {
     .register('download_files', async (input) => {
       failWhen(input.params, ['fail', 'download_failed'], ERROR_CODES.DOWNLOAD_ERROR, 'Не удалось скачать файлы', {
         statusCode: 502,
-        retryable: true
       });
       const files = Array.isArray(input.params.files)
         ? input.params.files
@@ -375,7 +367,6 @@ export function createDefaultStepRegistry(options = {}) {
         if (typeof fetchImpl !== 'function') {
           throw new InterpreterError(ERROR_CODES.DOWNLOAD_ERROR, 'HTTP-загрузка недоступна в текущем окружении', {
             statusCode: 503,
-            retryable: true
           });
         }
         artifacts = [];
@@ -402,14 +393,12 @@ export function createDefaultStepRegistry(options = {}) {
             throw new InterpreterError(ERROR_CODES.DOWNLOAD_ERROR, `Не удалось скачать файл: ${sourceUrl.href}`, {
               cause: error,
               statusCode: 502,
-              retryable: true,
               details: { source_url: sourceUrl.href }
             });
           }
           if (!response.ok) {
             throw new InterpreterError(ERROR_CODES.DOWNLOAD_ERROR, `Источник файла вернул HTTP ${response.status}`, {
               statusCode: 502,
-              retryable: response.status >= 500,
               details: { source_url: sourceUrl.href, http_status: response.status }
             });
           }
@@ -469,7 +458,6 @@ export function createDefaultStepRegistry(options = {}) {
       }
       failWhen(input.params, ['fail', 'submit_failed'], ERROR_CODES.UPLOAD_ERROR, 'Не удалось отправить отчёт', {
         statusCode: 502,
-        retryable: true
       });
       await simulate(input);
       return { submitted: true, submitted_at: new Date().toISOString() };
@@ -501,7 +489,6 @@ export function createDefaultStepRegistry(options = {}) {
             } else {
               throw new InterpreterError(ERROR_CODES.UPLOAD_ERROR, 'Не удалось переместить обработанные файлы', {
                 statusCode: 500,
-                retryable: error?.code === 'EBUSY',
                 details: { file, target, cause: error?.code }
               });
             }
@@ -723,7 +710,6 @@ function normalizeError(error) {
   return new InterpreterError(error?.code || 'INTERNAL_ERROR', error?.message || 'Непредвиденная ошибка интерпретатора', {
     cause: error,
     statusCode: error?.statusCode ?? 500,
-    retryable: error?.retryable ?? false,
     details: error?.details
   });
 }
@@ -737,7 +723,6 @@ function stepWithTimeout(registry, action, input, timeoutMs) {
   const timer = setTimeout(() => {
     controller.abort(new InterpreterError(ERROR_CODES.TIMEOUT_ERROR, `Шаг ${action} превысил тайм-аут ${timeoutMs} мс`, {
       statusCode: 408,
-      retryable: true,
       details: { action, timeout_ms: timeoutMs }
     }));
   }, timeoutMs);
@@ -844,7 +829,7 @@ export async function executeScript(options) {
         step_id: step.id ?? `step_${index + 1}`,
         action,
         duration_ms: Date.now() - stepStartedAt,
-        error: { code: error.code, message: error.message, retryable: error.retryable, details: error.details }
+        error: { code: error.code, message: error.message, details: error.details }
       });
       throw error;
     }

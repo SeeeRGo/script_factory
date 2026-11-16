@@ -133,8 +133,7 @@ Invoke-WebRequest ($base + $a.api_url) -TimeoutSec 10 -Headers $headers -UseBasi
   "status": "failed",
   "error": {
     "code": "REPORTING_LICENSE_REQUIRED",
-    "message": "СБИС блокирует отправку: отсутствует лицензия Отчетность",
-    "retryable": false
+    "message": "СБИС блокирует отправку: отсутствует лицензия Отчетность"
   },
   "result": { "Rezult_1": { "state": "license_required" } }
 }
@@ -195,7 +194,7 @@ PUT /system/config меняет max_parallel_jobs, default_job_timeout_ms, job_r
 
 ## 6. Финансовое подтверждение и подтверждение приёма
 
-JSON 2.0.3 различает REPORTING_LICENSE_REQUIRED (нет подходящей лицензии), REPORTING_LICENSE_CONFIRMATION_REQUIRED (требуется отдельное решение о «В долг») и LICENSE_PRICE_CHANGED (цена не совпала с согласованной). Последние два возвращают Rezult_1.state=license_confirmation_required; license_amount/license_currency в соответствующем Rezult_N показывают прочитанную цену, когда она распознана. Автоповтора нет. Boolean license_debt_enabled и числовая license_debt_expected_amount передаются в context только после отдельного согласования финансовых условий.
+JSON 2.0.3 различает REPORTING_LICENSE_REQUIRED (нет подходящей лицензии), REPORTING_LICENSE_CONFIRMATION_REQUIRED (требуется отдельное решение о «В долг») и LICENSE_PRICE_CHANGED (цена не совпала с согласованной). Последние два возвращают Rezult_1.state=license_confirmation_required; license_amount/license_currency в соответствующем Rezult_N показывают прочитанную цену, когда она распознана. Повтор задания определяется retry_policy; сценарий не нажимает финансовые кнопки повторно самостоятельно. Boolean license_debt_enabled и числовая license_debt_expected_amount передаются в context только после отдельного согласования финансовых условий.
 
 В сценарии 3.0.0 Rezult_N.state=sent относится только к конкретному XML; report_state=archived подтверждает его архивирование. Rezult_N.sbis_status содержит фактический статус: «Отчет отправлен, но еще не считается сданным» или «Отчет сдан». Наличие протокола внутренней проверки не заменяет квитанцию ведомства. Отдельное диагностическое задание reconcile_and_archive может только сверять уже выполненные отправки и архивировать рабочие копии; оно не отправляет отчёты повторно.
 
@@ -268,7 +267,7 @@ screenshot, screenshot_stage, screenshot_error, file_count, bundle_verified
 После ошибки проверки XML перемещаются в `context.error_dir` (по умолчанию `C:/Отчеты_с_ошибками`; при явном null — в `loaded_dir`), статус остаётся `validation_failed`. `error_path`, `error_protocol_path` и `error_path_N` показывают фактическое расположение файлов; `validation_protocol` остаётся ссылкой на скачиваемый API-артефакт. При сбое переноса смотрите также `job.error` и `Rezult_N.error_code/error_message`.
 
 
-Начиная с API 0.9.8 / JSON СБИС 3.6.0 ожидаемые ошибки отдельных отчётов не останавливают обход. После обхода `job.status=failed`, `job.error.code=REPORTS_FAILED`, если были перехваченные ошибки. Для каждого `Rezult_N` анализируйте его собственные `state`, `error_code`, `error_message`: часть отчётов могла быть успешно отправлена. Не повторяйте всё задание автоматически по общему коду: отчёты со статусом `sent` уже отправлены, а `requires_reconciliation` требует сверки. Повторная загрузка `REPORT_ALREADY_IMPORTED` переносится в `error_dir` и не считается подтверждением отправки.
+Начиная с API 0.9.8 / JSON СБИС 3.6.0 ожидаемые ошибки отдельных отчётов не останавливают обход. После обхода `job.status=failed`, `job.error.code=REPORTS_FAILED`, если были перехваченные ошибки. Для каждого `Rezult_N` анализируйте его собственные `state`, `error_code`, `error_message`: часть отчётов могла быть успешно отправлена. С API 0.14.0 число повторов всего задания задаёт отправитель через retry_policy; API не блокирует их по REPORTS_FAILED. При выборе политики учитывайте: отчёты со статусом `sent` уже отправлены, а `requires_reconciliation` требует сверки. Повторная загрузка `REPORT_ALREADY_IMPORTED` переносится в `error_dir` и не считается подтверждением отправки.
 
 
 JSON СБИС 3.7.0 / API 0.9.11 добавляет общие поля `screenshot`, `screenshot_stage`, `screenshot_error` в каждый Rezult_N (перед file_count/bundle_verified). screenshot содержит ссылку на последний снимок своего отчёта; скачать его можно через соответствующий элемент result.artifacts. При недоступном браузере ссылка null и указана причина. Снимки не обработанных отчётов отсутствуют. `parameters.timeout_ms` остаётся общим лимитом всего задания, а не лимитом каждого отчёта.
@@ -296,3 +295,7 @@ API 0.9.14 / JSON СБИС 3.10.0 снимает ограничение Replay �
 JSON 3.12.0: ошибка проверки в TXT и Rezult_N.error_message состоит из названий ошибок и пояснений СБИС. Служебные заголовки панели, счётчики, дата проверки и названия групп вне строк ошибок не включаются. По умолчанию выбираются journal_check_name и journal_check_text внутри validation_error_selector. Для своего UI можно задать validation_error_description_selector; если внутри строки нет таких элементов, используется текст строки ошибки целиком. ИНН, имя файла и ведомство по-прежнему находятся в отдельных реквизитах результата. Скриншоты не редактируются и показывают исходный экран.
 
 Для API 0.11.0 учитывайте [разделение API и интерактивного worker](12-api-worker-startup.md): API запускается при старте Windows, готовность исполнения проверяется отдельно через `/health`. Для первоначального внедрения и проверки обновления нужен вошедший пользователь worker.
+
+## Повторы в API 0.14.0
+
+Все исполнители используют переданную retry_policy. max_attempts включает первую попытку, backoff_ms — фиксированная пауза. Поле retryable убрано из ошибок выполнения. Отличайте retry_policy задания от callback.max_attempts доставки. [Подробности, восстановление и каталог каждой попытки](../operator-guide/13-retry-policy.md).

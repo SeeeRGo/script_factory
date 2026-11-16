@@ -5,12 +5,90 @@
     "backoff_ms": 200
   },
   "script": {
+    "format": "json-workflow",
     "steps": [
       {
-        "action": "noop",
-        "timeout_ms": 250,
-        "delay_ms": 1200
+        "action": "wait",
+        "title": "Подготовка тайм-аута: этап 1",
+        "description": "Подготовка тайм-аута: этап 1",
+        "params": {
+          "duration_ms": 50
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Подготовка тайм-аута: этап 2",
+        "description": "Подготовка тайм-аута: этап 2",
+        "params": {
+          "duration_ms": 50
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Подготовка тайм-аута: этап 3",
+        "description": "Подготовка тайм-аута: этап 3",
+        "params": {
+          "duration_ms": 50
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Подготовка тайм-аута: этап 4",
+        "description": "Подготовка тайм-аута: этап 4",
+        "params": {
+          "duration_ms": 50
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Превысить тайм-аут шага",
+        "description": "Превысить тайм-аут шага",
+        "params": {
+          "duration_ms": 1200
+        },
+        "timeout_ms": 250
+      },
+      {
+        "action": "wait",
+        "title": "Не выполняется после тайм-аута: этап 1",
+        "description": "Не выполняется после тайм-аута: этап 1",
+        "params": {
+          "duration_ms": 50
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Не выполняется после тайм-аута: этап 2",
+        "description": "Не выполняется после тайм-аута: этап 2",
+        "params": {
+          "duration_ms": 50
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Не выполняется после тайм-аута: этап 3",
+        "description": "Не выполняется после тайм-аута: этап 3",
+        "params": {
+          "duration_ms": 50
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Не выполняется после тайм-аута: этап 4",
+        "description": "Не выполняется после тайм-аута: этап 4",
+        "params": {
+          "duration_ms": 50
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Не выполняется после тайм-аута: этап 5",
+        "description": "Не выполняется после тайм-аута: этап 5",
+        "params": {
+          "duration_ms": 50
+        }
       }
-    ]
+    ],
+    "output": {}
   }
 }

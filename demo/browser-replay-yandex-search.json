@@ -1,85 +1,270 @@
 {
-  "title": "Этап 3 · Поиск в Яндексе и переход по первой ссылке",
-  "timeout": 12000,
+  "format": "json-workflow",
   "steps": [
     {
+      "action": "browser_launch",
+      "title": "Запустить браузер",
+      "description": "Запустить браузер",
+      "params": {}
+    },
+    {
+      "action": "browser_steps",
       "title": "Настроить окно Chromium",
-      "description": "Устанавливает размер окна для наглядного показа поиска.",
-      "type": "setViewport",
-      "width": 1400,
-      "height": 860,
-      "deviceScaleFactor": 1,
-      "isMobile": false,
-      "hasTouch": false,
-      "isLandscape": false
+      "description": "Настроить окно Chromium",
+      "params": {
+        "timeout_ms": 12000,
+        "steps": [
+          {
+            "title": "Настроить окно Chromium",
+            "description": "Устанавливает размер окна для наглядного показа поиска.",
+            "type": "setViewport",
+            "width": 1400,
+            "height": 860,
+            "deviceScaleFactor": 1,
+            "isMobile": false,
+            "hasTouch": false,
+            "isLandscape": false
+          }
+        ]
+      }
     },
     {
+      "action": "browser_steps",
       "title": "Открыть Яндекс",
-      "description": "Переходит на главную страницу поисковой системы.",
-      "type": "navigate",
-      "url": "https://ya.ru/"
+      "description": "Открыть Яндекс",
+      "params": {
+        "timeout_ms": 12000,
+        "steps": [
+          {
+            "title": "Открыть Яндекс",
+            "description": "Переходит на главную страницу поисковой системы.",
+            "type": "navigate",
+            "url": "https://ya.ru/"
+          }
+        ]
+      }
     },
     {
+      "action": "browser_steps",
       "title": "Дождаться поисковой строки",
-      "description": "Проверяет готовность формы поиска.",
-      "type": "waitForElement",
-      "selectors": [["#text"], ["input[name=\"text\"]"], ["aria/Запрос"]],
-      "visible": true
+      "description": "Дождаться поисковой строки",
+      "params": {
+        "timeout_ms": 12000,
+        "steps": [
+          {
+            "title": "Дождаться поисковой строки",
+            "description": "Проверяет готовность формы поиска.",
+            "type": "waitForElement",
+            "selectors": [
+              [
+                "#text"
+              ],
+              [
+                "input[name=\"text\"]"
+              ],
+              [
+                "aria/Запрос"
+              ]
+            ],
+            "visible": true
+          }
+        ]
+      }
     },
     {
+      "action": "browser_steps",
       "title": "Выбрать поисковую строку",
-      "description": "Устанавливает фокус в поле запроса.",
-      "type": "click",
-      "selectors": [["#text"], ["input[name=\"text\"]"], ["aria/Запрос"]],
-      "offsetX": 240,
-      "offsetY": 22
+      "description": "Выбрать поисковую строку",
+      "params": {
+        "timeout_ms": 12000,
+        "steps": [
+          {
+            "title": "Выбрать поисковую строку",
+            "description": "Устанавливает фокус в поле запроса.",
+            "type": "click",
+            "selectors": [
+              [
+                "#text"
+              ],
+              [
+                "input[name=\"text\"]"
+              ],
+              [
+                "aria/Запрос"
+              ]
+            ],
+            "offsetX": 240,
+            "offsetY": 22
+          }
+        ]
+      }
     },
     {
+      "action": "browser_steps",
       "title": "Ввести поисковый запрос",
-      "description": "Вводит демонстрационный текст из context.search_query.",
-      "type": "change",
-      "selectors": [["#text"], ["input[name=\"text\"]"], ["aria/Запрос"]],
-      "value": "{{search_query}}"
+      "description": "Ввести поисковый запрос",
+      "params": {
+        "timeout_ms": 12000,
+        "steps": [
+          {
+            "title": "Ввести поисковый запрос",
+            "description": "Вводит демонстрационный текст из context.search_query.",
+            "type": "change",
+            "selectors": [
+              [
+                "#text"
+              ],
+              [
+                "input[name=\"text\"]"
+              ],
+              [
+                "aria/Запрос"
+              ]
+            ],
+            "value": "{{search_query}}"
+          }
+        ]
+      }
     },
     {
+      "action": "browser_steps",
       "title": "Запустить поиск",
-      "description": "Нажимает Enter в поисковой строке и не зависит от варианта кнопки «Найти» или «Алиса AI».",
-      "type": "keyDown",
-      "key": "Enter"
+      "description": "Запустить поиск",
+      "params": {
+        "timeout_ms": 12000,
+        "steps": [
+          {
+            "title": "Запустить поиск",
+            "description": "Нажимает Enter в поисковой строке и не зависит от варианта кнопки «Найти» или «Алиса AI».",
+            "type": "keyDown",
+            "key": "Enter"
+          }
+        ]
+      }
     },
     {
+      "action": "browser_steps",
       "title": "Отпустить клавишу Enter",
-      "description": "Завершает клавиатурное действие после отправки поисковой формы.",
-      "type": "keyUp",
-      "key": "Enter"
+      "description": "Отпустить клавишу Enter",
+      "params": {
+        "timeout_ms": 12000,
+        "steps": [
+          {
+            "title": "Отпустить клавишу Enter",
+            "description": "Завершает клавиатурное действие после отправки поисковой формы.",
+            "type": "keyUp",
+            "key": "Enter"
+          }
+        ]
+      }
     },
     {
+      "action": "browser_steps",
       "title": "Дождаться результатов",
-      "description": "Ожидает появления первого органического результата.",
-      "type": "waitForElement",
-      "selectors": [["#search-result"], [".serp-list"], [".Organic"]],
-      "visible": true
+      "description": "Дождаться результатов",
+      "params": {
+        "timeout_ms": 12000,
+        "steps": [
+          {
+            "title": "Дождаться результатов",
+            "description": "Ожидает появления первого органического результата.",
+            "type": "waitForElement",
+            "selectors": [
+              [
+                "#search-result"
+              ],
+              [
+                ".serp-list"
+              ],
+              [
+                ".Organic"
+              ]
+            ],
+            "visible": true
+          }
+        ]
+      }
     },
     {
+      "action": "browser_steps",
       "title": "Найти первую ссылку",
-      "description": "Проверяет наличие кликабельного заголовка первого органического результата.",
-      "type": "waitForElement",
-      "selectors": [[".Organic .OrganicTitle-Link"], ["#search-result > li a.Link"], ["li.serp-item a[href]"]],
-      "visible": true
+      "description": "Найти первую ссылку",
+      "params": {
+        "timeout_ms": 12000,
+        "steps": [
+          {
+            "title": "Найти первую ссылку",
+            "description": "Проверяет наличие кликабельного заголовка первого органического результата.",
+            "type": "waitForElement",
+            "selectors": [
+              [
+                ".Organic .OrganicTitle-Link"
+              ],
+              [
+                "#search-result > li a.Link"
+              ],
+              [
+                "li.serp-item a[href]"
+              ]
+            ],
+            "visible": true
+          }
+        ]
+      }
     },
     {
+      "action": "browser_steps",
       "title": "Открыть первый результат",
-      "description": "Переходит по первой органической ссылке из результатов поиска.",
-      "type": "click",
-      "selectors": [[".Organic .OrganicTitle-Link"], ["#search-result > li a.Link"], ["li.serp-item a[href]"]],
-      "offsetX": 120,
-      "offsetY": 18
+      "description": "Открыть первый результат",
+      "params": {
+        "timeout_ms": 12000,
+        "steps": [
+          {
+            "title": "Открыть первый результат",
+            "description": "Переходит по первой органической ссылке из результатов поиска.",
+            "type": "click",
+            "selectors": [
+              [
+                ".Organic .OrganicTitle-Link"
+              ],
+              [
+                "#search-result > li a.Link"
+              ],
+              [
+                "li.serp-item a[href]"
+              ]
+            ],
+            "offsetX": 120,
+            "offsetY": 18
+          }
+        ]
+      }
     },
     {
+      "action": "browser_steps",
       "title": "Дождаться целевой страницы",
-      "description": "Ожидает завершения навигации после клика по результату.",
-      "type": "waitForExpression",
-      "expression": "location.hostname !== 'ya.ru' && !location.hostname.endsWith('.yandex.ru')"
+      "description": "Дождаться целевой страницы",
+      "params": {
+        "timeout_ms": 12000,
+        "steps": [
+          {
+            "title": "Дождаться целевой страницы",
+            "description": "Ожидает завершения навигации после клика по результату.",
+            "type": "waitForExpression",
+            "expression": "location.hostname !== 'ya.ru' && !location.hostname.endsWith('.yandex.ru')"
+          }
+        ]
+      }
+    },
+    {
+      "action": "browser_screenshot",
+      "title": "Сохранить итоговый экран",
+      "description": "Сохраняет итоговый экран браузера как артефакт workflow.",
+      "params": {
+        "filename": "workflow-final.png"
+      }
     }
-  ]
+  ],
+  "output": {},
+  "title": "Этап 3 · Поиск в Яндексе и переход по первой ссылке"
 }

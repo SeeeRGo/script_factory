@@ -29,10 +29,11 @@ for (const priority of priorities) {
     timeout_ms: 10000,
     retry_policy: { max_attempts: 1, backoff_ms: 200 },
     script: {
+      format: 'json-workflow',
       steps: [
-        { action: 'launch_browser', delay_ms: 900 },
-        { action: 'auth_ecp', delay_ms: 900 },
-        { action: 'navigate', delay_ms: 900, params: { url: 'https://online.sbis.ru' } }
+        { action: 'wait', title: 'Подготовить задание', params: { duration_ms: 900 } },
+        { action: 'wait', title: 'Выполнить учебную работу', params: { duration_ms: 900 } },
+        { action: 'wait', title: 'Завершить задание', params: { duration_ms: 900 } }
       ]
     }
   };

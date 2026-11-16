@@ -68,7 +68,7 @@ function normalizeBrowserSettings({env=process.env,legacy={},script={},context={
 }
 export function resolveBrowserSettings(options={}) {
   try { return normalizeBrowserSettings(options); }
-  catch(error) { throw new InterpreterError('INVALID_BROWSER_OPTIONS',error.message,{statusCode:400,retryable:false}); }
+  catch(error) { throw new InterpreterError('INVALID_BROWSER_OPTIONS',error.message,{statusCode:400}); }
 }
 export async function prepareBrowserLaunch(settings,allowedRoots,signal){
   const s={...settings};

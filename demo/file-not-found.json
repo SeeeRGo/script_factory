@@ -5,26 +5,96 @@
     "backoff_ms": 200
   },
   "script": {
-    "context": {
-      "current_ip": "192.168.1.10",
-      "root_dir": "./demo-data/empty",
-      "prefixes": ["FNS"]
-    },
+    "format": "json-workflow",
     "steps": [
       {
-        "action": "check_ip",
-        "delay_ms": 300,
-        "params": { "expected_ip": "192.168.1.10" }
-      },
-      {
-        "action": "find_files",
-        "delay_ms": 300,
+        "action": "wait",
+        "title": "Подготовка поиска: этап 1",
+        "description": "Подготовка поиска: этап 1",
         "params": {
-          "directory": "{{root_dir}}",
-          "prefixes": "{{prefixes}}"
+          "duration_ms": 100
         }
       },
-      { "action": "launch_browser" }
-    ]
+      {
+        "action": "wait",
+        "title": "Подготовка поиска: этап 2",
+        "description": "Подготовка поиска: этап 2",
+        "params": {
+          "duration_ms": 100
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Подготовка поиска: этап 3",
+        "description": "Подготовка поиска: этап 3",
+        "params": {
+          "duration_ms": 100
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Подготовка поиска: этап 4",
+        "description": "Подготовка поиска: этап 4",
+        "params": {
+          "duration_ms": 100
+        }
+      },
+      {
+        "action": "files_list",
+        "title": "Прочитать пустой каталог",
+        "description": "Прочитать пустой каталог",
+        "params": {
+          "directory": "{{root_dir}}"
+        },
+        "save_as": "files"
+      },
+      {
+        "action": "compute",
+        "title": "Проверить найденные файлы",
+        "description": "Проверить найденные файлы",
+        "params": {
+          "expression": "context.files.length>0"
+        },
+        "save_as": "found"
+      },
+      {
+        "action": "assert",
+        "title": "Проверить наличие тестовых файлов",
+        "description": "Проверить наличие тестовых файлов",
+        "params": {
+          "condition": "{{found}}",
+          "error_code": "FILE_NOT_FOUND",
+          "message": "В учебном каталоге нет файлов"
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Не выполняется после ошибки: этап 1",
+        "description": "Не выполняется после ошибки: этап 1",
+        "params": {
+          "duration_ms": 100
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Не выполняется после ошибки: этап 2",
+        "description": "Не выполняется после ошибки: этап 2",
+        "params": {
+          "duration_ms": 100
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Не выполняется после ошибки: этап 3",
+        "description": "Не выполняется после ошибки: этап 3",
+        "params": {
+          "duration_ms": 100
+        }
+      }
+    ],
+    "output": {},
+    "context": {
+      "root_dir": "./demo-data/empty"
+    }
   }
 }

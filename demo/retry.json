@@ -5,18 +5,68 @@
     "backoff_ms": 700
   },
   "script": {
+    "format": "json-workflow",
     "steps": [
-      { "action": "launch_browser", "delay_ms": 300 },
       {
-        "action": "auth_ecp",
-        "delay_ms": 300,
-        "params": { "fail_attempts": 1 }
+        "action": "wait",
+        "title": "Начать попытку",
+        "description": "Начать попытку",
+        "params": {
+          "duration_ms": 200
+        }
       },
       {
-        "action": "navigate",
-        "delay_ms": 300,
-        "params": { "url": "https://online.sbis.ru" }
+        "action": "compute",
+        "title": "Проверить номер попытки",
+        "description": "Проверить номер попытки",
+        "params": {
+          "expression": "context.attempt===1"
+        },
+        "save_as": "first_attempt"
+      },
+      {
+        "action": "if",
+        "title": "Создать ошибку только на первой попытке",
+        "description": "API повторяет весь workflow по retry_policy.",
+        "params": {
+          "condition": "{{first_attempt}}"
+        },
+        "then": [
+          {
+            "action": "fail",
+            "title": "Контролируемая ошибка",
+            "description": "Контролируемая ошибка",
+            "params": {
+              "error_code": "DEMO_RETRY",
+              "message": "Первая попытка завершается учебной ошибкой"
+            }
+          }
+        ],
+        "else": []
+      },
+      {
+        "action": "artifact_write",
+        "title": "Сохранить успешный результат",
+        "description": "Сохранить успешный результат",
+        "params": {
+          "filename": "retry-result.txt",
+          "text": "Вторая попытка успешно выполнена"
+        }
+      },
+      {
+        "action": "set",
+        "title": "Вернуть номер попытки",
+        "description": "Вернуть номер попытки",
+        "params": {
+          "result": {
+            "state": "completed",
+            "attempt": "{{attempt}}"
+          }
+        }
       }
-    ]
+    ],
+    "output": {
+      "Rezult_1": "{{result}}"
+    }
   }
 }

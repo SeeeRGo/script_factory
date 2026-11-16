@@ -314,3 +314,9 @@ From version 0.6.14, `format: "json-workflow"` runs loops, conditions, reusable 
 Запуск API при включении Windows, отдельный worker и диагностика ожидания входа: [инструкция](docs/project-guide/12-api-worker-startup.md).
 
 Комплект пошаговых инструкций для одной/десяти УН, обновлений из Git, настройки env и первого сценария: [инструкции администратора](docs/operator-guide/README.md).
+
+## Retry policy and workflow demos (API 0.14.0)
+
+All accepted script formats use the caller’s `retry_policy`: `max_attempts` counts the first run, and `backoff_ms` is a fixed delay. Execution errors no longer carry a `retryable` flag. A retry restarts the entire script; cancellation and the attempt deadline stop the job. Worker readiness hints in `/health` remain separate. See [retry policy](docs/operator-guide/13-retry-policy.md).
+
+Executable demos, including the studio examples, now use `format: "json-workflow"`. Browser Recorder steps run inside `browser_steps`. Files ending in `.recorder.json` and `recorder-conversion-source.json` are retained as Recorder source examples. Legacy `json-steps` requests remain accepted for compatibility.

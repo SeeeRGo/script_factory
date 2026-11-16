@@ -15,72 +15,143 @@
   },
   "context": {},
   "script": {
-    "default_step_timeout_ms": 30000,
+    "format": "json-workflow",
     "steps": [
       {
-        "id": "prepare",
-        "title": "Подготовить диагностическое задание",
-        "description": "Начинает полный цикл загрузки с подробным уровнем логирования.",
-        "action": "noop",
-        "duration_ms": 50
+        "action": "browser_launch",
+        "title": "Запустить браузер",
+        "description": "Запустить браузер",
+        "params": {}
       },
       {
-        "id": "download",
-        "title": "Скачать тестовый документ",
-        "description": "Загружает локальный демо-документ через HTTP сервиса и сохраняет его как артефакт.",
-        "action": "download_files",
+        "action": "browser_steps",
+        "title": "Открыть локальную страницу сервиса",
+        "description": "Открыть локальную страницу сервиса",
         "params": {
-          "save": true,
-          "max_bytes": 1048576,
-          "files": [
+          "steps": [
             {
-              "filename": "stage4-download-demo.html",
-              "source_url": "{{service_base_url}}/demo/files/stage4-download-demo.html",
-              "mime_type": "text/html"
+              "type": "navigate",
+              "url": "{{service_base_url}}/demo/mail"
             }
           ]
         }
       },
       {
-        "id": "verify-path",
-        "title": "Проверить сохранение",
-        "description": "Находит сохранённый документ в каталоге артефактов задания.",
-        "action": "find_files",
+        "action": "set",
+        "title": "Задать файлы учебного набора",
+        "description": "Задать файлы учебного набора",
         "params": {
-          "directory": "{{download_dir}}",
-          "prefixes": ["stage4-download-demo"]
+          "download_sources": [
+            {
+              "filename": "stage4-download-demo.html",
+              "mime": "text/html"
+            }
+          ]
         }
       },
       {
-        "id": "verify-content",
-        "title": "Прочитать сохранённый документ",
-        "description": "Подтверждает, что содержимое файла доступно непосредственно на УН.",
-        "action": "read_text_file",
+        "action": "for_each",
+        "title": "Скачать файлы через браузер и сохранить",
+        "description": "Загружает реальные байты с учебного HTTP-сервера и записывает артефакты.",
+        "as": "source",
         "params": {
-          "path": "{{downloaded_files.0}}",
-          "max_bytes": 1048576
-        }
-      },
-      {
-        "id": "open",
-        "title": "Открыть документ в браузере",
-        "description": "Открывает сохранённый документ и создаёт диагностический снимок экрана.",
-        "action": "open_file",
-        "params": {
-          "path": "{{downloaded_files.0}}"
+          "items": "{{download_sources}}"
         },
-        "timeout_ms": 60000
+        "steps": [
+          {
+            "action": "browser_eval",
+            "title": "Прочитать HTTP-ответ",
+            "description": "Прочитать HTTP-ответ",
+            "params": {
+              "expression": "(async()=>{ const r=await fetch(context.service_base_url+\"/demo/files/\"+context.source.filename); if(!r.ok)throw new Error(\"HTTP \"+r.status); return await r.text(); })()"
+            },
+            "save_as": "download_body"
+          },
+          {
+            "action": "artifact_write",
+            "title": "Сохранить скачанный файл",
+            "description": "Сохранить скачанный файл",
+            "params": {
+              "filename": "{{source.filename}}",
+              "text": "{{download_body}}",
+              "mime_type": "{{source.mime}}"
+            }
+          }
+        ]
       },
       {
-        "id": "controlled-failure",
-        "title": "Сформировать контролируемую ошибку",
-        "description": "После успешной загрузки и открытия завершает задание предсказуемой ошибкой для проверки логов и callback.",
-        "action": "validate_report",
+        "action": "files_list",
+        "title": "Найти сохранённые файлы",
+        "description": "Найти сохранённые файлы",
         "params": {
-          "valid": false,
-          "error_message": "Тестовая ошибка download-save-open2"
+          "directory": "{{artifact_dir}}"
+        },
+        "save_as": "saved_files"
+      },
+      {
+        "action": "compute",
+        "title": "Выбрать документ для просмотра",
+        "description": "Выбрать документ для просмотра",
+        "params": {
+          "expression": "context.saved_files.find(f=>f.filename===context.download_sources[0].filename)"
+        },
+        "save_as": "saved_file"
+      },
+      {
+        "action": "file_read",
+        "title": "Прочитать сохранённый документ",
+        "description": "Прочитать сохранённый документ",
+        "params": {
+          "file": "{{saved_file}}"
+        },
+        "save_as": "file_content"
+      },
+      {
+        "action": "compute",
+        "title": "Получить адрес локального файла",
+        "description": "Получить адрес локального файла",
+        "params": {
+          "expression": "(context.saved_file.path.startsWith(\"/\")?\"file://\":\"file:///\")+context.saved_file.path.replace(/\\\\/g,\"/\")"
+        },
+        "save_as": "opened_url"
+      },
+      {
+        "action": "browser_steps",
+        "title": "Открыть сохранённый документ",
+        "description": "Открыть сохранённый документ",
+        "params": {
+          "steps": [
+            {
+              "type": "navigate",
+              "url": "{{opened_url}}"
+            }
+          ]
+        }
+      },
+      {
+        "action": "browser_screenshot",
+        "title": "Сохранить экран документа",
+        "description": "Сохранить экран документа",
+        "params": {
+          "filename": "opened-document.png"
+        }
+      },
+      {
+        "action": "fail",
+        "title": "Сформировать контролируемую ошибку",
+        "description": "Сформировать контролируемую ошибку",
+        "params": {
+          "error_code": "VALIDATION_ERROR",
+          "message": "Тестовая ошибка download-save-open2"
         }
       }
-    ]
+    ],
+    "output": {
+      "Rezult_1": {
+        "state": "failed",
+        "opened_url": "{{opened_url}}"
+      }
+    },
+    "title": "Файловая демонстрация с ошибкой"
   }
 }

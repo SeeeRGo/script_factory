@@ -37,6 +37,7 @@ for (const definition of definitions) {
     context: { delay_ms: definition.delay_ms },
     ...(callbackUrl ? { callback: { url: callbackUrl, max_attempts: 5, backoff_ms: 1000, timeout_ms: 5000 } } : {}),
     script: {
+      format: 'json-workflow',
       default_step_timeout_ms: 30_000,
       steps: [{
         id: 'load-window',

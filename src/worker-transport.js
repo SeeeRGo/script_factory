@@ -1,6 +1,6 @@
 import net from 'node:net';
 import {createHash,timingSafeEqual,randomUUID} from 'node:crypto';
-export const workerError=(code,message,retryable=false)=>Object.assign(new Error(message),{code,retryable,statusCode:503});
+export const workerError=(code,message)=>Object.assign(new Error(message),{code,statusCode:503});
 const digest=s=>createHash('sha256').update(String(s)).digest();
 export function workerSettings(env=process.env){
   const mode=env.EXECUTION_MODE||'inline';if(!['inline','broker'].includes(mode))throw new Error('EXECUTION_MODE must be inline or broker');
@@ -33,7 +33,7 @@ export function createWorkerBroker({settings,version,onReady=()=>{},onIdle=()=>{
     const p=pending.get(message.execution_id);if(!p)return;
     if(message.job_id!==p.jobId){connection?.close();return;}
     p.finished=true;clearTimeout(p.cancelTimer);
-    if(!p.settled){p.settled=true;if(message.error){const e=Object.assign(workerError(message.error.code||'WORKER_ERROR',message.error.message||'Ошибка исполнителя',message.error.retryable===true),message.error);p.reject(e);}else p.resolve(message.result);}
+    if(!p.settled){p.settled=true;if(message.error){const e=Object.assign(workerError(message.error.code||'WORKER_ERROR',message.error.message||'Ошибка исполнителя'),message.error);p.reject(e);}else p.resolve(message.result);}
     if(p.acknowledged){connection?.send({type:'ack',execution_id:message.execution_id});pending.delete(message.execution_id);onIdle();}
   }
   const server=net.createServer(socket=>{

@@ -74,7 +74,6 @@ export async function waitForYandexCaptcha(options) {
   if (headless || waitMs === 0) {
     throw new InterpreterError('CAPTCHA_REQUIRED', 'Яндекс запросил CAPTCHA; для ручного подтверждения запустите headed/noVNC-режим', {
       statusCode: 409,
-      retryable: false,
       details: { current_url: page.url(), manual_confirmation_available: false }
     });
   }
@@ -86,7 +85,6 @@ export async function waitForYandexCaptcha(options) {
   if (isYandexCaptchaUrl(page.url())) {
     throw new InterpreterError('CAPTCHA_REQUIRED', `CAPTCHA не подтверждена за ${waitMs} мс`, {
       statusCode: 409,
-      retryable: false,
       details: { current_url: page.url(), manual_confirmation_available: true, wait_ms: waitMs }
     });
   }
@@ -97,7 +95,7 @@ export async function waitForYandexCaptcha(options) {
 export async function resolveBrowserExecutablePath(configuredPath) {
   if (configuredPath) {
     try { await access(configuredPath); if (!(await stat(configuredPath)).isFile()) throw new Error('Not a file'); return configuredPath; }
-    catch { throw new InterpreterError('BROWSER_LAUNCH_ERROR', 'Заданный исполняемый файл браузера недоступен; проверьте executable_path на УН', {statusCode:503,retryable:false}); }
+    catch { throw new InterpreterError('BROWSER_LAUNCH_ERROR', 'Заданный исполняемый файл браузера недоступен; проверьте executable_path на УН', {statusCode:503}); }
   }
   const candidates = EXECUTABLE_CANDIDATES;
   for (const candidate of candidates) {
@@ -128,7 +126,6 @@ function replayError(rawError, extension) {
   const error = new InterpreterError('BROWSER_REPLAY_ERROR', rawError?.message || 'Ошибка выполнения Puppeteer Replay', {
     cause: rawError,
     statusCode: 500,
-    retryable: false,
     details: {
       step_index: extension.currentIndex + 1,
       action: extension.currentStep?.type ?? 'unknown'
@@ -335,7 +332,6 @@ export async function openFileInBrowser(options) {
     throw new InterpreterError('BROWSER_REPLAY_ERROR', `Не удалось открыть сохранённый файл в Chromium: ${rawError?.message || 'неизвестная ошибка'}`, {
       cause: rawError,
       statusCode: 500,
-      retryable: false,
       details: { file: filePath }
     });
   } finally {
@@ -376,7 +372,6 @@ export async function executeBrowserReplay(options) {
     throw new InterpreterError('BROWSER_REPLAY_ERROR', `Не удалось подготовить Puppeteer Replay: ${rawError?.message || 'неизвестная ошибка'}`, {
       cause: rawError,
       statusCode: 400,
-      retryable: false
     });
   }
   if (signal?.aborted) throw signal.reason;
@@ -403,7 +398,6 @@ export async function executeBrowserReplay(options) {
     throw new InterpreterError('BROWSER_LAUNCH_ERROR', `Не удалось запустить Chromium: ${rawError?.message || 'неизвестная ошибка'}`, {
       cause: rawError,
       statusCode: 503,
-      retryable: true,
       details: { executable_path: executablePath ?? null, headless }
     });
   }
@@ -487,7 +481,7 @@ export async function executeBrowserReplay(options) {
         step_id: `replay_${extension.currentIndex + 1}`,
         action: extension.currentStep?.type ?? 'unknown',
         duration_ms: Date.now() - extension.currentStepStartedAt,
-        error: { code: error.code, message: error.message, retryable: Boolean(error.retryable), details: error.details }
+        error: { code: error.code, message: error.message, details: error.details }
       });
     }
     throw error;

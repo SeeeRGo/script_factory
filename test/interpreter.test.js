@@ -355,7 +355,7 @@ for (const scenario of [
   test(`${action} normalizes failures as ${expectedCode}`, async () => {
     await assert.rejects(
       executeScript({ script: { steps: [{ action, params, duration_ms: 0 }] } }),
-      (error) => error.code === expectedCode && typeof error.retryable === 'boolean'
+      (error) => error.code === expectedCode && !Object.hasOwn(error, 'retryable')
     );
   });
 }
@@ -365,6 +365,6 @@ test('per-step timeout aborts the handler with TIMEOUT_ERROR', async () => {
     executeScript({
       script: { steps: [{ action: 'noop', duration_ms: 50, timeout_ms: 5 }] }
     }),
-    (error) => error.code === ERROR_CODES.TIMEOUT_ERROR && error.retryable === true
+    (error) => error.code === ERROR_CODES.TIMEOUT_ERROR && !Object.hasOwn(error, 'retryable')
   );
 });

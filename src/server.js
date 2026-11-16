@@ -363,7 +363,7 @@ function restoreJob(snapshot) {
     started_at: snapshot.started_at || null,
     finished_at: snapshot.finished_at || null,
     result: snapshot.result ?? null,
-    error: snapshot.error ?? null,
+    error: snapshot.error ? serializeJobError(snapshot.error) : null,
     callback_delivery: snapshot.callback_delivery ?? null,
     cancellation_requested: Boolean(snapshot.cancellation_requested),
     execution: restoreExecution(snapshot.execution, snapshot.request?.script),
@@ -371,15 +371,29 @@ function restoreJob(snapshot) {
     worker_execution_id: snapshot.worker_execution_id ?? null, worker_result_committed: snapshot.worker_result_committed === true, worker_unconfirmed: snapshot.worker_unconfirmed === true
   };
 
-  if (WORKER_SETTINGS.mode === 'broker' && job.status === 'running') {
-    job.status = 'failed'; job.error = { code: 'WORKER_EXECUTION_UNCERTAIN', message: 'API перезапустилось во время исполнения; исход действий требует сверки', retryable: false };
-    job.worker_unconfirmed = true; job.finished_at = nowIso(); job.execution.status = 'failed';
-  } else if (job.status === 'running' || job.status === 'retrying') {
-    job.status = 'queued';
-    job.error = null;
-    job.cancellation_requested = false;
-    job.finished_at = null;
-    job.execution = createExecution(job.request.script);
+  if (job.status === 'running' || job.status === 'retrying') {
+    // A persisted attempt has already consumed its slot in retry_policy.
+    if (job.cancellation_requested) {
+      job.status = 'cancelled';
+      job.error = { code: 'CANCELLED', message: 'Задание было отменено до перезапуска API' };
+    } else if (job.attempts < job.max_attempts) {
+      job.status = 'queued';
+      job.error = null;
+      job.finished_at = null;
+      job.execution = createExecution(job.request.script);
+    } else {
+      job.status = 'failed';
+      job.error = { code: 'WORKER_EXECUTION_UNCERTAIN', message: 'API перезапустилось во время исполнения; число попыток исчерпано' };
+    }
+    if (job.status !== 'queued') {
+      job.finished_at = nowIso();
+      job.execution.status = job.status;
+      job.execution.finished_at = job.finished_at;
+    }
+    // The interrupted attempt is durably accounted for. The worker stops old
+    // executions before reconnecting; only then can the queued attempt run.
+    job.worker_result_committed = true;
+    job.worker_unconfirmed = false;
   }
 
   return job;
@@ -934,7 +948,7 @@ function createApiError(code, message, statusCode = 400, retryable = false, deta
   const error = new Error(message);
   error.code = code;
   error.statusCode = statusCode;
-  error.retryable = retryable;
+  if (code.startsWith('WORKER_')) error.retryable = retryable;
   error.details = details;
   return error;
 }
@@ -1000,15 +1014,10 @@ function normalizeJobCreatePayload(rawPayload) {
   return payload;
 }
 
-function isRetryableError(error) {
-  return Boolean(error?.retryable);
-}
-
 function serializeJobError(error) {
   return {
     code: error?.code || 'INTERNAL_ERROR',
     message: error?.message || 'Непредвиденная ошибка выполнения',
-    retryable: Boolean(error?.retryable),
     ...(Number.isInteger(error?.step_index) ? { step_index: error.step_index } : {}),
     ...(error?.step_id ? { step_id: error.step_id } : {}),
     ...(error?.source_path ? { source_path: error.source_path } : {}),
@@ -1404,8 +1413,9 @@ async function executeJob(job) {
       request_hash: job.request_hash
     });
     const serviceBaseUrl = process.env.SERVICE_BASE_URL || `http://127.0.0.1:${PORT}`;
+    const attemptFolder = job.attempts === 1 ? '' : `attempt-${job.attempts}`;
     const runtimeOptions = {script,context:job.request.context||{},attempt:job.attempts,timeoutMs:job.timeout_ms,allowedRoots:STEP_ALLOWED_ROOTS,
-      artifactDirectory:path.join(ARTIFACTS_DIR,job.job_id),publicArtifactBasePath:`/artifacts/${encodeURIComponent(job.job_id)}`,jobId:job.job_id,serviceBaseUrl};
+      artifactDirectory:path.join(ARTIFACTS_DIR,job.job_id,attemptFolder),publicArtifactBasePath:`/artifacts/${encodeURIComponent(job.job_id)}${attemptFolder ? '/'+attemptFolder : ''}`,jobId:job.job_id,serviceBaseUrl};
     let interpreterResult;
     if (workerBroker) {
       job.worker_execution_id = randomUUID(); job.worker_result_committed = false; job.worker_unconfirmed = false;
@@ -1451,7 +1461,7 @@ async function executeJob(job) {
       return;
     }
 
-    if (error?.code === 'TIMEOUT_ERROR') {
+    if (controller.signal.aborted && error?.code === 'TIMEOUT_ERROR') {
       job.status = 'timeout';
       job.error = serializeJobError(error);
       job.execution.status = 'timeout';
@@ -1461,7 +1471,7 @@ async function executeJob(job) {
       return;
     }
 
-    if (job.attempts < job.max_attempts && isRetryableError(error)) {
+    if (job.attempts < job.max_attempts) {
       job.status = 'retrying';
       job.error = serializeJobError(error);
       job.execution.status = 'retrying';
@@ -1487,9 +1497,8 @@ async function executeJob(job) {
       return;
     }
 
-    job.status = error?.code === 'VALIDATION_ERROR' || error?.code === 'INVALID_SCRIPT'
-      ? 'validation_failed'
-      : 'failed';
+    job.status = error?.code === 'TIMEOUT_ERROR' ? 'timeout'
+      : ['VALIDATION_ERROR', 'INVALID_SCRIPT'].includes(error?.code) ? 'validation_failed' : 'failed';
     job.error = serializeJobError(error);
     const diagnosticArtifact = error?.details?.artifact;
     const partialContext = error?.partial_context;

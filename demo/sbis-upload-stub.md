@@ -1,6 +1,7 @@
 # Проверка выбора XML в СБИС на УН
 
-- `sbis-upload-stub.json` — сценарий Puppeteer Replay для редактора системы.
+- `sbis-upload-stub.json` — исполняемый json-workflow с шагами browser_launch/browser_steps для редактора системы.
+- `sbis-upload-stub.recorder.json` — исходная запись DevTools Recorder для обучения и конвертации.
 - `sbis-upload-stub.request.json` — готовое тело `POST /api/v2/jobs`.
 - `fixtures/TEST_ONLY_NOT_A_REPORT.xml` — явная тестовая заглушка, не отчёт.
 

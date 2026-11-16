@@ -6,76 +6,129 @@
     "backoff_ms": 500
   },
   "script": {
-    "context": {
-      "current_ip": "192.168.1.10",
-      "root_dir": "./demo-data/incoming",
-      "loaded_dir": "./demo-data/loaded",
-      "receipt_dir": "./demo-data/downloads",
-      "prefixes": ["FNS", "SFR", "ROSSTAT"]
-    },
+    "format": "json-workflow",
     "steps": [
       {
-        "action": "check_ip",
-        "timeout_ms": 1000,
-        "delay_ms": 250,
-        "params": { "expected_ip": "192.168.1.10" }
+        "action": "files_list",
+        "title": "Найти входные файлы",
+        "description": "Найти входные файлы",
+        "params": {
+          "directory": "{{root_dir}}"
+        },
+        "save_as": "source_files"
       },
       {
-        "action": "find_files",
-        "timeout_ms": 1000,
-        "delay_ms": 250,
+        "action": "compute",
+        "title": "Выбрать XML по префиксам",
+        "description": "Выбрать XML по префиксам",
         "params": {
-          "directory": "{{root_dir}}",
-          "prefixes": "{{prefixes}}"
+          "expression": "context.source_files.filter(f=>f.filename.endsWith(\".xml\")&&context.prefixes.some(p=>f.filename.startsWith(p)))"
+        },
+        "save_as": "reports"
+      },
+      {
+        "action": "compute",
+        "title": "Проверить найденные XML",
+        "description": "Проверить найденные XML",
+        "params": {
+          "expression": "context.reports.length>0"
+        },
+        "save_as": "found"
+      },
+      {
+        "action": "assert",
+        "title": "Проверить наличие файлов",
+        "description": "Проверить наличие файлов",
+        "params": {
+          "condition": "{{found}}",
+          "error_code": "FILE_NOT_FOUND",
+          "message": "Тестовые XML не найдены"
         }
       },
-      { "action": "launch_browser", "timeout_ms": 1000, "delay_ms": 250 },
       {
-        "action": "navigate",
-        "timeout_ms": 1000,
-        "delay_ms": 250,
-        "params": { "url": "https://online.sbis.ru" }
-      },
-      { "action": "auth_ecp", "timeout_ms": 1000, "delay_ms": 250 },
-      {
-        "action": "upload_files",
-        "timeout_ms": 1000,
-        "delay_ms": 250,
-        "params": { "files": "{{found_files}}" }
-      },
-      {
-        "action": "validate_report",
-        "timeout_ms": 1000,
-        "delay_ms": 250,
-        "params": { "valid": true }
-      },
-      { "action": "submit_if_valid", "timeout_ms": 1000, "delay_ms": 250 },
-      {
-        "id": "receipt",
-        "action": "download_files",
-        "timeout_ms": 1000,
-        "delay_ms": 250,
+        "action": "directory_create",
+        "title": "Подготовить каталог результата",
+        "description": "Подготовить каталог результата",
         "params": {
-          "destination": "{{receipt_dir}}",
-          "files": [
-            {
-              "filename": "submission-receipt.pdf",
-              "source_url": "https://online.sbis.ru/reports/receipt.pdf",
-              "mime_type": "application/pdf",
-              "size_bytes": 48231
+          "directory": "{{loaded_dir}}"
+        }
+      },
+      {
+        "action": "for_each",
+        "title": "Скопировать каждый XML",
+        "description": "Копирует учебные XML; в СБИС ничего не отправляет.",
+        "as": "report",
+        "params": {
+          "items": "{{reports}}"
+        },
+        "steps": [
+          {
+            "action": "file_verify",
+            "title": "Проверить исходный XML",
+            "description": "Проверить исходный XML",
+            "params": {
+              "file": "{{report}}"
             }
-          ]
+          },
+          {
+            "action": "file_copy",
+            "title": "Скопировать XML",
+            "description": "Скопировать XML",
+            "params": {
+              "source": "{{report.path}}",
+              "destination": "{{loaded_dir}}/{{report.filename}}"
+            }
+          }
+        ]
+      },
+      {
+        "action": "artifact_write",
+        "title": "Сохранить учебный протокол",
+        "description": "Сохранить учебный протокол",
+        "params": {
+          "filename": "demo-result.txt",
+          "text": "Учебные XML проверены и скопированы. Отправка в ведомства не выполнялась."
         }
       },
       {
-        "action": "move_files",
-        "timeout_ms": 1000,
-        "delay_ms": 250,
+        "action": "compute",
+        "title": "Посчитать обработанные файлы",
+        "description": "Посчитать обработанные файлы",
         "params": {
-          "files": "{{found_files}}",
-          "destination": "{{loaded_dir}}"
+          "expression": "context.reports.length"
+        },
+        "save_as": "file_count"
+      },
+      {
+        "action": "set",
+        "title": "Сформировать результат",
+        "description": "Сформировать результат",
+        "params": {
+          "result": {
+            "state": "completed",
+            "file_count": "{{file_count}}"
+          }
+        }
+      },
+      {
+        "action": "wait",
+        "title": "Завершить демонстрацию",
+        "description": "Завершить демонстрацию",
+        "params": {
+          "duration_ms": 100
         }
       }
-    ]
+    ],
+    "output": {
+      "Rezult_1": "{{result}}"
+    },
+    "context": {
+      "root_dir": "./demo-data/incoming",
+      "loaded_dir": "./demo-data/loaded",
+      "prefixes": [
+        "FNS",
+        "SFR"
+      ]
+    }
   }
 }

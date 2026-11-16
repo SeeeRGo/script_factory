@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -12,6 +12,7 @@ test('homepage demo route keeps the Stage 3 browser workloads short enough for t
   assert.ok(demoScenarios.reduce((total, scenario) => total + Number.parseInt(scenario.talkTime, 10), 0) <= 20);
 
   for (const scenario of demoScenarios) {
+    assert.equal(scenario.payload.script.format, 'json-workflow');
     assert.ok(scenario.title);
     assert.ok(scenario.runtime);
     assert.ok(scenario.result);
@@ -23,10 +24,12 @@ test('homepage demo route keeps the Stage 3 browser workloads short enough for t
 
   const browserScenario = demoScenarios.find((scenario) => scenario.id === 'browser-mail-replay');
   assert.ok(browserScenario);
-  assert.equal(browserScenario.payload.script.steps.length, 20);
-  assert.ok(browserScenario.payload.script.steps.every((step) => typeof step.type === 'string'));
+  const browserSteps = browserScenario.payload.script.steps.flatMap(step => step.params?.steps || []);
+  assert.equal(browserSteps.length, 20);
+  assert.ok(browserSteps.every(step => typeof step.type === 'string'));
   assert.equal(browserScenario.payload.context.mail_to, '10sydneyfc@gmail.com');
-  const consentStep = browserScenario.payload.script.steps.find((step) => step.title.includes('условия Yahoo'));
+  assert.ok(browserScenario.payload.script.steps.filter(step=>JSON.stringify(step.params).includes('{{yahoo_password}}')).every(step=>step.private===true));
+  const consentStep = browserSteps.find((step) => step.title.includes('условия Yahoo'));
   assert.equal(consentStep.type, 'waitForExpression');
   assert.match(consentStep.expression, /guce\.yahoo\.com/);
   assert.match(consentStep.expression, /alles accepteren/i);
@@ -92,7 +95,7 @@ test('homepage demo route keeps the Stage 3 browser workloads short enough for t
   assert.equal(evaluateConsent({ hostname: 'consent.yahoo.com' }, mailboxDocument, mailboxState, mailboxWindow), false);
   assert.equal(submitClicks, 1);
 
-  const onboardingStep = browserScenario.payload.script.steps.find((step) => step.title === 'Подготовить интерфейс Mail');
+  const onboardingStep = browserSteps.find((step) => step.title === 'Подготовить интерфейс Mail');
   assert.equal(onboardingStep.type, 'waitForExpression');
   const evaluateOnboarding = new Function('location', 'document', 'globalThis', `return ${onboardingStep.expression}`);
   const composeButton = { getBoundingClientRect: () => ({ width: 120, height: 32 }) };
@@ -113,27 +116,23 @@ test('homepage demo route keeps the Stage 3 browser workloads short enough for t
 
   const yandexScenario = demoScenarios.find((scenario) => scenario.id === 'yandex-search-replay');
   assert.ok(yandexScenario);
-  assert.equal(yandexScenario.payload.script.steps.length, 11);
+  const yandexSteps = yandexScenario.payload.script.steps.flatMap(step => step.params?.steps || []);
+  assert.equal(yandexSteps.length, 11);
   assert.equal(yandexScenario.payload.context.search_query, 'официальная документация Node.js');
-  const searchSubmitStep = yandexScenario.payload.script.steps.find((step) => step.title === 'Запустить поиск');
+  const searchSubmitStep = yandexSteps.find((step) => step.title === 'Запустить поиск');
   assert.deepEqual({ type: searchSubmitStep.type, key: searchSubmitStep.key }, { type: 'keyDown', key: 'Enter' });
 
   const fileScenario = demoScenarios.find((scenario) => scenario.id === 'download-save-open');
   assert.ok(fileScenario);
-  assert.equal(fileScenario.payload.script.steps.length, 10);
-  const downloadStep = fileScenario.payload.script.steps.find((step) => step.action === 'download_files');
-  assert.equal(downloadStep.params.save, true);
-  assert.deepEqual(
-    downloadStep.params.files.map((file) => path.extname(file.filename)).sort(),
-    ['.csv', '.json', '.txt', '.xml']
-  );
-  assert.ok(fileScenario.payload.script.steps.some((step) => step.action === 'read_text_file'));
-  assert.ok(fileScenario.payload.script.steps.some((step) => step.action === 'open_file'));
+  assert.ok(fileScenario.payload.script.steps.some(step=>step.action==='for_each'));
+  assert.ok(fileScenario.payload.script.steps.some(step=>step.action==='file_read'));
+  assert.ok(fileScenario.payload.script.steps.some(step=>step.action==='browser_screenshot'));
+
 });
 
 test('blank editor template is a valid starting point', () => {
   assert.deepEqual(validateScript(blankScenario.script), []);
-  assert.equal(blankScenario.script.title, 'Новый сценарий Chrome Recorder');
+  assert.equal(blankScenario.script.title, 'Новый универсальный JSON workflow');
   assert.equal(blankScenario.script.steps.length, 2);
   assert.ok(blankScenario.script.steps.every((step) => step.title && step.description));
 });
@@ -150,8 +149,8 @@ test('Stage 4 request fixture contains a configurable wait, file work and result
   assert.ok(payload.script.steps.every((step) => step.title && step.description));
   const wait = payload.script.steps.find((step) => step.action === 'wait');
   assert.equal(wait.params.duration_ms, '{{delay_ms}}');
-  assert.ok(payload.script.steps.some((step) => step.action === 'find_files'));
-  assert.ok(payload.script.steps.some((step) => step.action === 'copy_files'));
+  assert.ok(payload.script.steps.some((step) => step.action === 'files_list'));
+  assert.ok(payload.script.steps.some(step=>step.action==='for_each'&&step.steps.some(child=>child.action==='file_copy')));
 });
 
 test('download demo fixture saves, verifies and opens a real file', async () => {
@@ -163,19 +162,14 @@ test('download demo fixture saves, verifies and opens a real file', async () => 
   assert.equal(payload.uid, 'REPLACE_WITH_UNIQUE_1C_UID');
   assert.match(payload.callback.url, /^http:/);
   assert.equal(payload.log_level, 'info');
-  assert.equal(payload.script.steps.length, 10);
-  assert.equal(payload.script.inter_step_delay_ms, 10000);
-  assert.equal(payload.script.steps.find((step) => step.action === 'download_files').params.save, true);
-  assert.equal(payload.script.steps.find((step) => step.action === 'download_files').params.files.length, 4);
-  assert.ok(payload.script.steps.find((step) => step.action === 'download_files').params.files
-    .every((file) => file.source_url.startsWith('https://')));
-  const ipStep = payload.script.steps.find((step) => step.action === 'check_ip');
-  assert.equal(ipStep.params.service_url, 'https://api64.ipify.org?format=json');
-  assert.equal(ipStep.params.current_ip, undefined);
-  assert.ok(payload.script.steps.some((step) => step.action === 'find_files'));
-  assert.ok(payload.script.steps.some((step) => step.action === 'read_text_file'));
-  assert.ok(payload.script.steps.some((step) => step.action === 'open_file'));
-  assert.ok(payload.script.steps.every((step) => step.title && step.description));
+  assert.equal(payload.script.format, 'json-workflow');
+  assert.ok(payload.script.steps.some(step=>step.action==='browser_launch'));
+  const sources=payload.script.steps.find(step=>step.params?.download_sources).params.download_sources;
+  assert.deepEqual(sources.map(file=>path.extname(file.filename)).sort(),['.csv','.json','.txt','.xml']);
+  assert.ok(payload.script.steps.some(step=>step.action==='files_list'));
+  assert.ok(payload.script.steps.some(step=>step.action==='file_read'));
+  assert.ok(payload.script.steps.some(step=>step.action==='browser_steps'));
+  assert.ok(payload.script.steps.every(step=>step.title&&step.description));
 });
 
 test('download error demo completes the file cycle and then fails predictably with debug logs', async () => {
@@ -186,10 +180,21 @@ test('download error demo completes the file cycle and then fails predictably wi
   assert.deepEqual(validateScript(payload.script), []);
   assert.equal(payload.log_level, 'debug');
   assert.match(payload.callback.url, /^http:/);
-  assert.ok(payload.script.steps.some((step) => step.action === 'download_files'));
-  assert.ok(payload.script.steps.some((step) => step.action === 'open_file'));
+  assert.equal(payload.script.format,'json-workflow');
+  assert.ok(payload.script.steps.some(step=>step.action==='for_each'));
+  assert.ok(payload.script.steps.some(step=>step.action==='browser_steps'));
   const failure = payload.script.steps.at(-1);
-  assert.equal(failure.action, 'validate_report');
-  assert.equal(failure.params.valid, false);
-  assert.match(failure.params.error_message, /download-save-open2/);
+  assert.equal(failure.action, 'fail');
+  assert.equal(failure.params.error_code, 'VALIDATION_ERROR');
+  assert.match(failure.params.message, /download-save-open2/);
+});
+
+test('every executable demo uses json-workflow; Recorder sources remain explicit input examples',async()=>{
+ const dir=new URL('../demo/',import.meta.url);
+ for(const name of await readdir(dir)){
+  if(!name.endsWith('.json')||name.endsWith('.recorder.json')||name==='recorder-conversion-source.json')continue;
+  const value=JSON.parse(await readFile(new URL(name,dir),'utf8'));
+  const scripts=value.jobs?value.jobs.map(j=>j.payload.script):[value.script||value];
+  for(const script of scripts){assert.equal(script.format,'json-workflow',name);assert.deepEqual(validateScript(script),[],name);}
+ }
 });

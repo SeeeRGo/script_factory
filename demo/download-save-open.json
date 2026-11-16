@@ -15,126 +15,154 @@
   },
   "context": {},
   "script": {
-    "default_step_timeout_ms": 12000,
-    "inter_step_delay_ms": 10000,
+    "format": "json-workflow",
     "steps": [
       {
-        "id": "prepare",
-        "title": "Подготовить задание",
-        "description": "Фиксирует начало файлового сценария в прогрессе и журнале.",
-        "action": "noop",
-        "duration_ms": 150
+        "action": "browser_launch",
+        "title": "Запустить браузер",
+        "description": "Запустить браузер",
+        "params": {}
       },
       {
-        "id": "network",
-        "title": "Проверить публичный IP через интернет",
-        "description": "Запрашивает фактический внешний IP тестовой УН у API ipify.",
-        "action": "check_ip",
+        "action": "browser_steps",
+        "title": "Открыть локальную страницу сервиса",
+        "description": "Открыть локальную страницу сервиса",
         "params": {
-          "service_url": "https://api64.ipify.org?format=json"
-        },
-        "duration_ms": 180
+          "steps": [
+            {
+              "type": "navigate",
+              "url": "{{service_base_url}}/demo/mail"
+            }
+          ]
+        }
       },
       {
-        "id": "browser",
-        "title": "Подготовить Chromium",
-        "description": "Проверяет этап запуска браузера перед показом сохранённого документа.",
-        "action": "launch_browser",
+        "action": "set",
+        "title": "Задать файлы учебного набора",
+        "description": "Задать файлы учебного набора",
         "params": {
-          "browser": "chromium"
-        },
-        "duration_ms": 220
-      },
-      {
-        "id": "source",
-        "title": "Открыть источник XML",
-        "description": "Фиксирует HTTP-адрес XML-файла обмена перед загрузкой набора.",
-        "action": "navigate",
-        "params": {
-          "url": "https://www.w3schools.com/xml/note.xml"
-        },
-        "duration_ms": 220
-      },
-      {
-        "id": "source-ready",
-        "title": "Дождаться готовности источника",
-        "description": "Добавляет наглядное ожидание перед реальным сетевым запросом.",
-        "action": "wait",
-        "params": {
-          "duration_ms": 250
-        },
-        "timeout_ms": 1000
-      },
-      {
-        "id": "download",
-        "title": "Скачать и сохранить файлы разных форматов",
-        "description": "Получает XML, JSON, CSV и TXT по HTTP и записывает их в каталог артефактов текущего задания.",
-        "action": "download_files",
-        "params": {
-          "save": true,
-          "max_bytes": 1048576,
-          "files": [
+          "download_sources": [
             {
               "filename": "stage4-report.xml",
-              "source_url": "https://www.w3schools.com/xml/note.xml",
-              "mime_type": "application/xml"
+              "mime": "application/xml"
             },
             {
               "filename": "stage4-result.json",
-              "source_url": "https://jsonplaceholder.typicode.com/todos/1",
-              "mime_type": "application/json"
+              "mime": "application/json"
             },
             {
               "filename": "stage4-register.csv",
-              "source_url": "https://raw.githubusercontent.com/cs109/2014_data/master/countries.csv",
-              "mime_type": "text/csv"
+              "mime": "text/csv"
             },
             {
               "filename": "stage4-log.txt",
-              "source_url": "https://raw.githubusercontent.com/github/gitignore/main/Node.gitignore",
-              "mime_type": "text/plain"
+              "mime": "text/plain"
             }
           ]
-        },
-        "timeout_ms": 60000
-      },
-      {
-        "id": "verify-path",
-        "title": "Проверить сохранение на диске",
-        "description": "Повторно находит скачанный файл в фактическом каталоге задания.",
-        "action": "find_files",
-        "params": {
-          "directory": "{{download_dir}}",
-          "prefixes": ["stage4-"]
         }
       },
       {
-        "id": "verify-content",
-        "title": "Прочитать сохранённый файл",
-        "description": "Проверяет доступность и содержимое документа непосредственно с диска УН.",
-        "action": "read_text_file",
+        "action": "for_each",
+        "title": "Скачать файлы через браузер и сохранить",
+        "description": "Загружает реальные байты с учебного HTTP-сервера и записывает артефакты.",
+        "as": "source",
         "params": {
-          "path": "{{downloaded_files.0}}",
-          "max_bytes": 1048576
+          "items": "{{download_sources}}"
+        },
+        "steps": [
+          {
+            "action": "browser_eval",
+            "title": "Прочитать HTTP-ответ",
+            "description": "Прочитать HTTP-ответ",
+            "params": {
+              "expression": "(async()=>{ const r=await fetch(context.service_base_url+\"/demo/files/\"+context.source.filename); if(!r.ok)throw new Error(\"HTTP \"+r.status); return await r.text(); })()"
+            },
+            "save_as": "download_body"
+          },
+          {
+            "action": "artifact_write",
+            "title": "Сохранить скачанный файл",
+            "description": "Сохранить скачанный файл",
+            "params": {
+              "filename": "{{source.filename}}",
+              "text": "{{download_body}}",
+              "mime_type": "{{source.mime}}"
+            }
+          }
+        ]
+      },
+      {
+        "action": "files_list",
+        "title": "Найти сохранённые файлы",
+        "description": "Найти сохранённые файлы",
+        "params": {
+          "directory": "{{artifact_dir}}"
+        },
+        "save_as": "saved_files"
+      },
+      {
+        "action": "compute",
+        "title": "Выбрать документ для просмотра",
+        "description": "Выбрать документ для просмотра",
+        "params": {
+          "expression": "context.saved_files.find(f=>f.filename===context.download_sources[0].filename)"
+        },
+        "save_as": "saved_file"
+      },
+      {
+        "action": "file_read",
+        "title": "Прочитать сохранённый документ",
+        "description": "Прочитать сохранённый документ",
+        "params": {
+          "file": "{{saved_file}}"
+        },
+        "save_as": "file_content"
+      },
+      {
+        "action": "compute",
+        "title": "Получить адрес локального файла",
+        "description": "Получить адрес локального файла",
+        "params": {
+          "expression": "(context.saved_file.path.startsWith(\"/\")?\"file://\":\"file:///\")+context.saved_file.path.replace(/\\\\/g,\"/\")"
+        },
+        "save_as": "opened_url"
+      },
+      {
+        "action": "browser_steps",
+        "title": "Открыть сохранённый документ",
+        "description": "Открыть сохранённый документ",
+        "params": {
+          "steps": [
+            {
+              "type": "navigate",
+              "url": "{{opened_url}}"
+            }
+          ]
         }
       },
       {
-        "id": "open",
-        "title": "Открыть XML в Яндекс Браузере",
-        "description": "Открывает локальную сохранённую XML-копию; остальные форматы доступны в артефактах задания.",
-        "action": "open_file",
+        "action": "browser_screenshot",
+        "title": "Сохранить экран документа",
+        "description": "Сохранить экран документа",
         "params": {
-          "path": "{{downloaded_files.0}}"
-        },
-        "timeout_ms": 120000
+          "filename": "opened-document.png"
+        }
       },
       {
-        "id": "complete",
-        "title": "Зафиксировать успешный результат",
-        "description": "Завершает цепочку после скачивания, проверки и визуального открытия файла.",
-        "action": "noop",
-        "duration_ms": 150
+        "action": "set",
+        "title": "Завершить файловую демонстрацию",
+        "description": "Завершить файловую демонстрацию",
+        "params": {
+          "state": "completed"
+        }
       }
-    ]
+    ],
+    "output": {
+      "Rezult_1": {
+        "state": "completed",
+        "opened_url": "{{opened_url}}"
+      }
+    },
+    "title": "Скачать, проверить и открыть учебные файлы"
   }
 }
