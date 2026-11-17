@@ -13,11 +13,20 @@
 На компьютере выпуска (замените 192.168.88.10:34001 адресом своего центра; HTTPS также поддерживается):
 
 ```powershell
-git fetch origin
-npm run fleet:release -- build --ref ТОЧНЫЙ_SHA_НОВОГО_РЕЛИЗА --key C:/ScriptFactorySigning/release-private.pem --out C:/ScriptFactoryReleases
-$env:FLEET_ADMIN_TOKEN = Read-Host 'Токен администратора оркестратора' -MaskInput
-npm run fleet:release -- publish --url http://192.168.88.10:34001 --manifest C:/ScriptFactoryReleases/ID.json --zip C:/ScriptFactoryReleases/ID.zip
-Remove-Item Env:\FLEET_ADMIN_TOKEN
+& {
+  $ProjectRoot = 'C:\ScriptFactorySource' # ЗАМЕНИТЕ фактическим каталогом проекта с package.json
+  foreach ($file in @('package.json', 'scripts\fleet-release.mjs')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
+      throw "Не найден $file в $ProjectRoot. Укажите каталог проекта, а не каталог с nodes.json."
+    }
+  }
+  Set-Location -LiteralPath $ProjectRoot -ErrorAction Stop
+  git fetch origin
+  npm run fleet:release -- build --ref ТОЧНЫЙ_SHA_НОВОГО_РЕЛИЗА --key C:/ScriptFactorySigning/release-private.pem --out C:/ScriptFactoryReleases
+  $env:FLEET_ADMIN_TOKEN = Read-Host 'Токен администратора оркестратора' -MaskInput
+  npm run fleet:release -- publish --url http://192.168.88.10:34001 --manifest C:/ScriptFactoryReleases/ID.json --zip C:/ScriptFactoryReleases/ID.zip
+  Remove-Item Env:\FLEET_ADMIN_TOKEN
+}
 ```
 
 `Read-Host -MaskInput` требует PowerShell 7; в Windows PowerShell 5.1 передайте переменную из корпоративного хранилища секретов, не вставляйте токен в файл/историю. ID.json/ID.zip замените на имена, выданные build. Версия должна быть новее установленной. Сборка использует зафиксированный commit, проверяет состав и подписывает ZIP.

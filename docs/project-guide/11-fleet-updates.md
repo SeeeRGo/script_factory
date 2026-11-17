@@ -44,7 +44,16 @@ API **0.11.0**, протокол оркестратора и агента **1**.
 На компьютере выпуска, из корня проекта:
 
 ```powershell
-npm run fleet:release -- keygen --out C:/ScriptFactorySigning
+& {
+  $ProjectRoot = 'C:\ScriptFactorySource' # ЗАМЕНИТЕ фактическим каталогом проекта с package.json
+  foreach ($file in @('package.json', 'scripts\fleet-release.mjs')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
+      throw "Не найден $file в $ProjectRoot. Укажите каталог проекта, а не каталог с nodes.json."
+    }
+  }
+  Set-Location -LiteralPath $ProjectRoot -ErrorAction Stop
+  npm run fleet:release -- keygen --out C:/ScriptFactorySigning
+}
 ```
 
 `release-private.pem` храните только у выпускающего релизы, вне Git и центрального сервера. На оркестратор и УН передаётся только `release-public.pem`. Публичный ключ первоначально устанавливает администратор; команда обновления не может заменить его своим ключом. Ротация доверенного ключа — отдельная административная операция.
@@ -54,8 +63,17 @@ npm run fleet:release -- keygen --out C:/ScriptFactorySigning
 Скопируйте `fleet/controller.env.example` в `fleet/controller.env`. Задайте случайный `FLEET_ADMIN_TOKEN` не короче 32 символов, публичный ключ и постоянный `FLEET_DATA_DIR`. Генерация токена и запуск:
 
 ```powershell
-node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
-npm run fleet:start
+& {
+  $ProjectRoot = 'C:\script_factory' # ЗАМЕНИТЕ фактическим каталогом проекта с package.json
+  foreach ($file in @('package.json', 'fleet\server.mjs')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
+      throw "Не найден $file в $ProjectRoot. Укажите каталог проекта, а не каталог с nodes.json."
+    }
+  }
+  Set-Location -LiteralPath $ProjectRoot -ErrorAction Stop
+  node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+  npm run fleet:start
+}
 ```
 
 По умолчанию сервис слушает `127.0.0.1:34001`, проверка — `/health`. Для прямого HTTP во внутренней сети задайте `FLEET_HOST=0.0.0.0` (или адрес сетевого интерфейса сервера) и `FLEET_PORT=34001`, перезапустите центр и разрешите доступ к этому порту из сети УН. Клиенты обращаются к `http://IP_СЕРВЕРА:34001`, а не к 0.0.0.0. Reverse proxy для такого режима не нужен. Для HTTPS используйте TLS reverse proxy, например `fleet/nginx.conf.example`. Панель открывается по корню адреса. Логин Basic — `admin`, пароль — `FLEET_ADMIN_TOKEN`. Административный HTTP API и CLI используют `Authorization: Bearer <FLEET_ADMIN_TOKEN>`. Доступ к административной панели ограничивается настройками сети/firewall либо reverse proxy, если он используется.
@@ -70,10 +88,38 @@ npm run fleet:start
 
 Для массовой регистрации подготовьте JSON по `fleet/nodes.example.json` с индивидуальными путями и локальными портами:
 
+**Копируйте блок целиком, включая `& {` и закрывающую `}`. Проверка пути и вызов npm находятся в одном блоке: при ошибке проверки npm не запускается.** `ProjectRoot` — каталог полного проекта, где одновременно находятся package.json, scripts и fleet. C:\Deploy в примере — только каталог inventory/выгрузки; он не становится каталогом проекта из-за параметров --inventory или --out. Если проект действительно расположен в C:\Deploy, укажите его в ProjectRoot, но сначала убедитесь в наличии package.json и scripts\fleet-enroll.mjs. Не запускайте npm из C:\.
+
 ```powershell
-$env:FLEET_ADMIN_TOKEN = 'КЛЮЧ_АДМИНИСТРАТОРА'
-npm run fleet:enroll -- --url http://192.168.88.10:34001 --inventory C:/Deploy/nodes.json --out C:/Deploy/enrollments
+& {
+  $ProjectRoot = 'C:\ScriptFactorySource' # ЗАМЕНИТЕ фактическим каталогом проекта с package.json
+  foreach ($file in @('package.json', 'scripts\fleet-enroll.mjs')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
+      throw "Не найден $file в $ProjectRoot. Укажите каталог проекта, а не каталог с nodes.json."
+    }
+  }
+  Set-Location -LiteralPath $ProjectRoot -ErrorAction Stop
+  $env:FLEET_ADMIN_TOKEN = 'КЛЮЧ_АДМИНИСТРАТОРА'
+  npm run fleet:enroll -- --url http://192.168.88.10:34001 --inventory C:/Deploy/nodes.json --out C:/Deploy/enrollments
+}
 ```
+
+Если текущий каталог менять не нужно, npm можно адресовать явно. Сначала проверьте фактический путь к проекту; --prefix относится именно к проекту, а не к inventory:
+
+```powershell
+& {
+  $ProjectRoot = 'C:\ScriptFactorySource' # ЗАМЕНИТЕ фактическим каталогом проекта
+  foreach ($file in @('package.json', 'scripts\fleet-enroll.mjs')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
+      throw "Не найден $file в $ProjectRoot"
+    }
+  }
+  # FLEET_ADMIN_TOKEN должен быть задан для этого сеанса.
+  npm --prefix "$ProjectRoot" run fleet:enroll -- --url http://192.168.88.10:34001 --inventory C:/Deploy/nodes.json --out C:/Deploy/enrollments
+}
+```
+
+Это альтернативный запуск, не второй шаг регистрации: выберите один из двух способов. Успешную регистрацию повторно не запускайте с тем же inventory.
 
 В примерах `192.168.88.10:34001` — адрес центрального сервера: замените его своим. Все CLI и агенты должны использовать один доступный адрес. Для HTTPS укажите `https://` и соответствующий TLS-порт.
 
@@ -104,9 +150,18 @@ ansible-playbook -i inventories/test/hosts.yml install-fleet-agent.yml --ask-vau
 Поднимите версию, выполните тесты и зафиксируйте проверенный commit. Пакет берётся из commit, а не из незакоммиченной рабочей папки:
 
 ```powershell
-npm run fleet:release -- build --ref КОММИТ_РЕЛИЗА --key C:/ScriptFactorySigning/release-private.pem --out C:/ScriptFactoryReleases
-$env:FLEET_ADMIN_TOKEN = 'КЛЮЧ_АДМИНИСТРАТОРА'
-npm run fleet:release -- publish --url http://192.168.88.10:34001 --manifest C:/ScriptFactoryReleases/ID.json --zip C:/ScriptFactoryReleases/ID.zip
+& {
+  $ProjectRoot = 'C:\ScriptFactorySource' # ЗАМЕНИТЕ фактическим каталогом проекта с package.json
+  foreach ($file in @('package.json', 'scripts\fleet-release.mjs')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
+      throw "Не найден $file в $ProjectRoot. Укажите каталог проекта, а не каталог с nodes.json."
+    }
+  }
+  Set-Location -LiteralPath $ProjectRoot -ErrorAction Stop
+  npm run fleet:release -- build --ref КОММИТ_РЕЛИЗА --key C:/ScriptFactorySigning/release-private.pem --out C:/ScriptFactoryReleases
+  $env:FLEET_ADMIN_TOKEN = 'КЛЮЧ_АДМИНИСТРАТОРА'
+  npm run fleet:release -- publish --url http://192.168.88.10:34001 --manifest C:/ScriptFactoryReleases/ID.json --zip C:/ScriptFactoryReleases/ID.zip
+}
 ```
 
 В ZIP включаются только разрешённые каталоги кода и шаблоны: `.env`, секреты, work, outputs, данные, XML и node_modules не включаются. Пакет подписывается Ed25519 и проверяется центром и агентом. Опубликованный ID неизменяем: другой ZIP поверх него не устанавливается.
@@ -192,3 +247,7 @@ Invoke-RestMethod http://192.168.88.10:34001/health
 ```
 
 Ответ должен содержать status=ok и service=script-factory-fleet. Если локальная проверка работает, а с УН нет — проверьте FLEET_HOST, firewall и маршрутизацию. Это отдельная проверка сетевой доступности до регистрации и установки обновлений.
+
+### Если npm ищет C:\package.json
+
+ENOENT с cwd C:\ возникает до запуска fleet:enroll: npm не нашёл проект. Проверьте Get-Location и наличие package.json и scripts\fleet-enroll.mjs в выбранном ProjectRoot. Не создавайте пустой package.json в корне диска и не копируйте туда один package.json. Нужен полный проект с каталогами scripts и fleet. Повторите блок с проверками выше либо используйте npm --prefix. Параметры --url, --inventory и --out не выбирают рабочий каталог npm. Для планировщика/CI задайте Working Directory каталогом проекта либо используйте абсолютный --prefix.
