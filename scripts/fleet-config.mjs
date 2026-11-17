@@ -16,4 +16,4 @@ if(command==='keygen'){
  await writeFile(path.join(out,'fleet-bootstrap.json'),JSON.stringify(bundle,null,2)+'\n',{flag:'wx',mode:0o600});
  for(const node of bundle.nodes){await writeFile(path.join(out,node.node_id+'.env'),node.common_env,{flag:'wx',mode:0o600});const {common_env,...metadata}=node;await writeFile(path.join(out,node.node_id+'.json'),JSON.stringify(metadata,null,2)+'\n',{flag:'wx',mode:0o600});}
  console.log('Bootstrap files written to the protected directory; credentials were not displayed.');
-}else throw new Error('Usage: fleet-config.mjs keygen --out KEYFILE | bootstrap --url HTTPS_URL --nodes id1,id2 --out DIRECTORY');
+}else throw new Error('Usage: fleet-config.mjs keygen --out KEYFILE | bootstrap --url HTTP_OR_HTTPS_URL --nodes id1,id2 --out DIRECTORY');

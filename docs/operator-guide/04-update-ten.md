@@ -6,17 +6,17 @@
 
 ## Один раз подготовить
 
-Разверните центр, настройте HTTPS и установите публичный ключ подписи на центр/агенты по [полной инструкции](../project-guide/11-fleet-updates.md). Приватный ключ держите только на компьютере выпуска. Задайте каждому агенту индивидуальный токен.
+Разверните центр, выберите HTTP во внутренней сети либо HTTPS и установите публичный ключ подписи на центр/агенты по [полной инструкции](../project-guide/11-fleet-updates.md). Приватный ключ держите только на компьютере выпуска. Задайте каждому агенту индивидуальный токен.
 
 ## Выпустить пакет из Git
 
-На компьютере выпуска:
+На компьютере выпуска (замените 192.168.88.10:34001 адресом своего центра; HTTPS также поддерживается):
 
 ```powershell
 git fetch origin
 npm run fleet:release -- build --ref ТОЧНЫЙ_SHA_НОВОГО_РЕЛИЗА --key C:/ScriptFactorySigning/release-private.pem --out C:/ScriptFactoryReleases
 $env:FLEET_ADMIN_TOKEN = Read-Host 'Токен администратора оркестратора' -MaskInput
-npm run fleet:release -- publish --url https://fleet.company.ru --manifest C:/ScriptFactoryReleases/ID.json --zip C:/ScriptFactoryReleases/ID.zip
+npm run fleet:release -- publish --url http://192.168.88.10:34001 --manifest C:/ScriptFactoryReleases/ID.json --zip C:/ScriptFactoryReleases/ID.zip
 Remove-Item Env:\FLEET_ADMIN_TOKEN
 ```
 

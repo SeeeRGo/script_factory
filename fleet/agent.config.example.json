@@ -1,5 +1,5 @@
 {
-  "central_url": "https://fleet.example.org",
+  "central_url": "http://fleet.example.org:34001",
   "node_id": "un-001",
   "un_id": "un-001",
   "token": "REPLACE_WITH_UNIQUE_NODE_TOKEN_FROM_ORCHESTRATOR",

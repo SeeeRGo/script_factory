@@ -18,7 +18,7 @@ export function validateRelease(envelope,publicKey){
 export function serviceUrl(value,{local=false}={}){
  let u;try{u=new URL(value);}catch{throw fault('INVALID_URL','Expected absolute service URL');}
  const loopback=['127.0.0.1','localhost','[::1]'].includes(u.hostname);
- if(u.username||u.password||u.search||u.hash||u.pathname!=='/'||(!['https:','http:'].includes(u.protocol))||(u.protocol==='http:'&&!loopback)||(local&&!loopback))throw fault('INVALID_URL','HTTPS required; HTTP is permitted only on loopback. Use root URL without credentials');
+ if(u.username||u.password||u.search||u.hash||u.pathname!=='/'||(!['https:','http:'].includes(u.protocol))||(local&&!loopback))throw fault('INVALID_URL','Expected an HTTP(S) root URL without credentials, query or fragment; local API must use loopback');
  return u.origin;
 }
 export async function atomicJson(file,value){
