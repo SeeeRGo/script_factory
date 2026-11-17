@@ -27,11 +27,37 @@ export async function atomicJson(file,value){
  try{await handle.sync();}finally{await handle.close();}
 }
 export async function optionalJson(file,fallback){try{return JSON.parse(await readFile(file,'utf8'));}catch(e){if(e.code==='ENOENT')return fallback;throw e;}}
+// Modify only the DACL. A fresh DirectorySecurity + Set-Acl may request audit
+// or ownership privileges that an ordinary owner of an export directory lacks.
+export function windowsDirectoryAccessScript(dir){
+ const encoded=Buffer.from(dir,'utf8').toString('base64');
+ return `$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';
+$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'));
+$directory=New-Object IO.DirectoryInfo($p);
+$acl=$directory.GetAccessControl([Security.AccessControl.AccessControlSections]::Access);
+$acl.SetAccessRuleProtection($true,$false);
+foreach($rule in @($acl.GetAccessRules($true,$false,[Security.Principal.SecurityIdentifier]))){$acl.RemoveAccessRuleSpecific($rule)};
+$me=[Security.Principal.WindowsIdentity]::GetCurrent().User;
+foreach($sid in @($me.Value,'S-1-5-18','S-1-5-32-544')|Select-Object -Unique){
+ $id=New-Object Security.Principal.SecurityIdentifier($sid);
+ $rule=New-Object Security.AccessControl.FileSystemAccessRule($id,'FullControl','ContainerInherit,ObjectInherit','None','Allow');
+ $acl.AddAccessRule($rule);
+};
+$directory.SetAccessControl($acl);`;
+}
+export async function protectWindowsDirectory(dir,execute){
+ const ps=windowsDirectoryAccessScript(dir);
+ try{
+  await execute('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(ps,'utf16le').toString('base64')],{windowsHide:true});
+ }catch{
+  // Native stderr contains CLIXML and the entire encoded command. Do not expose
+  // that dump as the user-facing error; do not continue with unprotected tokens.
+  throw fault('DIRECTORY_PERMISSION_ERROR',`Не удалось ограничить доступ к каталогу "${dir}". Нужны права изменения разрешений этого каталога. Выберите каталог текущего пользователя либо попросите администратора предоставить права. Файлы с ключами не записаны.`,403);
+ }
+}
 export async function privateDirectory(dir){
  await mkdir(dir,{recursive:true,mode:0o700});
  if(process.platform!=='win32'){await chmod(dir,0o700);return;}
  const {execFile}=await import('node:child_process');const {promisify}=await import('node:util');
- const encoded=Buffer.from(dir,'utf8').toString('base64');
- const ps=`$ErrorActionPreference='Stop';$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encoded}'));$acl=New-Object Security.AccessControl.DirectorySecurity;$acl.SetAccessRuleProtection($true,$false);$me=[Security.Principal.WindowsIdentity]::GetCurrent().User;$acl.SetOwner($me);foreach($sid in @($me.Value,'S-1-5-18','S-1-5-32-544')){$id=New-Object Security.Principal.SecurityIdentifier($sid);$rule=New-Object Security.AccessControl.FileSystemAccessRule($id,'FullControl','ContainerInherit,ObjectInherit','None','Allow');$acl.AddAccessRule($rule)};Set-Acl -LiteralPath $p -AclObject $acl`;
- await promisify(execFile)('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(ps,'utf16le').toString('base64')],{windowsHide:true});
+ await protectWindowsDirectory(dir,promisify(execFile));
 }
