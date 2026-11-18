@@ -35,6 +35,7 @@
         src: "{{ playbook_dir }}/../{{ item }}"
         dest: 'C:\ProgramData\ScriptFactoryAgentBootstrap\{{ item }}'
       loop:
+        - package.json
         - fleet/
         - windows/install-fleet-agent.ps1
         - windows/fleet-agent-host.ps1

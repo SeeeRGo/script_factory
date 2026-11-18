@@ -13,7 +13,7 @@ if([int]((& $node --version).Trim().TrimStart('v').Split('.')[0]) -lt 24){throw 
 $config=Get-Content -LiteralPath $ConfigFile -Raw -Encoding UTF8|ConvertFrom-Json
 if($config.node_id -notmatch '^[A-Za-z0-9_-]{1,100}$' -or -not $config.un_id -or $config.token.Length -lt 32 -or $config.token.StartsWith('REPLACE_')){throw 'Complete the node identity and token first'}
 if(-not(Test-Path -LiteralPath $ReleasePublicKey -PathType Leaf)){throw 'Release public key file not found'}
-foreach($relative in @('fleet\agent.mjs','fleet\common.mjs','fleet\configuration.mjs','fleet\config-local.mjs','fleet\config-update.ps1','fleet\windows-adapter.mjs','fleet\run-update.ps1','fleet\rollback-update.ps1','windows\fleet-agent-host.ps1','windows\worker-job.cs','docs\project-guide\tools\update-one-un.ps1')){if(-not(Test-Path -LiteralPath (Join-Path $SourceRoot $relative) -PathType Leaf)){throw "Installer source missing: $relative"}}
+foreach($relative in @('package.json','fleet\agent.mjs','fleet\common.mjs','fleet\configuration.mjs','fleet\config-local.mjs','fleet\config-update.ps1','fleet\windows-adapter.mjs','fleet\run-update.ps1','fleet\rollback-update.ps1','windows\fleet-agent-host.ps1','windows\worker-job.cs','docs\project-guide\tools\update-one-un.ps1')){if(-not(Test-Path -LiteralPath (Join-Path $SourceRoot $relative) -PathType Leaf)){throw "Installer source missing: $relative"}}
 $InstallDir=[IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
 $project=[IO.Path]::GetFullPath($config.project_path).TrimEnd('\')
 if($InstallDir -eq $project -or $InstallDir.StartsWith($project+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Agent must be outside the worker project'}
@@ -26,6 +26,10 @@ if($old){
  if(-not $systemAccount){try{$systemAccount=((New-Object Security.Principal.NTAccount($account)).Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-18')}catch{}}
  if(-not $systemAccount){throw 'Existing task is not the expected SYSTEM agent'}
 }
+$sourceVersion=(Get-Content -LiteralPath (Join-Path $SourceRoot 'package.json') -Raw -Encoding UTF8|ConvertFrom-Json).version
+if($sourceVersion -notmatch '^\d+\.\d+\.\d+$'){throw 'Source package version is invalid'}
+$descriptor=Join-Path $InstallDir 'agent-source.json'
+if(Test-Path $descriptor){$installedVersion=(Get-Content $descriptor -Raw|ConvertFrom-Json).version;if([version]$sourceVersion -lt [version]$installedVersion){throw 'Agent downgrade refused'}}
 New-Item -ItemType Directory -Path $InstallDir -Force|Out-Null
 $acl=New-Object Security.AccessControl.DirectorySecurity
 $acl.SetAccessRuleProtection($true,$false)
@@ -42,9 +46,12 @@ Copy-Item -LiteralPath (Join-Path $SourceRoot 'windows\fleet-agent-host.ps1') -D
 Copy-Item -LiteralPath (Join-Path $SourceRoot 'windows\worker-job.cs') -Destination (Join-Path $InstallDir 'worker-job.cs') -Force
 Copy-Item -LiteralPath $ReleasePublicKey -Destination (Join-Path $InstallDir 'release-public.pem') -Force
 $config.release_public_key=Join-Path $InstallDir 'release-public.pem'
-$config.data_dir=Join-Path $InstallDir 'data'
+$previousConfig=Join-Path $InstallDir 'agent.config.json'
+$previousDataDir=if($old -and (Test-Path $previousConfig)){(Get-Content $previousConfig -Raw -Encoding UTF8|ConvertFrom-Json).data_dir}else{$null}
+$config.data_dir=if($previousDataDir){$previousDataDir}else{Join-Path $InstallDir 'data'}
 New-Item -ItemType Directory -Path $config.data_dir -Force|Out-Null
 [IO.File]::WriteAllText((Join-Path $InstallDir 'agent.config.json'),($config|ConvertTo-Json -Depth 8),(New-Object Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText($descriptor,(@{version=$sourceVersion;installed_at=(Get-Date).ToUniversalTime().ToString('o')}|ConvertTo-Json -Compress),(New-Object Text.UTF8Encoding($false)))
 $args="-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$(Join-Path $InstallDir 'agent-host.ps1')`" -InstallDir `"$InstallDir`" -NodePath `"$node`""
 $action=New-ScheduledTaskAction -Execute (Get-Command powershell.exe).Source -Argument $args -WorkingDirectory $InstallDir
 $trigger=New-ScheduledTaskTrigger -AtStartup
