@@ -1,10 +1,11 @@
-import { generateKeyPairSync,sign,createPublicKey } from 'node:crypto';
+import { generateKeyPairSync,sign,createPublicKey,randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { readFile,writeFile,mkdir,access,unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { hash,releaseBytes,validateRelease,serviceUrl,privateDirectory } from '../fleet/common.mjs';
 const args=process.argv.slice(2),command=args.shift();
 function arg(name,required=true){const i=args.indexOf('--'+name);if(i>=0&&args[i+1])return args[i+1];if(required)throw new Error('Missing --'+name);}
+async function main(){
 if(command==='keygen'){
  const out=path.resolve(arg('out'));await privateDirectory(out);
  for(const name of ['release-private.pem','release-public.pem']){try{await access(path.join(out,name));throw new Error('Signing key files already exist; choose another directory');}catch(e){if(e.code!=='ENOENT')throw e;}}
@@ -13,8 +14,27 @@ if(command==='keygen'){
  try{await writeFile(path.join(out,'release-public.pem'),pair.publicKey.export({format:'pem',type:'spki'}),{flag:'wx'});}catch(e){await unlink(path.join(out,'release-private.pem'));throw e;}
  console.log('Release signing keys created. Keep release-private.pem outside the repository and the fleet server.');
 }else if(command==='build'){
- const ref=arg('ref',false)||'HEAD',out=path.resolve(arg('out')),key=await readFile(arg('key'),'utf8');
- let commit;try{commit=execFileSync('git',['rev-parse','--verify',ref+'^{commit}'],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();}catch{throw new Error('Не найден коммит '+ref+'. Уберите --ref для сборки текущего HEAD или укажите существующий тег/хеш.');}
+ const explicitRef=arg('ref',false),remote=arg('remote',false)||'origin',branch=arg('branch',false)||'main';
+ const out=path.resolve(arg('out')),key=await readFile(arg('key'),'utf8');
+ const git=(...gitArgs)=>execFileSync('git',gitArgs,{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:120000,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_SSH_COMMAND:process.env.GIT_SSH_COMMAND||'ssh -o BatchMode=yes -o ConnectTimeout=15'}}).trim();
+ let commit,source;
+ if(explicitRef){
+  try{commit=git('rev-parse','--verify','--end-of-options',explicitRef+'^{commit}');}catch{throw new Error('Не найден явно указанный коммит. Укажите существующий тег/хеш или уберите --ref для получения актуального origin/main.');}
+  source={mode:'explicit',ref:explicitRef};
+ }else{
+  // Fetch a fresh remote snapshot without checkout/pull or trusting stale remote refs.
+  // Unique refs isolate concurrent builds; never fall back to the local HEAD.
+  if(!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(remote))throw new Error('Некорректное имя remote');
+  try{git('check-ref-format','refs/heads/'+branch);}catch{throw new Error('Некорректное имя ветки');}
+  try{git('remote','get-url',remote);}catch{throw new Error('Не настроен Git remote '+remote+'. Нужен Git-клон с доступом к репозиторию; распакованного ZIP недостаточно.');}
+  const temporaryRef='refs/script-factory/build-'+randomUUID();
+  try{
+   try{git('fetch','--no-tags','--no-write-fetch-head','--',remote,'refs/heads/'+branch+':'+temporaryRef);}
+   catch{throw new Error('Не удалось получить актуальную ветку '+remote+'/'+branch+'. Проверьте сеть и доступ Git к приватному репозиторию. Сборка остановлена; локальная старая версия не используется.');}
+   commit=git('rev-parse','--verify',temporaryRef+'^{commit}');
+  }finally{try{git('update-ref','-d',temporaryRef);}catch{}}
+  source={mode:'remote',remote,branch};
+ }
  const pkg=JSON.parse(execFileSync('git',['show',commit+':package.json'],{encoding:'utf8'}));
  const id=pkg.version.replaceAll('.','_')+'-'+commit.slice(0,12);await mkdir(out,{recursive:true});
  const archive=path.join(out,id+'.zip');
@@ -35,7 +55,7 @@ if(command==='keygen'){
  const envelope={manifest,signature:sign(null,releaseBytes(manifest),key).toString('base64')};
  validateRelease(envelope,createPublicKey(key));
  await writeFile(path.join(out,id+'.json'),JSON.stringify(envelope,null,2)+'\n');
- console.log(JSON.stringify({id,version:pkg.version,archive,manifest:path.join(out,id+'.json'),sha256:manifest.sha256}));
+ console.log(JSON.stringify({id,version:pkg.version,commit,source,archive,manifest:path.join(out,id+'.json'),sha256:manifest.sha256}));
 }else if(command==='publish'){
  const base=serviceUrl(arg('url')),envelope=JSON.parse(await readFile(arg('manifest'),'utf8')),token=process.env.FLEET_ADMIN_TOKEN;
  if(!token)throw new Error('Set FLEET_ADMIN_TOKEN in the environment');
@@ -52,3 +72,6 @@ if(command==='keygen'){
  }
  console.log(existing?.ready?'Release is already published':'Release registered and uploaded');
 }else{throw new Error('Usage: fleet-release.mjs keygen|build|publish; see docs/project-guide/11-fleet-updates.md');}
+
+}
+main().catch(error=>{console.log('Ошибка выпуска: '+String(error.message).replaceAll(process.env.FLEET_ADMIN_TOKEN||'\0','[скрыто]').replace(/[\r\n]+/g,' ').slice(0,1200));process.exitCode=1;});

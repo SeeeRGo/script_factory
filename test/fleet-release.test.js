@@ -26,7 +26,7 @@ test('release builder signs the committed runtime and excludes even force-tracke
  };
  for(const [name,body] of Object.entries(fixture)){const file=path.join(repo,name);await mkdir(path.dirname(file),{recursive:true});await writeFile(file,body);}
  const git=(...args)=>execFileSync('git',args,{cwd:repo,stdio:'pipe'});
- git('init');git('add','.');git('-c','user.name=Release Test','-c','user.email=test@example.invalid','commit','-m','fixture');
+ git('init','-b','main');git('remote','add','origin',repo);git('add','.');git('-c','user.name=Release Test','-c','user.email=test@example.invalid','commit','-m','fixture');
  const keys=generateKeyPairSync('ed25519'),keyFile=path.join(root,'private.pem');await writeFile(keyFile,keys.privateKey.export({format:'pem',type:'pkcs8'}));
  const out=path.join(root,'release');
  const built=JSON.parse(execFileSync(process.execPath,[fileURLToPath(new URL('../scripts/fleet-release.mjs',import.meta.url)),'build','--out',out,'--key',keyFile],{cwd:repo,stdio:'pipe',encoding:'utf8'}));
@@ -68,4 +68,26 @@ test('CLI publishing resumes an incomplete release and enrollment writes a uniqu
  const inventory=path.join(dir,'inventory.json'),out=path.join(dir,'enrollment');await writeFile(inventory,JSON.stringify([{id:'test-un',un_id:'Тестовая УН',group:'Пилот'}]));
  const result=await run('fleet-enroll.mjs',['--url',origin,'--inventory',inventory,'--out',out]);
  const config=JSON.parse(await readFile(path.join(out,'test-un.json'),'utf8'));assert.equal(config.un_id,'Тестовая УН');assert.equal(config.api_url,'http://127.0.0.1:33001');assert.equal(result.stdout.includes(config.token),false);assert.equal(store.node('test-un').token_hash,hash(config.token));
+});
+
+
+test('default build fetches fresh origin/main despite old HEAD and dirty files; offline never falls back',async t=>{
+ const root=await mkdtemp(path.join(tmpdir(),'sf-fresh-release-'));t.after(()=>rm(root,{recursive:true,force:true}));
+ const upstream=path.join(root,'upstream'),local=path.join(root,'local');await mkdir(upstream);
+ const git=(cwd,...args)=>execFileSync('git',args,{cwd,encoding:'utf8',stdio:'pipe'}).trim();
+ git(upstream,'init','-b','main');
+ const save=async(version)=>{await writeFile(path.join(upstream,'package.json'),JSON.stringify({version,releaseDate:'18.11.2026'}));git(upstream,'add','.');git(upstream,'-c','user.name=Test','-c','user.email=test@example.invalid','commit','-m',version);return git(upstream,'rev-parse','HEAD');};
+ const old=await save('0.11.1');git(root,'clone',upstream,local);
+ const fresh=await save('0.15.1');await writeFile(path.join(local,'package.json'),JSON.stringify({version:'9.9.9'}));
+ const key=path.join(root,'private.pem');await writeFile(key,generateKeyPairSync('ed25519').privateKey.export({format:'pem',type:'pkcs8'}));
+ const tool=fileURLToPath(new URL('../scripts/fleet-release.mjs',import.meta.url));
+ const run=(...extra)=>{try{return {ok:true,output:execFileSync(process.execPath,[tool,'build','--out',path.join(root,'out'),'--key',key,...extra],{cwd:local,encoding:'utf8',stdio:'pipe'})};}catch(e){return {ok:false,output:e.stdout,stderr:e.stderr};}};
+ const current=run();assert.equal(current.ok,true,current.output);const built=JSON.parse(current.output);assert.equal(built.version,'0.15.1');assert.equal(built.commit,fresh);assert.equal(built.source.mode,'remote');
+ assert.equal(git(local,'rev-parse','HEAD'),old);assert.equal(JSON.parse(await readFile(path.join(local,'package.json'),'utf8')).version,'9.9.9');
+ assert.equal(git(local,'for-each-ref','--format=%(refname)','refs/script-factory/'),'');
+ const pinned=run('--ref',old);assert.equal(pinned.ok,true,pinned.output);assert.equal(JSON.parse(pinned.output).version,'0.11.1');
+ const missingBranch=run('--branch','missing');assert.equal(missingBranch.ok,false);assert.match(missingBranch.output,/Сборка остановлена/);
+ git(local,'remote','set-url','origin',path.join(root,'missing-repository'));
+ const offline=run();assert.equal(offline.ok,false);assert.match(offline.output,/локальная старая версия не используется/);assert.equal(offline.stderr,'');
+ git(local,'remote','remove','origin');const noRemote=run();assert.equal(noRemote.ok,false);assert.match(noRemote.output,/Не настроен Git remote/);
 });
