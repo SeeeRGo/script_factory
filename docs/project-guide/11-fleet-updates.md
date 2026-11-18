@@ -45,6 +45,7 @@ API **0.11.0**, протокол оркестратора и агента **1**.
 
 ```powershell
 & {
+  $ErrorActionPreference = 'Stop'
   $ProjectRoot = 'C:\ScriptFactorySource' # ЗАМЕНИТЕ фактическим каталогом проекта с package.json
   foreach ($file in @('package.json', 'scripts\fleet-release.mjs')) {
     if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
@@ -64,6 +65,7 @@ API **0.11.0**, протокол оркестратора и агента **1**.
 
 ```powershell
 & {
+  $ErrorActionPreference = 'Stop'
   $ProjectRoot = 'C:\script_factory' # ЗАМЕНИТЕ фактическим каталогом проекта с package.json
   foreach ($file in @('package.json', 'fleet\server.mjs')) {
     if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
@@ -86,19 +88,28 @@ API **0.11.0**, протокол оркестратора и агента **1**.
 
 Одну УН можно зарегистрировать через панель; ключ показывается один раз. `id` агента — до 100 латинских букв, цифр, `_`, `-`. `un_id` копируется без изменения из действующего `.env` УН, может содержать кириллицу; длина до 200 символов, без управляющих символов. Одна регистрация соответствует одному уникальному UN_ID. Группа также может иметь русское название.
 
+Если у вас уже есть `C:\Deploy\nodes.csv` с колонками `Computer,EnvFile`, как в первоначальной установке, используйте [пошаговую инструкцию для существующего CSV и главного узла](../operator-guide/14-existing-csv.md). Конвертер из API 0.14.4+ создаст nodes.json; переименование CSV в JSON не подходит. Регистрация и обновление API — отдельные действия.
+
 Для массовой регистрации подготовьте JSON по `fleet/nodes.example.json` с индивидуальными путями и локальными портами:
 
 **Копируйте блок целиком, включая `& {` и закрывающую `}`. Проверка пути и вызов npm находятся в одном блоке: при ошибке проверки npm не запускается.** `ProjectRoot` — каталог полного проекта, где одновременно находятся package.json, scripts и fleet. C:\Deploy в примере — только каталог inventory/выгрузки; он не становится каталогом проекта из-за параметров --inventory или --out. Если проект действительно расположен в C:\Deploy, укажите его в ProjectRoot, но сначала убедитесь в наличии package.json и scripts\fleet-enroll.mjs. Не запускайте npm из C:\.
 
 ```powershell
 & {
+  $ErrorActionPreference = 'Stop'
   $ProjectRoot = 'C:\ScriptFactorySource' # ЗАМЕНИТЕ фактическим каталогом проекта с package.json
-  foreach ($file in @('package.json', 'scripts\fleet-enroll.mjs')) {
+  foreach ($file in @('package.json', 'scripts\fleet-enroll.mjs', 'windows\convert-fleet-inventory.ps1')) {
     if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
       throw "Не найден $file в $ProjectRoot. Укажите каталог проекта, а не каталог с nodes.json."
     }
   }
   Set-Location -LiteralPath $ProjectRoot -ErrorAction Stop
+  if (Test-Path C:\Deploy\nodes.csv -PathType Leaf) {
+    & .\windows\convert-fleet-inventory.ps1 -CsvPath C:\Deploy\nodes.csv -OutFile C:\Deploy\nodes.json
+  }
+  if (-not (Test-Path C:\Deploy\nodes.json -PathType Leaf)) {
+    throw 'Не найден nodes.json. Сначала преобразуйте nodes.csv или подготовьте JSON по шаблону.'
+  }
   $env:FLEET_ADMIN_TOKEN = 'КЛЮЧ_АДМИНИСТРАТОРА'
   npm run fleet:enroll -- --url http://192.168.88.10:34001 --inventory C:/Deploy/nodes.json --out C:/Deploy/enrollments
 }
@@ -108,12 +119,17 @@ API **0.11.0**, протокол оркестратора и агента **1**.
 
 ```powershell
 & {
+  $ErrorActionPreference = 'Stop'
   $ProjectRoot = 'C:\ScriptFactorySource' # ЗАМЕНИТЕ фактическим каталогом проекта
-  foreach ($file in @('package.json', 'scripts\fleet-enroll.mjs')) {
+  foreach ($file in @('package.json', 'scripts\fleet-enroll.mjs', 'windows\convert-fleet-inventory.ps1')) {
     if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
       throw "Не найден $file в $ProjectRoot"
     }
   }
+  if (Test-Path C:\Deploy\nodes.csv -PathType Leaf) {
+    & (Join-Path $ProjectRoot 'windows\convert-fleet-inventory.ps1') -CsvPath C:\Deploy\nodes.csv -OutFile C:\Deploy\nodes.json
+  }
+  if (-not (Test-Path C:\Deploy\nodes.json -PathType Leaf)) { throw 'Сначала подготовьте nodes.json' }
   # FLEET_ADMIN_TOKEN должен быть задан для этого сеанса.
   npm --prefix "$ProjectRoot" run fleet:enroll -- --url http://192.168.88.10:34001 --inventory C:/Deploy/nodes.json --out C:/Deploy/enrollments
 }
@@ -166,6 +182,7 @@ ansible-playbook -i inventories/test/hosts.yml install-fleet-agent.yml --ask-vau
 
 ```powershell
 & {
+  $ErrorActionPreference = 'Stop'
   $ProjectRoot = 'C:\ScriptFactorySource' # ЗАМЕНИТЕ фактическим каталогом проекта с package.json
   foreach ($file in @('package.json', 'scripts\fleet-release.mjs')) {
     if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {

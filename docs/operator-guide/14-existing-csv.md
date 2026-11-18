@@ -1,0 +1,116 @@
+# Главный узел: регистрация УН из существующего C:\Deploy\nodes.csv
+
+Этот порядок относится к схеме заказчика:
+
+| Назначение | Адрес/путь |
+| --- | --- |
+| Подключение администратора к главной УН | RDP 185.82.25.17:44389 |
+| HTTP оркестратора внутри сети | http://192.168.88.252:34001 |
+| Проект с package.json и scripts | C:\script_factory |
+| Существующий список целевых УН | C:\Deploy\nodes.csv |
+| Подготовленные конфигурации целевых УН | Пути EnvFile из CSV |
+| Производный инвентарь регистрации | C:\Deploy\nodes.json |
+| Индивидуальные конфигурации агентов | C:\Deploy\enrollments\<id>.json |
+
+44389 — RDP-порт, его не подставляют в --url. Главная УН не добавляется в список целей автоматически: преобразуются только строки CSV. Скрипт не подключается к рабочему столу, не меняет AutoAdminLogon, не устанавливает API и не запускает обновление целевых УН.
+
+## Почему возникла ошибка
+
+Сообщение ENOENT open C:\Deploy\nodes.json означает, что npm уже нашёл проект и запустил fleet:enroll, но входной JSON отсутствует. nodes.csv и nodes.json — разные форматы, переименование файла не конвертирует его.
+
+Существующий CSV имеет колонки Computer,EnvFile. Для первоначальной установки это адрес УН и путь подготовленного env. Для регистрации оркестратору нужны id, un_id, адрес API и пути агента. Новый windows/convert-fleet-inventory.ps1 преобразует CSV в JSON, читая из каждого EnvFile только UN_ID и PORT. Пароли, API_KEY и остальные поля env в JSON не копируются.
+
+## 1. Подготовить исходники и проверить CSV
+
+На главной УН используйте комплект проекта **0.14.4+**, содержащий windows/convert-fleet-inventory.ps1. Обновляйте файлы проекта штатной процедурой, не накладывая git pull поверх работающего API. Процесс оркестратора может продолжать работать; конвертер создаёт только инвентарь регистрации.
+
+CSV менять или повторно заполнять JSON вручную не нужно. Пример структуры (адрес и имя файла здесь учебные):
+
+```csv
+Computer,EnvFile
+192.168.88.100,C:\Deploy\env\un-001.env
+```
+
+Каждый EnvFile должен существовать **на главной УН** и содержать UN_ID, совпадающий с действующей конфигурацией соответствующей целевой УН, а также её PORT. Это подготовленные конфигурации, а не удалённые пути Windows. По CSV скрипт не пытается угадывать UN_ID из IP. При несовпадении подготовленного EnvFile с реальной УН исправьте данные до регистрации.
+
+## 2. Преобразовать CSV в JSON
+
+Копируйте блок целиком в PowerShell на главной УН:
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $ProjectRoot = 'C:\script_factory'
+  foreach ($file in @('package.json', 'scripts\fleet-enroll.mjs', 'windows\convert-fleet-inventory.ps1')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
+      throw "Не найден $file в $ProjectRoot. Нужен полный комплект проекта 0.14.4+."
+    }
+  }
+  Set-Location -LiteralPath $ProjectRoot -ErrorAction Stop
+  & .\windows\convert-fleet-inventory.ps1 `
+    -CsvPath C:\Deploy\nodes.csv `
+    -OutFile C:\Deploy\nodes.json `
+    -ProjectPath C:/script_factory
+}
+```
+
+Ожидается «Подготовлен инвентарь … (N УН)». N равен числу строк с УН в вашем CSV, не фиксировано десять. При одинаковом содержимом повторная конвертация ничего не меняет. Отличающийся существующий nodes.json не перезаписывается: сначала проверьте его, затем при необходимости явно добавьте -Force к команде конвертера.
+
+Конвертер проверяет все строки до записи: обязательные колонки, существование EnvFile, UN_ID, PORT, дубли идентификаторов и адресов. Если он сообщает ошибку, исправьте источник и не переходите к регистрации. Относительные пути EnvFile разрешаются относительно каталога CSV. Поддержаны разделители запятая и точка с запятой.
+
+По умолчанию id агента равен UN_ID, а project_path — значению -ProjectPath. Для другой структуры добавьте необязательные колонки Id, Group, ProjectPath, RdpAddress. Если UN_ID содержит кириллицу/пробелы или длиннее 100 символов, задайте отдельный Id из латинских букв, цифр, _ и -. Сам UN_ID сохраняется без изменения. Если узел ранее зарегистрирован через панель, его id должен оставаться прежним.
+
+Локальный api_url агента формируется как http://127.0.0.1:PORT. Сетевой api_address для отображения — http://Computer:PORT. EnvFile из CSV не становится env_file агента: удалённый env_file указывает на .env в каталоге проекта соответствующей УН.
+
+## 3. Проверить результат и доступность центра
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $Inventory = Get-Content C:\Deploy\nodes.json -Raw -Encoding UTF8 | ConvertFrom-Json
+  $Inventory | Select-Object id, un_id, network_address, api_url, project_path | Format-Table
+  Invoke-RestMethod http://192.168.88.252:34001/health
+}
+```
+
+Сверьте соответствие id ↔ UN_ID ↔ IP и число УН. Ответ центра должен содержать status=ok, service=script-factory-fleet. Не продолжайте при ошибке сети/авторизации. В панели проверьте, не зарегистрированы ли эти УН ранее: повторная регистрация существующего id/UN_ID отклоняется, токен не перевыпускается автоматически.
+
+## 4. Зарегистрировать ещё не зарегистрированные УН
+
+Копируйте блок целиком. Если FLEET_ADMIN_TOKEN уже задан в текущем сеансе, он используется; иначе токен запрашивается скрытым вводом. Для Windows PowerShell 5.1 используется AsSecureString, а не MaskInput.
+
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $ProjectRoot = 'C:\script_factory'
+  foreach ($file in @('package.json', 'scripts\fleet-enroll.mjs')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
+      throw "Не найден $file в $ProjectRoot"
+    }
+  }
+  if (-not (Test-Path C:\Deploy\nodes.json -PathType Leaf)) {
+    throw 'Сначала преобразуйте C:\Deploy\nodes.csv в nodes.json по шагу 2.'
+  }
+  Set-Location -LiteralPath $ProjectRoot -ErrorAction Stop
+  if (-not $env:FLEET_ADMIN_TOKEN) {
+    $secret = Read-Host 'Токен администратора оркестратора' -AsSecureString
+    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secret)
+    try { $env:FLEET_ADMIN_TOKEN = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
+    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+  }
+  try {
+    npm run fleet:enroll -- --url http://192.168.88.252:34001 --inventory C:/Deploy/nodes.json --out C:/Deploy/enrollments
+    if ($LASTEXITCODE -ne 0) { throw 'Регистрация остановлена. Проверьте сообщение и частично созданные регистрации.' }
+  } finally {
+    Remove-Item Env:\FLEET_ADMIN_TOKEN -ErrorAction SilentlyContinue
+  }
+}
+```
+
+При частичном успехе сохраните уже выданные файлы enrollments и исключите зарегистрированные УН из следующей регистрации. Не удаляйте всё и не запускайте тот же список повторно вслепую. Для одного узла, уже зарегистрированного через панель, заполните шаблон агента сохранённым токеном вместо повторного вызова fleet:enroll.
+
+## 5. Перейти к установке агентов и обновлению API
+
+Регистрация создаёт запись в центре и индивидуальный JSON, но не устанавливает/обновляет API на перечисленных IP. Передайте каждой УН её JSON и публичный ключ и установите агент по [инструкции оркестратора](../project-guide/11-fleet-updates.md). Затем выпустите подписанный релиз и выберите цели обновления по [инструкции](04-update-ten.md). nodes.json не загружается в форму «Пакет релиза»: туда нужны manifest и ZIP.
+
+Для уже установленных API сохраните их UN_ID, ключи, пути и пользовательский сеанс. Переустановка с нуля и изменение AutoAdminLogon для регистрации/конвертации не требуются.
