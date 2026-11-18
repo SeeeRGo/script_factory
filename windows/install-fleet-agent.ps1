@@ -21,7 +21,11 @@ if(-not(Test-Path -LiteralPath $config.env_file)){throw 'Worker .env not found'}
 $old=Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if($old -and $old.State -eq 'Running'){throw 'Stop the agent at an idle boundary before upgrading its own installation'}
 if((Test-Path -LiteralPath $InstallDir) -and -not $old){throw 'Installation directory already exists without a registered agent; inspect and prepare a clean protected directory'}
-if($old -and $old.Principal.UserId -notin @('SYSTEM','S-1-5-18','NT AUTHORITY\SYSTEM')){throw 'Existing task is not the expected SYSTEM agent'}
+if($old){
+ $account=$old.Principal.UserId;$systemAccount=$account -in @('SYSTEM','S-1-5-18','NT AUTHORITY\SYSTEM')
+ if(-not $systemAccount){try{$systemAccount=((New-Object Security.Principal.NTAccount($account)).Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-18')}catch{}}
+ if(-not $systemAccount){throw 'Existing task is not the expected SYSTEM agent'}
+}
 New-Item -ItemType Directory -Path $InstallDir -Force|Out-Null
 $acl=New-Object Security.AccessControl.DirectorySecurity
 $acl.SetAccessRuleProtection($true,$false)

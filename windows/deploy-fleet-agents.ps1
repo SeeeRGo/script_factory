@@ -100,7 +100,9 @@ try{
     $install='C:\ProgramData\ScriptFactoryAgent';$task=Get-ScheduledTask -TaskName 'ScriptFactory-Fleet-Agent' -ErrorAction SilentlyContinue
     $desired=Get-Content (Join-Path $stage 'agent.config.json') -Raw -Encoding UTF8|ConvertFrom-Json
     if($task){
-     if($task.Principal.UserId -notin @('SYSTEM','S-1-5-18','NT AUTHORITY\SYSTEM')){throw 'Existing agent task is not SYSTEM'}
+     $account=$task.Principal.UserId;$systemAccount=$account -in @('SYSTEM','S-1-5-18','NT AUTHORITY\SYSTEM')
+     if(-not $systemAccount){try{$systemAccount=((New-Object Security.Principal.NTAccount($account)).Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-18')}catch{}}
+     if(-not $systemAccount){throw 'Existing agent task is not SYSTEM'}
      $old=Get-Content (Join-Path $install 'agent.config.json') -Raw -Encoding UTF8|ConvertFrom-Json
      foreach($property in $desired.PSObject.Properties){if($property.Name -notin @('release_public_key','data_dir') -and $old.($property.Name) -cne $property.Value){throw 'Installed agent configuration differs; do not replace a running agent automatically'}}
      if((Get-FileHash (Join-Path $install 'release-public.pem')).Hash -ne (Get-FileHash (Join-Path $stage 'release-public.pem')).Hash){throw 'Installed signing key differs; explicit key rotation required'}

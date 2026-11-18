@@ -14,6 +14,8 @@ function Health {
  try { Invoke-RestMethod "http://127.0.0.1:$Port/health" -TimeoutSec 5 }
  catch {
   if(-not $_.Exception.Response -or [int]$_.Exception.Response.StatusCode -ne 503){throw}
+  $details=$_.ErrorDetails.Message
+  if($details){try{return ($details|ConvertFrom-Json -ErrorAction Stop)}catch{}}
   $reader=New-Object IO.StreamReader($_.Exception.Response.GetResponseStream())
   try{$reader.ReadToEnd()|ConvertFrom-Json}finally{$reader.Dispose()}
  }
