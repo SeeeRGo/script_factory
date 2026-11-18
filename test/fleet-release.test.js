@@ -17,6 +17,7 @@ test('release builder signs the committed runtime and excludes even force-tracke
  const fixture={
   'package.json':JSON.stringify({version:'0.11.1',releaseDate:'09.11.2026'}),'package-lock.json':'{}','openapi.yaml':'openapi: 3.0.0',
   '.env.example':'API_KEY=placeholder','src/server.js':'console.log("safe")','public/index.html':'<p>safe</p>',
+  'scripts/fleet-release.mjs':'// release CLI','scripts/fleet-enroll.mjs':'// enrollment CLI',
   'windows/start-worker.ps1':'# safe','windows/.env.example':'API_KEY=placeholder',
   'fleet/agent.mjs':'// safe','fleet/agent.config.example.json':'{}','fleet/controller.env.example':'FLEET_ADMIN_TOKEN=placeholder',
   'docs/project-guide/tools/update-one-un.ps1':'# safe',
@@ -28,7 +29,8 @@ test('release builder signs the committed runtime and excludes even force-tracke
  git('init');git('add','.');git('-c','user.name=Release Test','-c','user.email=test@example.invalid','commit','-m','fixture');
  const keys=generateKeyPairSync('ed25519'),keyFile=path.join(root,'private.pem');await writeFile(keyFile,keys.privateKey.export({format:'pem',type:'pkcs8'}));
  const out=path.join(root,'release');
- execFileSync(process.execPath,[fileURLToPath(new URL('../scripts/fleet-release.mjs',import.meta.url)),'build','--ref','HEAD','--out',out,'--key',keyFile],{cwd:repo,stdio:'pipe'});
+ const built=JSON.parse(execFileSync(process.execPath,[fileURLToPath(new URL('../scripts/fleet-release.mjs',import.meta.url)),'build','--out',out,'--key',keyFile],{cwd:repo,stdio:'pipe',encoding:'utf8'}));
+ assert.equal(built.manifest,path.join(out,built.id+'.json'));assert.equal(built.archive,path.join(out,built.id+'.zip'));
  const files=await readdir(out),envelope=JSON.parse(await readFile(path.join(out,files.find(f=>f.endsWith('.json'))),'utf8'));
  validateRelease(envelope,keys.publicKey);
  const zip=await readFile(path.join(out,files.find(f=>f.endsWith('.zip'))));
@@ -39,7 +41,7 @@ test('release builder signs the committed runtime and excludes even force-tracke
   names.push(zip.subarray(offset+46,offset+46+n).toString());offset+=46+n+extra+comment;
  }
  for(const name of ['.env','fleet/agent.config.json','fleet/controller.env','fleet/release-private.pem','windows/worker.env','work/report.xml','outputs/secret.json'])assert.equal(names.includes(name),false,name+' must not be distributed');
- for(const name of ['src/server.js','fleet/agent.mjs','.env.example','windows/.env.example','fleet/controller.env.example'])assert.equal(names.includes(name),true);
+ for(const name of ['scripts/fleet-release.mjs','scripts/fleet-enroll.mjs','src/server.js','fleet/agent.mjs','.env.example','windows/.env.example','fleet/controller.env.example'])assert.equal(names.includes(name),true);
 });
 
 test('key generation creates a matching trusted pair and refuses to replace existing keys',async t=>{

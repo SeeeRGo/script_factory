@@ -181,20 +181,11 @@ ansible-playbook -i inventories/test/hosts.yml install-fleet-agent.yml --ask-vau
 Поднимите версию, выполните тесты и зафиксируйте проверенный commit. Пакет берётся из commit, а не из незакоммиченной рабочей папки:
 
 ```powershell
-& {
-  $ErrorActionPreference = 'Stop'
-  $ProjectRoot = 'C:\ScriptFactorySource' # ЗАМЕНИТЕ фактическим каталогом проекта с package.json
-  foreach ($file in @('package.json', 'scripts\fleet-release.mjs')) {
-    if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot $file) -PathType Leaf)) {
-      throw "Не найден $file в $ProjectRoot. Укажите каталог проекта, а не каталог с nodes.json."
-    }
-  }
-  Set-Location -LiteralPath $ProjectRoot -ErrorAction Stop
-  npm run fleet:release -- build --ref КОММИТ_РЕЛИЗА --key C:/ScriptFactorySigning/release-private.pem --out C:/ScriptFactoryReleases
-  $env:FLEET_ADMIN_TOKEN = 'КЛЮЧ_АДМИНИСТРАТОРА'
-  npm run fleet:release -- publish --url http://192.168.88.10:34001 --manifest C:/ScriptFactoryReleases/ID.json --zip C:/ScriptFactoryReleases/ID.zip
-}
+& C:\script_factory\windows\publish-fleet-release.ps1 `
+  -CentralUrl http://192.168.88.252:34001
 ```
+
+Требуется комплект исходников 0.15.0+. Команда собирает текущий закоммиченный HEAD локального репозитория и передаёт созданные файлы в публикацию автоматически. Сначала обновите исходники до нужного релиза; git fetch сам по себе не переключает HEAD. Для другого коммита добавьте -Ref с существующим тегом/хешем. При необходимости задайте -SigningKey и -OutputDirectory. Токен запрашивается скрытым вводом, совместимым с PowerShell 5.1.
 
 В ZIP включаются только разрешённые каталоги кода и шаблоны: `.env`, секреты, work, outputs, данные, XML и node_modules не включаются. Пакет подписывается Ed25519 и проверяется центром и агентом. Опубликованный ID неизменяем: другой ZIP поверх него не устанавливается.
 
@@ -297,3 +288,10 @@ ENOENT с cwd C:\ возникает до запуска fleet:enroll: npm не 
 ### Если после конвертации ошибка указана в fleet-enroll.mjs
 
 Строка с HTTP-отказом означает, что JSON прочитан и центр ответил, но регистрацию не принял. Проверьте уже существующие id/UN_ID, включая отозванные записи. Отзыв ключа не освобождает UN_ID. С 0.14.5 CLI показывает HTTP-статус/код/причину и проверяет конфликты до создания новых записей. [Разбор отозванной регистрации и отдельного списка новых УН](../operator-guide/14-existing-csv.md). Не удаляйте базу и не меняйте UN_ID работающего API для повторной регистрации.
+
+
+## Автоматизированный запуск по CSV (0.15.0)
+
+Для полного существующего CSV используйте `windows/sync-fleet-enrollment.ps1`: повторный запуск сохраняет ID и действующие ключи, добавляет новые УН, формирует индивидуальные JSON. `-PlanOnly` показывает план, `-RecoverExisting` явно восстанавливает потерянные ключи. Пошаговый пример с реальными адресами главной УН приведён в [инструкции CSV](../operator-guide/14-existing-csv.md).
+
+`windows/publish-fleet-release.ps1 -CentralUrl <адрес центра>` собирает текущий HEAD и публикует полученные manifest/ZIP без ручной подстановки имён. У низкоуровневой команды `fleet:release build` параметр --ref теперь необязателен (HEAD). Публикация и запуск раскатки остаются разными действиями.

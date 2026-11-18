@@ -13,14 +13,14 @@ if(command==='keygen'){
  try{await writeFile(path.join(out,'release-public.pem'),pair.publicKey.export({format:'pem',type:'spki'}),{flag:'wx'});}catch(e){await unlink(path.join(out,'release-private.pem'));throw e;}
  console.log('Release signing keys created. Keep release-private.pem outside the repository and the fleet server.');
 }else if(command==='build'){
- const ref=arg('ref'),out=path.resolve(arg('out')),key=await readFile(arg('key'),'utf8');
- const commit=execFileSync('git',['rev-parse','--verify',ref+'^{commit}'],{encoding:'utf8'}).trim();
+ const ref=arg('ref',false)||'HEAD',out=path.resolve(arg('out')),key=await readFile(arg('key'),'utf8');
+ let commit;try{commit=execFileSync('git',['rev-parse','--verify',ref+'^{commit}'],{encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();}catch{throw new Error('Не найден коммит '+ref+'. Уберите --ref для сборки текущего HEAD или укажите существующий тег/хеш.');}
  const pkg=JSON.parse(execFileSync('git',['show',commit+':package.json'],{encoding:'utf8'}));
  const id=pkg.version.replaceAll('.','_')+'-'+commit.slice(0,12);await mkdir(out,{recursive:true});
  const archive=path.join(out,id+'.zip');
  // Filter tracked files as well: an accidentally force-added configuration must not enter a release.
  const tree=execFileSync('git',['ls-tree','-r','-z',commit],{encoding:'utf8'}).split('\0').filter(Boolean);
- const roots=new Set(['package.json','package-lock.json','openapi.yaml','.env.example','docs/project-guide/tools/update-one-un.ps1']);
+ const roots=new Set(['package.json','package-lock.json','openapi.yaml','.env.example','docs/project-guide/tools/update-one-un.ps1','scripts/fleet-release.mjs','scripts/fleet-enroll.mjs']);
  const templates=new Set(['.env.example','windows/.env.example','fleet/controller.env.example','fleet/agent.config.example.json','fleet/nodes.example.json']);
  const files=tree.flatMap(entry=>{
   const [info,name]=entry.split('\t');
@@ -35,7 +35,7 @@ if(command==='keygen'){
  const envelope={manifest,signature:sign(null,releaseBytes(manifest),key).toString('base64')};
  validateRelease(envelope,createPublicKey(key));
  await writeFile(path.join(out,id+'.json'),JSON.stringify(envelope,null,2)+'\n');
- console.log(JSON.stringify({id,version:pkg.version,archive,sha256:manifest.sha256}));
+ console.log(JSON.stringify({id,version:pkg.version,archive,manifest:path.join(out,id+'.json'),sha256:manifest.sha256}));
 }else if(command==='publish'){
  const base=serviceUrl(arg('url')),envelope=JSON.parse(await readFile(arg('manifest'),'utf8')),token=process.env.FLEET_ADMIN_TOKEN;
  if(!token)throw new Error('Set FLEET_ADMIN_TOKEN in the environment');
