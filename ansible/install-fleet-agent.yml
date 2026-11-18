@@ -7,7 +7,7 @@
     - name: Validate per-node enrollment and controller settings
       ansible.builtin.assert:
         that:
-          - script_factory_fleet_url is match('^https://')
+          - script_factory_fleet_url is match('^https?://')
           - script_factory_fleet_node_id | length > 0
           - script_factory_un_id | length > 0
           - script_factory_fleet_token | length >= 32

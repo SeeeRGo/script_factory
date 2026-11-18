@@ -18,6 +18,7 @@ test('release builder signs the committed runtime and excludes even force-tracke
   'package.json':JSON.stringify({version:'0.11.1',releaseDate:'09.11.2026'}),'package-lock.json':'{}','openapi.yaml':'openapi: 3.0.0',
   '.env.example':'API_KEY=placeholder','src/server.js':'console.log("safe")','public/index.html':'<p>safe</p>',
   'scripts/fleet-release.mjs':'// release CLI','scripts/fleet-enroll.mjs':'// enrollment CLI',
+  'windows/deploy-fleet-agents.ps1':'# bootstrap','windows/fleet-agent-plan.ps1':'# helpers',
   'windows/start-worker.ps1':'# safe','windows/.env.example':'API_KEY=placeholder',
   'fleet/agent.mjs':'// safe','fleet/agent.config.example.json':'{}','fleet/controller.env.example':'FLEET_ADMIN_TOKEN=placeholder',
   'docs/project-guide/tools/update-one-un.ps1':'# safe',
@@ -41,7 +42,7 @@ test('release builder signs the committed runtime and excludes even force-tracke
   names.push(zip.subarray(offset+46,offset+46+n).toString());offset+=46+n+extra+comment;
  }
  for(const name of ['.env','fleet/agent.config.json','fleet/controller.env','fleet/release-private.pem','windows/worker.env','work/report.xml','outputs/secret.json'])assert.equal(names.includes(name),false,name+' must not be distributed');
- for(const name of ['scripts/fleet-release.mjs','scripts/fleet-enroll.mjs','src/server.js','fleet/agent.mjs','.env.example','windows/.env.example','fleet/controller.env.example'])assert.equal(names.includes(name),true);
+ for(const name of ['windows/deploy-fleet-agents.ps1','windows/fleet-agent-plan.ps1','scripts/fleet-release.mjs','scripts/fleet-enroll.mjs','src/server.js','fleet/agent.mjs','.env.example','windows/.env.example','fleet/controller.env.example'])assert.equal(names.includes(name),true);
 });
 
 test('key generation creates a matching trusted pair and refuses to replace existing keys',async t=>{
