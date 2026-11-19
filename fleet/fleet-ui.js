@@ -20,7 +20,7 @@ function drawNodes(){
   controls.append(button('Удалить',async()=>{if(!confirm('Удалить регистрацию '+n.id+' / '+n.un_id+'? Ключ перестанет работать. История сохранится; агент Windows этим действием не удаляется.'))return;await api('/api/nodes/'+n.id,{confirm_delete:true},'DELETE');selected.delete(n.id);say('Регистрация '+n.id+' удалена. История операций сохранена.');}));
   box.dataset.nodeId=n.id;
   const online=n.last_seen&&Date.now()-Date.parse(n.last_seen)<180000;
-  row('nodes',[box,n.id+' / '+n.un_id+' / '+(n.display_name||'')+'\nСеть: '+(n.network_address||n.configuration?.bootstrap?.host||'не задана')+'; RDP: '+(n.rdp_address||'не задан')+'; API: '+(n.api_address||'не задан')+'\nАгент: '+(n.observed_host||'—')+' '+(n.observed_addresses||[]).join(', '),n.group,(n.version||'—')+(n.config_capable?' / конфигурации':' / обновите агент'),(online?'На связи':'Нет связи')+' / '+(n.maintenance?'Обслуживание':n.api_ready?'API готов':'API не готов'),n.last_seen,controls]);
+  row('nodes',[box,n.id+' / '+n.un_id+' / '+(n.display_name||'')+'\nСеть: '+(n.network_address||n.configuration?.bootstrap?.host||'не задана')+'; RDP: '+(n.rdp_address||'не задан')+'; API: '+(n.api_address||'не задан')+'\nАгент: '+(n.observed_host||'—')+' '+(n.observed_addresses||[]).join(', '),n.group,'API: '+(n.version||'—')+'\nАгент: '+(n.agent_source_version||'неизвестна')+(n.agent_update_status==='failed'?' / ошибка обновления агента':n.agent_update_status==='pending'?' / ожидается обновление':'')+(n.config_capable?' / конфигурации':' / обновите агент'),(online?'На связи':'Нет связи')+' / '+(n.maintenance?'Обслуживание':n.api_ready?'API готов':'API не готов'),n.last_seen,controls]);
  }
 }
 let historyPages={rollouts:1,deployments:1,events:1},lastDiagnostics=null;

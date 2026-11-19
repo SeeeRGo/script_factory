@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm,writeFile} from 'node:fs/promises';
+import {mkdtemp,rm,writeFile,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {generateKeyPairSync,sign,randomUUID} from 'node:crypto';
@@ -87,7 +87,7 @@ for(const scenario of ['success','post_update_smoke_failure','installer_rollback
   res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(result));
  });
  const local=await listen(t,localServer);const env=path.join(dir,'.env'),key=path.join(dir,'public.pem'),dataDir=path.join(dir,'agent');
- await writeFile(env,'UN_ID=one\nAPI_KEY=local-secret\n');await writeFile(key,publicKey);await mkdir(dataDir);
+ await writeFile(env,'UN_ID=one\nAPI_KEY=local-secret\n');await writeFile(key,publicKey);await mkdir(dataDir);await writeFile(path.join(dir,'agent-source.json'),JSON.stringify({version:'0.16.0'}));
  const adapter={install:async()=>{installs++;assert.equal(maintenance.phase,'installing');if(scenario==='installer_rollback')return {rolled_back:true};currentVersion='0.11.1';return {updated:true,backup:'backup-one'};},rollback:async()=>{rollbacks++;currentVersion='0.11.0';return {rolled_back:true};},recover:async()=>null};
  if(scenario==='restart_unknown_install'){
   const command=store.heartbeat('one',beat('one')).command;maintenance={active:true,owner:'fleet-'+command.deployment_id,phase:'installing',ready_to_update:true};
@@ -106,6 +106,7 @@ for(const scenario of ['success','post_update_smoke_failure','installer_rollback
  };
  const agent=await createAgent({central_url:central,api_url:local,node_id:'one',un_id:'one',token:enrollment.token,release_public_key:key,env_file:env,data_dir:dataDir,poll_seconds:5},{adapter,fetchImpl});
  await agent.tick({waitForWork:true});
+ const contact=JSON.parse(await readFile(path.join(dataDir,'agent-contact.json'),'utf8'));assert.equal(contact.node_id,'one');assert.equal(contact.source_version,'0.16.0');assert.ok(Number.isFinite(Date.parse(contact.at)));assert.equal(store.node('one').agent_source_version,'0.16.0');
  if(scenario==='lost_report_ack')await assert.rejects(agent.tick(),/response lost/);
  await agent.tick({waitForWork:true});await agent.settle();
  const d=Object.values(store.read().deployments)[0];

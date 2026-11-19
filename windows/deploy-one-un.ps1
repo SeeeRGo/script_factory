@@ -8,6 +8,8 @@ param(
   [string]$TaskName='ScriptFactory-Test-UN',
   [string]$TaskPath='\',
   [string]$RunAsUser='',
+  [string]$FleetConfigFile='',
+  [string]$ReleasePublicKey='',
   [int]$Port=33001,
   [switch]$ConfirmNoNewJobs,
   [switch]$ConfirmReplaceCode
@@ -62,7 +64,7 @@ if($state.state -eq 'update'){
   $workerTaskOk=$workerTask -and ($workerTask.Actions.Arguments -join ' ').Contains($ProjectPath)
  }
  if($task -and ($task.Actions.Arguments -join ' ').Contains($ProjectPath) -and $workerTaskOk){
-  & (Join-Path $app 'docs\project-guide\tools\update-one-un.ps1') -ProjectPath $ProjectPath -PackageZip $PackageZip -ExpectedVersion $ExpectedVersion -ExpectedSha256 $ExpectedSha256 -TaskName $TaskName -TaskPath $TaskPath -Port $Port -BackupRoot $BackupRoot -ConfirmNoNewJobs -ConfirmReplaceCode
+  & (Join-Path $app 'docs\project-guide\tools\update-one-un.ps1') -ProjectPath $ProjectPath -PackageZip $PackageZip -ExpectedVersion $ExpectedVersion -ExpectedSha256 $ExpectedSha256 -TaskName $TaskName -TaskPath $TaskPath -Port $Port -BackupRoot $BackupRoot -FleetConfigFile $FleetConfigFile -ReleasePublicKey $ReleasePublicKey -ConfirmNoNewJobs -ConfirmReplaceCode
   return
  }
  Write-Host 'Task missing or invalid; reinstalling task and application with preserved state.'
@@ -149,7 +151,7 @@ try {
  }
  $codeAcl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($userSid,'ReadAndExecute','ContainerInherit,ObjectInherit','None','Allow')))
  Set-Acl -LiteralPath $ProjectPath -AclObject $codeAcl
- & (Join-Path $ProjectPath 'windows\install-task.ps1') -ProjectPath $ProjectPath -TaskName $TaskName -TaskPath $TaskPath -RunAsUser $user -Port $Port -SkipDependencyInstall
+ & (Join-Path $ProjectPath 'windows\install-task.ps1') -ProjectPath $ProjectPath -TaskName $TaskName -TaskPath $TaskPath -RunAsUser $user -Port $Port -SkipDependencyInstall -FleetConfigFile $FleetConfigFile -ReleasePublicKey $ReleasePublicKey
  $live=$null
  for($i=0;$i -lt 30;$i++){
   try{$live=Invoke-RestMethod "http://127.0.0.1:$Port/live" -TimeoutSec 2;if($live.version -eq $ExpectedVersion -and $live.un_id -eq $config['UN_ID']){break}}catch{}

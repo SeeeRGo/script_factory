@@ -7,6 +7,9 @@
   [switch]$SkipPreflight,
   [ValidateSet('broker','inline')][string]$ExecutionMode='broker',
   [string]$TaskPath='\',
+  [string]$FleetConfigFile='',
+  [string]$ReleasePublicKey='',
+  [switch]$SkipFleetAgent,
   [int]$Port = 33001
 )
 
@@ -60,6 +63,10 @@ if (-not $SkipDependencyInstall) {
   if ($LASTEXITCODE -ne 0) { throw 'npm ci завершился с ошибкой' }
 }
 
+function Sync-FleetAgent {
+ if($SkipFleetAgent){return}
+ & (Join-Path $ProjectPath 'windows\sync-installed-fleet-agent.ps1') -SourceRoot $ProjectPath -ProjectPath $ProjectPath -EnvFile $configurationFile -ConfigFile $FleetConfigFile -ReleasePublicKey $ReleasePublicKey -Defer
+}
 $powerShell = (Get-Command powershell.exe).Source
 $startScript = Join-Path $ProjectPath 'windows\start-worker.ps1'
 try{if(-not(Get-NetFirewallRule -DisplayName 'Script Factory API' -ErrorAction SilentlyContinue)){New-NetFirewallRule -DisplayName 'Script Factory API' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $Port|Out-Null}}catch{Write-Warning 'Проверьте разрешение порта API в Windows Firewall'}
@@ -101,6 +108,7 @@ if($ExecutionMode -eq 'broker'){
  Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
  try{Start-ScheduledTask -TaskName $workerTaskName -TaskPath $TaskPath}catch{Write-Warning 'API запущено. Worker начнёт работу после входа пользователя.'}
  Write-Host "API: $TaskName (SYSTEM, при включении Windows). Worker: $workerTaskName ($userId, при входе)."
+ Sync-FleetAgent
  return
 }
 if((Get-Content -LiteralPath $configurationFile -Raw) -match '(?m)^\s*EXECUTION_MODE\s*=\s*broker\s*$'){throw 'Use the saved task/environment backup to revert an existing broker installation; inline installation is only for legacy configurations'}
@@ -113,3 +121,5 @@ Register-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath -Action $action -
 
 Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath
 Write-Host "Задача $TaskName настроена для $userId; команда запуска отправлена. Пользователь должен войти в Windows. Проверка: http://localhost:$Port/health"
+
+Sync-FleetAgent

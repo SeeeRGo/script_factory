@@ -112,6 +112,13 @@ try {
   $node = (Get-Command node -ErrorAction Stop).Source
   if (-not ('ScriptFactory.WorkerJob' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'worker-job.cs') }
   Write-SupervisorLog 'started; restart delay=10s'
+  if($ApiOnly){
+    # New API startup is also the transition path for older agent updaters.
+    # Scheduling failure must not prevent the API itself from coming online.
+    try{& (Join-Path $PSScriptRoot 'sync-installed-fleet-agent.ps1') -SourceRoot $ProjectPath -ProjectPath $ProjectPath -EnvFile $configurationFile -Defer}
+    catch{Write-SupervisorLog 'agent synchronization could not be scheduled; inspect agent-sync.log and installation source'}
+  }
+
   while ($true) {
     $existing = @(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
       $_.CommandLine -imatch $envPattern -and ($_.CommandLine -imatch $serverPattern)

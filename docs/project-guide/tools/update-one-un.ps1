@@ -10,6 +10,8 @@ param(
   [string]$BackupRoot = 'C:\ScriptFactory-backups',
   [string]$MaintenanceOwner = '',
   [string]$ResultFile = '',
+  [string]$FleetConfigFile = '',
+  [string]$ReleasePublicKey = '',
   [switch]$ConfirmNoNewJobs,
   [switch]$ConfirmReplaceCode
 )
@@ -226,7 +228,7 @@ try {
   if ($splitSupported -and ($configuration['EXECUTION_MODE'] -ne 'broker' -or [string]$task.Principal.LogonType -ne 'ServiceAccount' -or -not $interactiveTask)) {
     $workerUser = if ($configuration['WORKER_ACCOUNT']) { $configuration['WORKER_ACCOUNT'] } else { $task.Principal.UserId }
     $taskChanged=$true;$envChanged=$true
-    & (Join-Path $ProjectPath 'windows\install-task.ps1') -ProjectPath $ProjectPath -EnvFile $configurationFile -TaskName $TaskName -TaskPath $TaskPath -RunAsUser $workerUser -ExecutionMode broker -SkipDependencyInstall -SkipPreflight -Port $Port
+    & (Join-Path $ProjectPath 'windows\install-task.ps1') -ProjectPath $ProjectPath -EnvFile $configurationFile -TaskName $TaskName -TaskPath $TaskPath -RunAsUser $workerUser -ExecutionMode broker -SkipDependencyInstall -SkipPreflight -SkipFleetAgent -Port $Port
     $configuration=Read-Configuration $configurationFile
   } elseif (-not $splitSupported -and (Get-Content $startScript -Raw -Encoding UTF8).Contains('[switch]$RestartOnExit')) {
     if (@($task.Actions).Count -ne 1 -or -not $task.Actions[0].Arguments.Contains($startScript) -or [string]$task.Principal.LogonType -ne 'Interactive') {
@@ -249,6 +251,9 @@ try {
   if($splitSupported){$workerName=if($configuration['WORKER_TASK_NAME']){$configuration['WORKER_TASK_NAME']}else{$interactiveName};Enable-ScheduledTask -TaskName $workerName -TaskPath $TaskPath|Out-Null;Start-ScheduledTask -TaskName $workerName -TaskPath $TaskPath}
   $after = Wait-Ready $ExpectedVersion
   if ($after.release_date -ne $package.releaseDate) { throw 'Release date differs from archive' }
+  # Independent SYSTEM task waits for the agent to report/clear this operation.
+  # Run the helper from the NEW verified release, never the stale installed agent.
+  & (Join-Path $ProjectPath 'windows\sync-installed-fleet-agent.ps1') -SourceRoot $ProjectPath -ProjectPath $ProjectPath -EnvFile $configurationFile -ConfigFile $FleetConfigFile -ReleasePublicKey $ReleasePublicKey -Defer
   Write-Result ([pscustomobject]@{ updated=$true; version=$after.version; un_id=$after.un_id; ready=$after.ready; backup=$backup; dependencies_changed=$changeDependencies })
 } catch {
   $failure = $_.Exception.Message

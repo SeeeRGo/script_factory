@@ -119,7 +119,11 @@ export async function createAgent(config,{adapter,fetchImpl=fetch,wait=delay}={}
     while(state.reports.length){const r=state.reports[0];await control('reports/'+r.deployment_id,r);state.reports.shift();await save();}
     let health;try{health=await api('/health');}catch{health={};}
     let facts={};try{const env=parseEnv(await readFile(config.env_file,'utf8'));facts=Object.fromEntries(['PORT','HOST','DATA_DIR'].filter(k=>env[k]!==undefined).map(k=>[k,env[k]]));}catch{}
-    const response=await control('heartbeat',{agent_version:'2',observed_host:os.hostname(),observed_addresses:[...new Set(Object.values(os.networkInterfaces()).flat().filter(a=>a&&!a.internal).map(a=>a.address))].slice(0,20),capabilities:['configuration-v1'],config_facts:facts,un_id:config.un_id,version:health.version||null,api_ready:health.ready===true,maintenance:health.maintenance?.active===true});
+    const source=await optionalJson(path.join(path.dirname(config.release_public_key),'agent-source.json'),{});
+    const sync=await optionalJson(path.join(path.dirname(config.release_public_key),'agent-sync-result.json'),{});
+    const sourceVersion=version(source.version)?source.version:null;
+    const response=await control('heartbeat',{agent_source_version:sourceVersion,agent_update_status:['pending','succeeded','failed'].includes(sync.status)?sync.status:null,agent_version:'2',observed_host:os.hostname(),observed_addresses:[...new Set(Object.values(os.networkInterfaces()).flat().filter(a=>a&&!a.internal).map(a=>a.address))].slice(0,20),capabilities:['configuration-v1'],config_facts:facts,un_id:config.un_id,version:health.version||null,api_ready:health.ready===true,maintenance:health.maintenance?.active===true});
+    await atomicJson(path.join(dataDir,'agent-contact.json'),{node_id:config.node_id,source_version:sourceVersion,at:new Date().toISOString(),pid:process.pid});
     if(!working){const recover=!!state.active,command=state.active?.command||response.command;if(command&&!state.completed.includes(command.deployment_id)){working=execute(command,recover).finally(()=>{working=null;});if(waitForWork)await working;}}
    }finally{ticking=false;}
   },

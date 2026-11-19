@@ -36,8 +36,15 @@ foreach($node in $bundle.nodes){
   $localEnv=Join-Path $localStaging 'common.env';[IO.File]::WriteAllText($localEnv,$node.common_env,(New-Object Text.UTF8Encoding($false)))
   Copy-Item -LiteralPath $localEnv -Destination C:\ProgramData\ScriptFactoryDeploy\common.env -ToSession $session
   $installNode=@{};foreach($key in @('project_path','env_file','un_id','worker_account','saby_executable_path')){if($node.$key){$installNode[$key]=$node.$key}}
-  Invoke-Command -Session $session -ArgumentList $installNode,$ExpectedSha256 -ScriptBlock {
-   param($n,$sha)
+  if($EnrollmentDirectory){
+   $enrollment=Join-Path $EnrollmentDirectory ($node.node_id+'.json')
+   $config=Get-Content -LiteralPath $enrollment -Raw -Encoding UTF8|ConvertFrom-Json
+   if($config.node_id -ne $node.node_id -or $config.un_id -ne $node.un_id -or $config.project_path -ne $node.project_path -or $config.env_file -ne $node.env_file){throw 'Enrollment identity or paths differ from bootstrap export'}
+   Copy-Item -LiteralPath $enrollment -Destination C:\ProgramData\ScriptFactoryDeploy\agent.config.json -ToSession $session
+   Copy-Item -LiteralPath $ReleasePublicKey -Destination C:\ProgramData\ScriptFactoryDeploy\release-public.pem -ToSession $session
+  }
+  Invoke-Command -Session $session -ArgumentList $installNode,$ExpectedSha256,([bool]$EnrollmentDirectory) -ScriptBlock {
+   param($n,$sha,$withAgent)
    $ErrorActionPreference='Stop'
    $zip='C:\ProgramData\ScriptFactoryDeploy\release.zip';$common='C:\ProgramData\ScriptFactoryDeploy\common.env'
    if((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne $sha){throw 'Remote release checksum mismatch'}
@@ -48,22 +55,11 @@ foreach($node in $bundle.nodes){
     & (Join-Path $n.project_path 'windows\prepare-rollout-env.ps1') -ProjectPath $n.project_path -EnvFile $n.env_file -CommonEnvFile $common -UnId $n.un_id
     $args=@{ProjectPath=$n.project_path;EnvFile=$n.env_file;Port=$port}
     if($n.worker_account){$args.RunAsUser=$n.worker_account}
+    if($withAgent){$args.FleetConfigFile='C:\ProgramData\ScriptFactoryDeploy\agent.config.json';$args.ReleasePublicKey='C:\ProgramData\ScriptFactoryDeploy\release-public.pem'}
     & (Join-Path $n.project_path 'windows\install-task.ps1') @args
     $sabyArgs=@{ProjectPath=$n.project_path};if($n.saby_executable_path){$sabyArgs.ExecutablePath=$n.saby_executable_path}
     & (Join-Path $n.project_path 'windows\install-saby-task.ps1') @sabyArgs
-   }finally{Remove-Item -LiteralPath $common -Force -ErrorAction SilentlyContinue}
-  }
-  if($EnrollmentDirectory){
-   $enrollment=Join-Path $EnrollmentDirectory ($node.node_id+'.json')
-   $config=Get-Content -LiteralPath $enrollment -Raw -Encoding UTF8|ConvertFrom-Json
-   if($config.node_id -ne $node.node_id -or $config.un_id -ne $node.un_id -or $config.project_path -ne $node.project_path -or $config.env_file -ne $node.env_file){throw 'Enrollment identity or paths differ from bootstrap export'}
-   Copy-Item -LiteralPath $enrollment -Destination C:\ProgramData\ScriptFactoryDeploy\agent.config.json -ToSession $session
-   Copy-Item -LiteralPath $ReleasePublicKey -Destination C:\ProgramData\ScriptFactoryDeploy\release-public.pem -ToSession $session
-   Invoke-Command -Session $session -ArgumentList $node.project_path -ScriptBlock {
-    param($project)
-    try{& (Join-Path $project 'windows\install-fleet-agent.ps1') -ConfigFile C:\ProgramData\ScriptFactoryDeploy\agent.config.json -ReleasePublicKey C:\ProgramData\ScriptFactoryDeploy\release-public.pem}
-    finally{Remove-Item C:\ProgramData\ScriptFactoryDeploy\agent.config.json -Force -ErrorAction SilentlyContinue}
-   }
+   }finally{Remove-Item -LiteralPath $common -Force -ErrorAction SilentlyContinue;Remove-Item -LiteralPath 'C:\ProgramData\ScriptFactoryDeploy\agent.config.json' -Force -ErrorAction SilentlyContinue}
   }
   Write-Host ('Installation completed: '+$node.node_id+' / '+$node.un_id+' / '+$node.host+'. Verify /health after robot login.')
  }catch{
