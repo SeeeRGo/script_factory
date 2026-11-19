@@ -42,13 +42,14 @@ export async function createFleetServer({dataDir,adminToken,publicKey,maxConcurr
     if(req.headers.origin){const origin=new URL(req.headers.origin);if(origin.host!==req.headers.host)throw fault('ORIGIN_DENIED','Cross-origin writes forbidden',403);}
     if(!String(req.headers['content-type']||'').startsWith(url.pathname.endsWith('/package')?'application/zip':'application/json'))throw fault('INVALID_CONTENT_TYPE','JSON or ZIP content type required',415);
    }
-   if(method==='GET'&&['/','/fleet-ui.js'].includes(url.pathname)){
-    res.writeHead(200,{'Content-Type':url.pathname==='/'?'text/html; charset=utf-8':'text/javascript; charset=utf-8','Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",'X-Content-Type-Options':'nosniff'});res.end(await readFile(path.join(here,url.pathname==='/'?'index.html':'fleet-ui.js')));return;
+   if(method==='GET'&&['/','/fleet-ui.js','/operations.mjs'].includes(url.pathname)){
+    res.writeHead(200,{'Content-Type':url.pathname==='/'?'text/html; charset=utf-8':'text/javascript; charset=utf-8','Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",'X-Content-Type-Options':'nosniff'});res.end(await readFile(path.join(here,url.pathname==='/'?'index.html':url.pathname.slice(1))));return;
    }
    if(method==='GET'&&url.pathname==='/api/fleet'){send(res,200,store.overview());return;}
    if(method==='POST'&&url.pathname==='/api/config/secrets'){send(res,200,store.putSecret(await json(req)));return;}
    if(method==='POST'&&url.pathname==='/api/config/profiles'){send(res,200,store.putProfile(await json(req)));return;}
    const metadata=/^\/api\/nodes\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
+   if(method==='DELETE'&&metadata){send(res,200,store.deleteNode(metadata[1],await json(req)));return;}
    if(method==='PUT'&&metadata){send(res,200,store.putNodeMetadata(metadata[1],await json(req)));return;}
    const assignment=/^\/api\/nodes\/([A-Za-z0-9_-]+)\/configuration$/.exec(url.pathname);
    if(method==='PUT'&&assignment){send(res,200,store.assignConfiguration(assignment[1],await json(req)));return;}
@@ -75,6 +76,10 @@ export async function createFleetServer({dataDir,adminToken,publicKey,maxConcurr
    if(method==='POST'&&url.pathname==='/api/rollouts'){send(res,201,store.rollout(await json(req)));return;}
    const control=/^\/api\/rollouts\/([A-Za-z0-9_-]+)\/(pause|resume|cancel)$/.exec(url.pathname);
    if(method==='POST'&&control){await json(req);send(res,200,store.control(control[1],control[2]));return;}
+   const window=/^\/api\/rollouts\/([A-Za-z0-9_-]+)\/window$/.exec(url.pathname);
+   if(method==='PUT'&&window){send(res,200,store.reschedule(window[1],await json(req)));return;}
+   const diagnostic=/^\/api\/deployments\/([A-Za-z0-9_-]+)\/diagnostics$/.exec(url.pathname);
+   if(method==='GET'&&diagnostic){send(res,200,store.diagnostics(diagnostic[1]));return;}
    const retry=/^\/api\/deployments\/([A-Za-z0-9_-]+)\/retry$/.exec(url.pathname);
    if(method==='POST'&&retry){await json(req);send(res,200,store.retry(retry[1]));return;}
    const resolve=/^\/api\/deployments\/([A-Za-z0-9_-]+)\/resolve$/.exec(url.pathname);

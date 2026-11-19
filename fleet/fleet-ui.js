@@ -1,3 +1,4 @@
+import {activeStatuses,unfinishedStatuses,statusLabels,explainCode,operationBlocker,historyPage} from './operations.mjs';
 let snapshot,selected=new Set(),pending=false;
 const $=id=>document.getElementById(id);
 const text=(tag,value)=>{const e=document.createElement(tag);e.textContent=String(value??'—');return e;};
@@ -16,24 +17,58 @@ function drawNodes(){
   const controls=document.createElement('div');
   controls.append(button('Адреса',async()=>{$('metadata-node').value=n.id;$('metadata-node').onchange();$('node-metadata-form').scrollIntoView({behavior:'smooth'});}));
   controls.append(button('Отозвать',async()=>{await api('/api/nodes/'+n.id+'/revoke',{});selected.delete(n.id);say('Ключ агента отозван.');}),button('Новый ключ',async()=>{const r=await api('/api/nodes/'+n.id+'/rotate',{});say('Новый ключ '+n.id+' (сохраните сейчас):\n'+r.token);}));
+  controls.append(button('Удалить',async()=>{if(!confirm('Удалить регистрацию '+n.id+' / '+n.un_id+'? Ключ перестанет работать. История сохранится; агент Windows этим действием не удаляется.'))return;await api('/api/nodes/'+n.id,{confirm_delete:true},'DELETE');selected.delete(n.id);say('Регистрация '+n.id+' удалена. История операций сохранена.');}));
   box.dataset.nodeId=n.id;
   const online=n.last_seen&&Date.now()-Date.parse(n.last_seen)<180000;
   row('nodes',[box,n.id+' / '+n.un_id+' / '+(n.display_name||'')+'\nСеть: '+(n.network_address||n.configuration?.bootstrap?.host||'не задана')+'; RDP: '+(n.rdp_address||'не задан')+'; API: '+(n.api_address||'не задан')+'\nАгент: '+(n.observed_host||'—')+' '+(n.observed_addresses||[]).join(', '),n.group,(n.version||'—')+(n.config_capable?' / конфигурации':' / обновите агент'),(online?'На связи':'Нет связи')+' / '+(n.maintenance?'Обслуживание':n.api_ready?'API готов':'API не готов'),n.last_seen,controls]);
  }
+}
+let historyPages={rollouts:1,deployments:1,events:1},lastDiagnostics=null;
+function filters(){return {query:$('history-query').value,status:$('history-status').value,from:$('history-from').value,to:$('history-to').value,limit:$('history-limit').value};}
+function pageRows(id,items,extra={}){
+ const result=historyPage(items,{...filters(),...extra,page:historyPages[id]});historyPages[id]=result.page;$(id).replaceChildren();
+ $(id+'-count').textContent='Найдено: '+result.total+'; страница '+result.page+' из '+result.pages;
+ $(id+'-prev').disabled=result.page<=1;$(id+'-next').disabled=result.page>=result.pages;return result.items;
+}
+function retryReason(d){const r=snapshot.rollouts[d.rollout_id];if(d.node_deleted_at||!snapshot.nodes[d.node_id])return 'Регистрация УН удалена; создайте новую раскатку.';if(!r||['completed','cancelled'].includes(r.status))return 'Раскатка закрыта; создайте новую.';if(Date.now()>Date.parse(r.end_at))return 'Сначала измените истёкшее окно раскатки.';return '';}
+function openWindow(r){const form=$('window-form');form.elements.rollout_id.value=r.id;form.elements.start_at.value=localDate(new Date(Math.max(Date.now(),Date.parse(r.start_at))));form.elements.end_at.value=localDate(new Date(Math.max(Date.now()+3600000,Date.parse(r.end_at))));form.hidden=false;form.scrollIntoView({behavior:'smooth'});}
+async function diagnostics(d){
+ const response=await fetch('/api/deployments/'+d.id+'/diagnostics');const data=await response.json();if(!response.ok)throw new Error(data.error?.message||'Диагностика недоступна');lastDiagnostics=data;
+ $('diagnostic-output').textContent=['УН: '+data.node_id+' / '+(data.address||'адрес не задан'),'Операция: '+data.operation_id,'Состояние: '+(statusLabels[data.status]||data.status)+' / '+data.status,'Причина: '+data.explanation,'Ожидание / следующий шаг: '+data.waiting_reason,'','Локальные файлы на УН:',...data.local_logs,'',data.logs_location,'',data.note,'','События центра:',...data.events.map(e=>e.at+' '+e.type+' '+(e.error_code||e.reason||''))].join('\n');
+ $('operation-dialog').showModal();
+}
+function drawHistory(){
+ const rollouts=Object.values(snapshot.rollouts).reverse().map(r=>({...r,search_nodes:r.node_ids.map(id=>{const n=snapshot.nodes[id];return [id,n?.un_id,n?.network_address,n?.display_name].join(' ');})}));
+ for(const r of pageRows('rollouts',rollouts)){
+  const buttons=document.createElement('div');
+  if(!['completed','cancelled'].includes(r.status)){
+   if(r.status==='running')buttons.append(button('Пауза',async()=>{await api('/api/rollouts/'+r.id+'/pause',{});say('Раскатка приостановлена. Активные установки завершаются.');}));
+   buttons.append(button('Продолжить',async()=>{await api('/api/rollouts/'+r.id+'/resume',{});say('Раскатка продолжена. Проверьте время окна и связь агентов в результатах.');}),button('Изменить окно',()=>openWindow(r)),button('Отменить ожидающие',async()=>{await api('/api/rollouts/'+r.id+'/cancel',{});say('Ожидающие операции отменены; активные не прерываются.');}));
+  }
+  buttons.append(button('Операции',()=>{$('history-query').value=r.id;historyPages={rollouts:1,deployments:1,events:1};drawHistory();$('deployments').scrollIntoView({behavior:'smooth'});}));
+  const reason=r.pause_reason?explainCode(r.pause_reason):Date.now()<Date.parse(r.start_at)?'Ожидает начала окна':'';
+  row('rollouts',[r.id+' / '+(r.kind==='configuration'?'Конфигурация':r.release_id),(statusLabels[r.status]||r.status)+' / '+r.status+(reason?'\n'+reason:''),new Date(r.start_at).toLocaleString()+' — '+new Date(r.end_at).toLocaleString(),buttons]);
+ }
+ const deployments=Object.values(snapshot.deployments).reverse();
+ for(const d of pageRows('deployments',deployments)){
+  const controls=document.createElement('div');controls.append(button('Диагностика / журналы',()=>diagnostics(d)));
+  if(['failed','rolled_back'].includes(d.status)){
+   const reason=retryReason(d),b=button('Повторить',async()=>{const r=await api('/api/deployments/'+d.id+'/retry',{});say('Создана повторная попытка '+r.id+'. Если раскатка на паузе, нажмите «Продолжить» после устранения ошибок остальных УН.');});b.disabled=!!reason;b.title=reason;controls.append(b);
+  }else if(d.status==='recovery_required')controls.append(button('Подтвердить восстановление',async()=>{if(!confirm('Подтвердите, что на '+d.node_id+' проверен результат установки и УН восстановлена. Эта кнопка сама её не восстанавливает.'))return;await api('/api/deployments/'+d.id+'/resolve',{confirm_recovered:true});say('Восстановление подтверждено. Для обновления нажмите «Повторить», затем продолжите раскатку.');}));
+  const description=operationBlocker(d,snapshot),blocked=['failed','rolled_back'].includes(d.status)?retryReason(d):'';
+  row('deployments',[d.node_id+' / '+(d.target_un_id||snapshot.nodes[d.node_id]?.un_id||'—')+' / '+(d.target_label||snapshot.nodes[d.node_id]?.display_name||'')+'\nСеть: '+(d.target_address||snapshot.nodes[d.node_id]?.network_address||'адрес не задан')+'\nRDP: '+(d.target_rdp||snapshot.nodes[d.node_id]?.rdp_address||'—')+'\nAPI: '+(d.target_api||snapshot.nodes[d.node_id]?.api_address||'—')+(d.node_deleted_at?'\nРегистрация удалена':''),d.id+'\n'+(d.created_at?new Date(d.created_at).toLocaleString():''),(statusLabels[d.status]||d.status)+' / '+d.status,(d.error_code?d.error_code+'\n':'')+description+(blocked?'\n'+blocked:''),controls]);
+ }
+ const oldType=$('event-type').value;options('event-type',[...new Set(snapshot.events.map(e=>e.type))].sort().map(t=>[t,t]),'Все события');if([...$('event-type').options].some(o=>o.value===oldType))$('event-type').value=oldType;
+ for(const e of pageRows('events',snapshot.events.slice().reverse().filter(e=>!$('event-type').value||e.type===$('event-type').value),{status:''}))row('events',[new Date(e.at).toLocaleString(),e.type,e.node_id||e.deployment_id||e.rollout_id||e.profile_id||e.secret_id||e.node_ids?.join(', '),e.reason||e.error_code||(e.revision?'Редакция '+e.revision:'')]);
 }
 async function refresh(){
  const r=await fetch('/api/fleet');if(!r.ok)throw new Error('Не удалось получить состояние');snapshot=await r.json();drawNodes();drawConfiguration();
  const select=$('release-select'),old=select.value;select.replaceChildren();
  for(const release of Object.values(snapshot.releases).filter(r=>r.ready)){const o=text('option',release.manifest.version+' / '+release.manifest.id);o.value=release.manifest.id;select.append(o);}if([...select.options].some(o=>o.value===old))select.value=old;
  $('releases').textContent=Object.values(snapshot.releases).map(r=>r.manifest.version+': '+(r.ready?'готов':'ожидает ZIP')).join('; ');
- for(const id of ['rollouts','deployments','events'])$(id).replaceChildren();
- for(const r of Object.values(snapshot.rollouts).reverse()){
-  const buttons=document.createElement('div');for(const [caption,op] of [['Пауза','pause'],['Продолжить','resume'],['Отменить ожидающие','cancel']])buttons.append(button(caption,()=>api('/api/rollouts/'+r.id+'/'+op,{})));
-  row('rollouts',[r.id+' / '+(r.kind==='configuration'?'Конфигурация':r.release_id),r.status+(r.pause_reason?' / '+r.pause_reason:''),r.start_at+' — '+r.end_at,buttons]);
- }
- for(const d of Object.values(snapshot.deployments).reverse())row('deployments',[d.node_id+' / '+(d.target_un_id||snapshot.nodes[d.node_id]?.un_id||'—')+' / '+(d.target_label||snapshot.nodes[d.node_id]?.display_name||'')+' / '+(d.target_address||snapshot.nodes[d.node_id]?.network_address||'адрес не задан')+'\nRDP: '+(d.target_rdp||snapshot.nodes[d.node_id]?.rdp_address||'—')+'\nAPI: '+(d.target_api||snapshot.nodes[d.node_id]?.api_address||'—'),d.id,d.status,d.error_code,['failed','rolled_back'].includes(d.status)?button('Повторить',()=>api('/api/deployments/'+d.id+'/retry',{})):d.status==='recovery_required'?button('Подтвердить восстановление',()=>api('/api/deployments/'+d.id+'/resolve',{confirm_recovered:true})):'' ]);
- for(const e of snapshot.events.slice(-100).reverse())row('events',[e.at,e.type,e.node_id||e.deployment_id||e.rollout_id||e.profile_id||e.secret_id||e.node_ids?.join(', '),e.reason||e.error_code||(e.revision?'Редакция '+e.revision:'')]);
+ drawHistory();
 }
+
 $('group-filter').oninput=()=>snapshot&&drawNodes();
 $('node-search').oninput=()=>snapshot&&drawNodes();
 $('nodes-select-all').onclick=()=>{for(const box of $('nodes').querySelectorAll('input:not(:disabled)'))selected.add(box.dataset.nodeId);drawNodes();};
@@ -66,5 +101,13 @@ $('config-preview').onclick=()=>action(async()=>{configPreview=await api('/api/c
 $('configuration-rollout-form').onsubmit=e=>{e.preventDefault();action(async()=>{const ids=selectedNodes();if(!configPreview||ids.length!==configPreview.nodes.length||ids.some(id=>!configPreview.nodes.some(n=>n.node_id===id)))throw new Error('Сначала покажите настройки выбранных УН');const f=Object.fromEntries(new FormData(e.target));const r=await api('/api/config/rollouts',{node_ids:ids,expected_versions:Object.fromEntries(configPreview.nodes.map(n=>[n.node_id,{profile_revision:n.profile_revision,assignment_revision:n.assignment_revision,secret_revisions:n.secret_revisions}])),batch_size:Number(f.batch_size),canary_count:Number(f.canary_count),start_at:new Date(f.start_at).toISOString(),end_at:new Date(f.end_at).toISOString()});configPreview=null;say('Применение конфигурации создано: '+r.id);});};
 $('config-bootstrap').onclick=()=>action(async()=>{if(!$('bootstrap-confirm').checked)throw new Error('Подтвердите защищённую выгрузку с паролями');const result=await api('/api/config/bootstrap',{node_ids:selectedNodes(),confirm_sensitive_export:true});const blob=new Blob([JSON.stringify(result,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='fleet-bootstrap.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);$('bootstrap-confirm').checked=false;say('Установочные данные выгружены. Храните файл в защищённом каталоге.');});
 for(const field of ['start_at','end_at'])$('configuration-rollout-form').elements[field].value=$('rollout-form').elements[field].value;
+for(const id of ['history-query','history-status','history-from','history-to','history-limit','event-type'])$(id).oninput=()=>{historyPages={rollouts:1,deployments:1,events:1};if(snapshot)drawHistory();};
+$('history-filters').onsubmit=e=>e.preventDefault();
+$('history-reset').onclick=()=>{for(const id of ['history-query','history-status','history-from','history-to','event-type'])$(id).value='';historyPages={rollouts:1,deployments:1,events:1};drawHistory();};
+for(const id of ['rollouts','deployments','events']){ $(id+'-prev').onclick=()=>{historyPages[id]--;drawHistory();};$(id+'-next').onclick=()=>{historyPages[id]++;drawHistory();};}
+$('window-form').onsubmit=e=>{e.preventDefault();action(async()=>{const f=Object.fromEntries(new FormData(e.target));await api('/api/rollouts/'+f.rollout_id+'/window',{start_at:new Date(f.start_at).toISOString(),end_at:new Date(f.end_at).toISOString()},'PUT');e.target.hidden=true;say('Окно изменено. Раскатка остаётся на паузе: создайте необходимые повторные попытки и нажмите «Продолжить».');});};
+$('window-cancel').onclick=()=>{$('window-form').hidden=true;};
+$('diagnostic-close').onclick=()=>$('operation-dialog').close();
+$('diagnostic-download').onclick=()=>{if(!lastDiagnostics)return;const url=URL.createObjectURL(new Blob([JSON.stringify(lastDiagnostics,null,2)],{type:'application/json'})),a=document.createElement('a');a.href=url;a.download='diagnostics-'+lastDiagnostics.operation_id+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 refresh().then(()=>say('Состояние обновляется каждые 10 секунд.')).catch(e=>say(e.message));
 setInterval(()=>{if(!pending)refresh().catch(e=>say(e.message));},10000);
