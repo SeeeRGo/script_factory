@@ -45,12 +45,14 @@ if (-not (Test-Path $configurationFile)) {
 
 $nodeVersion = $null
 try {
+  . (Join-Path $PSScriptRoot 'resolve-node.ps1')
+  Enable-ScriptFactoryNode
   $nodeVersion = (& node --version).Trim()
   if ([int]($nodeVersion.TrimStart('v').Split('.')[0]) -lt 24) {
     $errors.Add("Нужен Node.js 24+, найден $nodeVersion")
   }
 } catch {
-  $errors.Add('Node.js не найден в PATH')
+  $errors.Add($_.Exception.Message)
 }
 
 foreach ($secretName in @('API_KEY', 'WEB_PASSWORD')) {

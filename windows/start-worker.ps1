@@ -33,9 +33,9 @@ function Read-DotEnvValue([string]$Path, [string]$Name) {
   return $null
 }
 
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  throw 'Node.js 24+ не найден в PATH'
-}
+. (Join-Path $PSScriptRoot 'resolve-node.ps1')
+Enable-ScriptFactoryNode
+
 
 if (-not (Test-Path $configurationFile)) {
   throw "Не найден файл конфигурации $configurationFile"

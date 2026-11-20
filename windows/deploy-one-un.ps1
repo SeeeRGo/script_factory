@@ -80,6 +80,8 @@ if(Test-Path -LiteralPath $ProjectPath){
 }
 Copy-Item -LiteralPath $sourceEnv -Destination (Join-Path $stage 'saved.env')
 # Prepare dependencies before stopping anything; current installation remains intact on npm failure.
+. (Join-Path $PSScriptRoot 'resolve-node.ps1')
+Enable-ScriptFactoryNode
 $previousSkip=$env:PUPPETEER_SKIP_DOWNLOAD
 Push-Location $app
 try{

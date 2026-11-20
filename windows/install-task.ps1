@@ -25,6 +25,8 @@ try {
   throw "Не найдена учётная запись worker '$userId'. Создайте локального пользователя robot или задайте -RunAsUser."
 }
 
+. (Join-Path $PSScriptRoot 'resolve-node.ps1')
+Enable-ScriptFactoryNode
 $nodeVersion = & node --version
 if (-not $nodeVersion -or [int]($nodeVersion.TrimStart('v').Split('.')[0]) -lt 24) {
   throw "Для установки требуется Node.js 24+, найдено: $nodeVersion"
