@@ -12,9 +12,12 @@
 $ErrorActionPreference = 'Stop'
 $ProjectPath = [IO.Path]::GetFullPath($ProjectPath)
 $ExecutablePath = [IO.Path]::GetFullPath($ExecutablePath)
+if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
+  Write-Warning "Saby executable not found: $ExecutablePath. Saby autostart skipped."
+  return
+}
 $supervisor = Join-Path $ProjectPath 'windows\start-saby.ps1'
 if (-not (Test-Path -LiteralPath $supervisor -PathType Leaf)) { throw "Supervisor not found: $supervisor" }
-if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) { throw "Saby executable not found: $ExecutablePath" }
 $referenceTask = if($WorkerTaskName){$WorkerTaskName}elseif(Get-ScheduledTask -TaskName ($ApiTaskName+'-Worker') -TaskPath $TaskPath -ErrorAction SilentlyContinue){$ApiTaskName+'-Worker'}else{$ApiTaskName}
 $apiTask = Get-ScheduledTask -TaskName $referenceTask -TaskPath $TaskPath -ErrorAction Stop
 $userId = if ($RunAsUser) { $RunAsUser } else { $apiTask.Principal.UserId }
