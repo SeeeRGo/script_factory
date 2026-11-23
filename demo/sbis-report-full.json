@@ -1,7 +1,7 @@
 {
   "format": "json-workflow",
   "title": "СБИС: ФНС, СФР и Росстат из JSON",
-  "version": "3.13.0",
+  "version": "3.13.1",
   "default_step_timeout_ms": 60000,
   "context": {
     "mode": "validate_only",
@@ -2217,9 +2217,9 @@
                         {
                           "action": "compute",
                           "title": "Подготовить переход по root_dir или явным шагам каталога",
-                          "description": "Для локального диска C строит Recorder-шаги из root_dir. Явный upload_directory_steps имеет приоритет; другой диск требует такого переопределения. Перед выбором XML отдельно проверяются имя и полный путь.",
+                          "description": "Вводит root_dir в адресную строку диалога СБИС. Явный массив upload_directory_steps переопределяет переход. Перед импортом сверяются имя и полный путь XML.",
                           "params": {
-                            "expression": "(()=>{if(Array.isArray(context.upload_directory_steps)&&context.upload_directory_steps.length)return context.upload_directory_steps;const root=String(context.root_dir||'').replaceAll(String.fromCharCode(92),'/');if(!/^[a-z]:\\//i.test(root))return [];if(!/^c:\\//i.test(root))throw Object.assign(new Error('Для другого диска настройте upload_directory_steps'),{code:'UI_BINDING_REQUIRED'});const folders=root.split('/').slice(1).filter(Boolean);return [{type:'waitForElement',selectors:[['text/Локальный диск (C:)']],visible:true,description:'Ожидает загрузку дерева дисков Saby Plugin.'},{type:'click',selectors:[['text/Локальный диск (C:)']],offsetX:65,offsetY:10,description:'Открывает диск C в файловом диалоге перед переходом по root_dir.'},...folders.flatMap(name=>{const selector='.FileBrowserComponent__Browser__columnName:has([data-minicard-name='+JSON.stringify(name)+']) .FileBrowserComponent__Browser__columnNameRow';return [{type:'waitForElement',selectors:[[selector]],visible:true,count:1,operator:'==',description:'Ожидает единственную строку подкаталога из root_dir.'},{type:'doubleClick',selectors:[[selector]],offsetX:45,offsetY:10,description:'Открывает следующий подкаталог из root_dir по точному имени.'}]})]})()"
+                            "expression": "(()=>{const custom=context.upload_directory_steps;if(Array.isArray(custom)&&custom.length)return custom;if(custom!=null&&!Array.isArray(custom))throw Object.assign(new Error('upload_directory_steps должен быть массивом JSON'),{code:'UI_BINDING_REQUIRED'});const input=[['#popup div.tw-shrink-0 input']];return [{type:'click',target:'main',selectors:[['text/ИзбранноеЗагрузки']],offsetX:10,offsetY:10},{type:'waitForElement',target:'main',selectors:input,visible:true},{type:'change',target:'main',selectors:input,value:context.root_dir},{type:'keyDown',target:'main',key:'Enter'},{type:'keyUp',target:'main',key:'Enter'},{type:'waitForElement',target:'main',selectors:input,operator:'==',count:0}]})()"
                           },
                           "save_as": "directory_navigation_steps",
                           "private": true,
