@@ -31,7 +31,7 @@
   "script": {
     "format": "json-workflow",
     "title": "СБИС: ФНС, СФР и Росстат из JSON",
-    "version": "3.13.1",
+    "version": "3.13.2",
     "default_step_timeout_ms": 60000,
     "context": {
       "mode": "validate_only",
@@ -2249,7 +2249,7 @@
                             "title": "Подготовить переход по root_dir или явным шагам каталога",
                             "description": "Вводит root_dir в адресную строку диалога СБИС. Явный массив upload_directory_steps переопределяет переход. Перед импортом сверяются имя и полный путь XML.",
                             "params": {
-                              "expression": "(()=>{const custom=context.upload_directory_steps;if(Array.isArray(custom)&&custom.length)return custom;if(custom!=null&&!Array.isArray(custom))throw Object.assign(new Error('upload_directory_steps должен быть массивом JSON'),{code:'UI_BINDING_REQUIRED'});const input=[['#popup div.tw-shrink-0 input']];return [{type:'click',target:'main',selectors:[['text/ИзбранноеЗагрузки']],offsetX:10,offsetY:10},{type:'waitForElement',target:'main',selectors:input,visible:true},{type:'change',target:'main',selectors:input,value:context.root_dir},{type:'keyDown',target:'main',key:'Enter'},{type:'keyUp',target:'main',key:'Enter'},{type:'waitForElement',target:'main',selectors:input,operator:'==',count:0}]})()"
+                              "expression": "(()=>{const custom=context.upload_directory_steps;if(Array.isArray(custom)&&custom.length)return custom;if(custom!=null&&!Array.isArray(custom))throw Object.assign(new Error('upload_directory_steps должен быть массивом JSON'),{code:'UI_BINDING_REQUIRED'});const input=[['#popup div.tw-shrink-0 input']];return [{type:'click',target:'main',selectors:[['text/ИзбранноеЗагрузки']],offsetX:10,offsetY:10},{type:'waitForElement',target:'main',selectors:input,visible:true},{type:'change',target:'main',selectors:input,value:context.root_dir},{type:'keyDown',target:'main',key:'Enter'},{type:'keyUp',target:'main',key:'Enter'}]})()"
                             },
                             "save_as": "directory_navigation_steps",
                             "private": true,
