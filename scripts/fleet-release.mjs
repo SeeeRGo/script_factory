@@ -17,6 +17,10 @@ if(command==='keygen'){
  const explicitRef=arg('ref',false),remote=arg('remote',false)||'origin',branch=arg('branch',false)||'main';
  const out=path.resolve(arg('out')),key=await readFile(arg('key'),'utf8');
  const git=(...gitArgs)=>execFileSync('git',gitArgs,{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:120000,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_SSH_COMMAND:process.env.GIT_SSH_COMMAND||'ssh -o BatchMode=yes -o ConnectTimeout=15'}}).trim();
+ try{
+  const prefix=git('rev-parse','--show-prefix');
+  if(prefix)throw new Error();
+ }catch{throw new Error('Укажите корень Git-клона проекта: '+process.cwd()+'. Для PowerShell используйте -SourceDirectory.');}
  let commit,source;
  if(explicitRef){
   try{commit=git('rev-parse','--verify','--end-of-options',explicitRef+'^{commit}');}catch{throw new Error('Не найден явно указанный коммит. Укажите существующий тег/хеш или уберите --ref для получения актуального origin/main.');}
@@ -30,7 +34,18 @@ if(command==='keygen'){
   const temporaryRef='refs/script-factory/build-'+randomUUID();
   try{
    try{git('fetch','--no-tags','--no-write-fetch-head','--',remote,'refs/heads/'+branch+':'+temporaryRef);}
-   catch{throw new Error('Не удалось получить актуальную ветку '+remote+'/'+branch+'. Проверьте сеть и доступ Git к приватному репозиторию. Сборка остановлена; локальная старая версия не используется.');}
+   catch(error){
+    const diagnostic=String(error.stderr||'');
+    let reason='Проверьте git fetch из указанного каталога под той же учётной записью.';
+    if(error.code==='ETIMEDOUT'||/timed out|timeout/i.test(diagnostic))reason='Истекло время подключения или скачивания Git.';
+    else if(/permission denied.*publickey/i.test(diagnostic))reason='GitHub отклонил SSH-ключ. Проверьте доступ ключа и его наличие в ssh-agent.';
+    else if(/host key verification failed/i.test(diagnostic))reason='SSH не подтвердил ключ хоста GitHub. Проверьте known_hosts.';
+    else if(/repository not found|authentication failed|could not read username/i.test(diagnostic))reason='Проверьте адрес remote и право чтения репозитория без интерактивного входа.';
+    else if(/could not resolve|failed to connect|network is unreachable/i.test(diagnostic))reason='Проверьте DNS и сетевой доступ к GitHub.';
+    else if(/couldn.t find remote ref/i.test(diagnostic))reason='Указанная ветка отсутствует в удалённом репозитории.';
+    else if(/cannot lock ref|permission denied|unable to create/i.test(diagnostic))reason='Проверьте права записи в локальный Git-клон и блокировки Git.';
+    throw new Error('Не удалось получить '+remote+'/'+branch+' из каталога '+process.cwd()+'. '+reason+' Сборка остановлена: локальная старая версия не используется.');
+   }
    commit=git('rev-parse','--verify',temporaryRef+'^{commit}');
   }finally{try{git('update-ref','-d',temporaryRef);}catch{}}
   source={mode:'remote',remote,branch};

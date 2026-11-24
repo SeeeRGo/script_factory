@@ -1,19 +1,24 @@
 ﻿param(
  [Parameter(Mandatory=$true)][string]$CentralUrl,
  [string]$Ref,
+ [string]$SourceDirectory,
  [string]$Remote='origin',
  [string]$Branch='main',
  [string]$SigningKey='C:\ScriptFactorySigning\release-private.pem',
  [string]$OutputDirectory='C:\ScriptFactoryReleases'
 )
 $ErrorActionPreference='Stop'
-$project=Split-Path $PSScriptRoot -Parent
+$project=if($SourceDirectory){(Resolve-Path -LiteralPath $SourceDirectory -ErrorAction Stop).Path}else{Split-Path $PSScriptRoot -Parent}
+$cli=Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\fleet-release.mjs'
+Write-Output "Каталог исходников: $project"
+$previousEncoding=[Console]::OutputEncoding
 $node=(Get-Command node -ErrorAction Stop).Source
 $previous=$env:FLEET_ADMIN_TOKEN
 Push-Location -LiteralPath $project
 try{
+ [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
  if(-not(Test-Path -LiteralPath $SigningKey -PathType Leaf)){throw "Не найден ключ подписи: $SigningKey"}
- $buildArgs=@((Join-Path $project 'scripts\fleet-release.mjs'),'build','--key',$SigningKey,'--out',$OutputDirectory)
+ $buildArgs=@($cli,'build','--key',$SigningKey,'--out',$OutputDirectory)
  if($Ref){$buildArgs+=@('--ref',$Ref)}else{$buildArgs+=@('--remote',$Remote,'--branch',$Branch);Write-Output "Получаем актуальную ветку $Remote/$Branch из Git. Локальный HEAD не используется."}
  $result=& $node @buildArgs
  if($LASTEXITCODE -ne 0){throw "Сборка не выполнена: $result"}
@@ -26,7 +31,7 @@ try{
   try{$env:FLEET_ADMIN_TOKEN=[Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)}
   finally{[Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)}
  }
- & $node (Join-Path $project 'scripts\fleet-release.mjs') publish --url $CentralUrl --manifest $release.manifest --zip $release.archive
+ & $node $cli publish --url $CentralUrl --manifest $release.manifest --zip $release.archive
  if($LASTEXITCODE -ne 0){throw 'Публикация не выполнена; файлы сборки сохранены'}
  Write-Output "Опубликован релиз $($release.id). Раскатку выберите отдельно в панели."
-}finally{$env:FLEET_ADMIN_TOKEN=$previous;Pop-Location}
+}finally{$env:FLEET_ADMIN_TOKEN=$previous;[Console]::OutputEncoding=$previousEncoding;Pop-Location}
