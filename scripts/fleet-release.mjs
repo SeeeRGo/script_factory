@@ -16,7 +16,8 @@ if(command==='keygen'){
 }else if(command==='build'){
  const explicitRef=arg('ref',false),remote=arg('remote',false)||'origin',branch=arg('branch',false)||'main';
  const out=path.resolve(arg('out')),key=await readFile(arg('key'),'utf8');
- const git=(...gitArgs)=>execFileSync('git',gitArgs,{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:120000,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_SSH_COMMAND:process.env.GIT_SSH_COMMAND||'ssh -o BatchMode=yes -o ConnectTimeout=15'}}).trim();
+ // Let Git resolve core.sshCommand and any explicit environment override.
+ const git=(...gitArgs)=>execFileSync('git',gitArgs,{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:120000,env:{...process.env,GIT_TERMINAL_PROMPT:'0'}}).trim();
  try{
   const prefix=git('rev-parse','--show-prefix');
   if(prefix)throw new Error();
