@@ -39,18 +39,37 @@ Get-Content ($key + '.pub')
 3. Для нового клона задайте выбранный ключ явно. Следующий пример не меняет глобальные SSH-настройки и не затирает ключи других проектов:
 
 ```powershell
-$key = Join-Path $env:USERPROFILE '.ssh\script_factory_release_ed25519'
+$key = Join-Path $env:USERPROFILE '.ssh\script_factory_eng_ed25519'
+$source = 'C:\ScriptFactorySource'
+$repo = 'git@github.com:companyZ-1C/script_factory.git'
+if (-not (Test-Path -LiteralPath $key -PathType Leaf)) { throw "SSH-ключ не найден: $key" }
+
+function Invoke-ReleaseGit {
+  $ErrorActionPreference = 'Continue'
+  $output = & git @args 2>&1
+  $exitCode = $LASTEXITCODE
+  $output | ForEach-Object { $_.ToString() }
+  if ($exitCode -ne 0) { throw "Git завершился с кодом $exitCode. Причина указана выше." }
+}
+
 $sshCommand = 'ssh -i "' + ($key -replace '\\','/') + '" -o IdentitiesOnly=yes'
-$source = 'C:\ScriptFactorySource' # отдельный каталог исходного кода, не рабочий API
-if (Test-Path $source) { throw 'Для нового клона выберите отсутствующий каталог' }
-git -c "core.sshCommand=$sshCommand" clone git@github.com:companyZ-1C/script_factory.git $source
-if ($LASTEXITCODE -ne 0) { throw 'Не удалось получить репозиторий' }
-Set-Location $source
-git config --local core.sshCommand $sshCommand
-if ($LASTEXITCODE -ne 0) { throw 'Не удалось сохранить выбор SSH-ключа' }
-git ls-remote origin refs/heads/main
-if ($LASTEXITCODE -ne 0) { throw 'Нет доступа к репозиторию' }
+$branch = Invoke-ReleaseGit -c "core.sshCommand=$sshCommand" ls-remote --exit-code $repo refs/heads/main
+$branch
+if (Test-Path -LiteralPath $source) {
+  if (-not (Test-Path -LiteralPath (Join-Path $source '.git'))) {
+    throw "Каталог уже существует. Проверьте его содержимое или выберите новый путь: $source"
+  }
+  $origin = Invoke-ReleaseGit -C $source remote get-url origin
+  if ($origin -cne $repo) { throw "В существующем клоне другой origin: $source" }
+} else {
+  Invoke-ReleaseGit -c "core.sshCommand=$sshCommand" clone --quiet -- $repo $source
+}
+Invoke-ReleaseGit -C $source config --local core.sshCommand $sshCommand
+Invoke-ReleaseGit -C $source fetch --quiet origin
+Invoke-ReleaseGit -C $source log -1 --oneline origin/main
 ```
+
+Укажите имя файла своего ключа. В примере используется ключ инженера. Windows PowerShell 5.1 может показывать обычное сообщение Git `Cloning into…` как `NativeCommandError`. Блок выше выводит сообщения Git текстом и проверяет код завершения. Существующий клон с тем же origin используется повторно.
 
 При первом подключении проверьте fingerprint GitHub по официальному списку ниже и подтвердите ключ сервера. Не отключайте проверку ключа сервера.
 
@@ -81,7 +100,7 @@ git log -1 --oneline origin/main
 После успешного fetch выберите проверенный SHA:
 
 - Для первоначальной установки или ручного обновления соберите ZIP командой `git archive` по [инструкции установки](01-install-one.md), доставьте пакет и используйте [единый установщик](11-install-or-repair.md) либо [помощник обновления](03-update-one.md).
-- Для массового обновления выполните `fleet:release build` и `publish` по [инструкции](04-update-ten.md). Build использует локальный commit; publish отправляет архив в оркестратор. Агенты не скачивают файлы из GitHub.
+- Для массового обновления выполните `fleet:release build` и `publish` по [инструкции](04-update-ten.md). По умолчанию сборка скачивает актуальный `origin/main`. С `--ref` используется явно выбранный локальный коммит. Publish отправляет архив в оркестратор. Агенты не скачивают файлы из GitHub.
 
 Закрытие репозитория не меняет содержимое ZIP, проверку подписи и протокол оркестратора. На УН по-прежнему может требоваться доступ к npm registry/корпоративному зеркалу для установки зависимостей: это отдельный доступ, GitHub deploy key его не предоставляет.
 
