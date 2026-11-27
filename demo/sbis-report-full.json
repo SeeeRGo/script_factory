@@ -1,7 +1,7 @@
 {
   "format": "json-workflow",
   "title": "СБИС: ФНС, СФР и Росстат из JSON",
-  "version": "3.13.5",
+  "version": "3.13.6",
   "retry_on_partial_result": false,
   "default_step_timeout_ms": 60000,
   "context": {
@@ -2364,7 +2364,7 @@
                           "title": "Сверить единственный XML по имени и полному пути",
                           "description": "Сверить единственный XML по имени и полному пути",
                           "params": {
-                            "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';\n const all=[...document.querySelectorAll('[data-minicard-name]')].filter(visible);\n const normalize=value=>{let r=String(value||'').replace(/\\\\/g,'/');if(r.startsWith('file:///')){try{r=decodeURIComponent(r.slice(7));}catch{return null;}}if(/^\\/[a-z]:\\//i.test(r))r=r.slice(1);return /^[a-z]:\\//i.test(r)?r.toLowerCase():r;};\n for(const file of context.report.files){const rows=all.filter(e=>e.getAttribute('data-minicard-name')===file.filename);if(rows.length!==1||!rows[0].getAttribute('data-minicard-path')||normalize(rows[0].getAttribute('data-minicard-path'))!==normalize(file.path))throw Object.assign(new Error('Не подтверждены имя и полный путь части комплекта'),{code:'FILE_SELECTION_MISMATCH'});}\n return true;\n})()"
+                            "expression": "(() => {\n const visible=e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden';\n const all=[...document.querySelectorAll('[data-minicard-name]')].filter(visible);\n const normalize=value=>{let r=String(value||'').replace(/\\\\/g,'/');if(r.startsWith('file:///')){try{r=decodeURIComponent(r.slice(7));}catch{return null;}}if(/^\\/[a-z]:\\//i.test(r))r=r.slice(1);return (/^[a-z]:\\//i.test(r)||r.startsWith(\"//\"))?r.toLowerCase():r;};\n for(const file of context.report.files){const rows=all.filter(e=>e.getAttribute('data-minicard-name')===file.filename);if(rows.length!==1||!rows[0].getAttribute('data-minicard-path')||normalize(rows[0].getAttribute('data-minicard-path'))!==normalize(file.path))throw Object.assign(new Error('Не подтверждены имя и полный путь части комплекта'),{code:'FILE_SELECTION_MISMATCH'});}\n return true;\n})()"
                           },
                           "save_as": "file_verified",
                           "private": true,
