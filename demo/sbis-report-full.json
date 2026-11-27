@@ -1,7 +1,7 @@
 {
   "format": "json-workflow",
   "title": "СБИС: ФНС, СФР и Росстат из JSON",
-  "version": "3.13.4",
+  "version": "3.13.5",
   "retry_on_partial_result": false,
   "default_step_timeout_ms": 60000,
   "context": {
@@ -2262,6 +2262,56 @@
                                 "expression": "(()=>{\n const input=document.querySelector('#popup div.tw-shrink-0 input');\n const fail=()=>{throw Object.assign(new Error('Не удалось ввести полный адрес папки в диалоге СБИС'),{code:'FILE_PICKER_ADDRESS_FAILED'});};\n if(!input||!input.getClientRects().length||input.disabled||input.readOnly)fail();\n input.focus();\n input.select();\n document.execCommand('insertText',false,context.root_dir);\n if(input.value!==context.root_dir)fail();\n input.focus();\n return true;\n})()"
                               },
                               "private": true
+                            },
+                            {
+                              "action": "browser_steps",
+                              "title": "Подтвердить изменение адреса обычными клавишами",
+                              "private": true,
+                              "params": {
+                                "steps": [
+                                  {
+                                    "type": "keyDown",
+                                    "target": "main",
+                                    "key": "End"
+                                  },
+                                  {
+                                    "type": "keyUp",
+                                    "target": "main",
+                                    "key": "End"
+                                  },
+                                  {
+                                    "type": "keyDown",
+                                    "target": "main",
+                                    "key": "Space"
+                                  },
+                                  {
+                                    "type": "keyUp",
+                                    "target": "main",
+                                    "key": "Space"
+                                  },
+                                  {
+                                    "type": "keyDown",
+                                    "target": "main",
+                                    "key": "Backspace"
+                                  },
+                                  {
+                                    "type": "keyUp",
+                                    "target": "main",
+                                    "key": "Backspace"
+                                  }
+                                ],
+                                "timeout_ms": 5000
+                              },
+                              "id": "sbis_picker_confirm_edit"
+                            },
+                            {
+                              "action": "browser_eval",
+                              "private": true,
+                              "params": {
+                                "expression": "(()=>{const e=document.querySelector('#popup .fl-addressString input');if(!e||e.value!==context.root_dir)throw Object.assign(new Error('СБИС изменил адрес папки при вводе'),{code:'FILE_PICKER_ADDRESS_FAILED'}); e.focus();return true;})()"
+                              },
+                              "title": "Проверить полный адрес перед Enter",
+                              "id": "sbis_picker_check_edited_address"
                             },
                             {
                               "action": "browser_steps",
