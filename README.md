@@ -1,5 +1,7 @@
 # Script Factory · Stage 4
 
+[Оглавление документации](docs/README.md)
+
 Stage 4 of the distributed script execution service described in `plan-realizacii.md`.
 The service accepts native Chrome DevTools Recorder JSON, validates it with
 `@puppeteer/replay`, executes it in real Chromium through the persistent priority queue,

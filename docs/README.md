@@ -1,0 +1,85 @@
+# Оглавление документации
+
+Инструкции по установке, обновлению и восстановлению УН, описание API, сценарии и демонстрации.
+
+## Развёртывание и эксплуатация
+
+- [Установить на одну УН](<operator-guide/01-install-one.md>)
+- [Первоначально установить на десять УН](<operator-guide/02-install-ten.md>)
+- [Обновить одну УН до релиза из Git](<operator-guide/03-update-one.md>)
+- [Обновить десять УН до релиза из Git](<operator-guide/04-update-ten.md>)
+- [Общие настройки .env и массовая замена](<operator-guide/05-env-management.md>)
+- [Первый сценарий: создать файл и получить результат](<operator-guide/06-first-script.md>)
+- [Справочник .env](<operator-guide/07-env-reference.md>)
+- [Подготовка env с общими значениями заказчика](<operator-guide/08-customer-env-profile.md>)
+- [Профили конфигурации и секреты в оркестраторе](<operator-guide/09-orchestrator-configurations.md>)
+- [Установка, обновление и восстановление одной командой](<operator-guide/11-install-or-repair.md>)
+- [Установка и обновление из закрытого репозитория](<operator-guide/12-private-repository.md>)
+- [Повторные попытки выполнения задания](<operator-guide/13-retry-policy.md>)
+- [Главный узел: регистрация УН из существующего C:\Deploy\nodes.csv](<operator-guide/14-existing-csv.md>)
+- [Установить и запустить агенты с главной УН](<operator-guide/15-agent-bootstrap.md>)
+- [Установка и обновление API вместе с агентом (0.17.0+)](<operator-guide/16-integrated-agent.md>)
+- [Откат и восстановление после сбоя обновления](<operator-guide/17-recover-update.md>)
+- [Инструкции администратора и автора сценариев (docs/operator-guide)](<operator-guide/README.md>)
+- [Проверка комплекта 11.11.2026](<operator-guide/verification.md>)
+
+## API, настройка и разработка
+
+- [Шпаргалка: самостоятельно собрать сценарий](<project-guide/01-scripts.md>)
+- [Схема проекта для следующего программиста](<project-guide/02-developer.md>)
+- [Установить систему на Windows-УН](<project-guide/03-install-windows.md>)
+- [Обновить одну Windows-УН вручную](<project-guide/04-update-one-un.md>)
+- [Индивидуальные параметры СБИС и правила ui](<project-guide/05-sbis.md>)
+- [Шпаргалка API и запуск из 1С](<project-guide/06-api-1c.md>)
+- [Проверки и ограничения](<project-guide/07-verification.md>)
+- [Ответы на вопросы по текущему этапу](<project-guide/08-answers-current-stage.md>)
+- [Проверить полный цикл на локальном стенде](<project-guide/08-local-stand.md>)
+- [Управление питанием незанятой УН: выключение Windows, сон и API для 1С](<project-guide/09-power-management.md>)
+- [Настройки браузера и исполнителя — API 0.9.15+](<project-guide/10-browser-settings.md>)
+- [Централизованное обновление Windows-УН](<project-guide/11-fleet-updates.md>)
+- [API при включении УН и интерактивный worker](<project-guide/12-api-worker-startup.md>)
+- [Ошибки обновления и журнал оркестратора](<project-guide/13-fleet-diagnostics.md>)
+- [Инструкции по Script Factory (docs/project-guide)](<project-guide/README.md>)
+
+## Примеры, демонстрации и дополнительные инструкции
+
+- [Ответы заказчику по развёртыванию и эксплуатации Script Factory](answers-customer-deployment-and-operations.md)
+
+- [Script Factory · Stage 4 (.)](<../README.md>)
+- [Массовое развёртывание Windows-УН через Ansible (ansible)](<../ansible/README.md>)
+- [Демонстрации универсального JSON workflow (demo)](<../demo/README.md>)
+- [Универсальные сценарии из JSON](<../demo/json-workflow.md>)
+- [СБИС: полный сценарий из JSON](<../demo/sbis-report-full.md>)
+- [Проверка выбора XML в СБИС на УН](<../demo/sbis-upload-stub.md>)
+- [Ответы по интеграции 1С с УН](<answers-1c-integration.md>)
+- [Демо логики приоритетной очереди](<demo-queue-cases.md>)
+- [План демонстрации этапа 3](<demo-stage-3.md>)
+- [Живой показ Chromium через noVNC](<novnc-demo.md>)
+- [Из Chrome Recorder JSON в сценарий универсальной системы](<recorder-to-json-workflow.md>)
+- [Создание браузерных сценариев этапа 3](<script-creation.md>)
+- [Этап 4: интеграция 1С и тестовая Windows-УН](<stage-4-1c-integration.md>)
+- [Как обновить Windows-УН вручную, без Ansible](<update-un-manual-step-by-step.md>)
+- [Как обновить Windows-УН через Ansible](<update-un-step-by-step.md>)
+- [Версионирование Script Factory](<versioning.md>)
+- [Демо 4 часть 2 .docx](<Демо 4 часть 2 .docx>)
+- [OpenAPI — полная спецификация методов](<../openapi.yaml>)
+- [План реализации проекта](<../plan-realizacii.md>)
+- [Переоценка ТРИО.xlsx](<../Переоценка ТРИО.xlsx>)
+- [Системный анализ_v3.pdf](<../Системный анализ_v3.pdf>)
+
+## История версий
+
+- [API 0.14.0 — единая политика повторов и workflow-демонстрации](<changelog-0.14.0.md>)
+- [API 0.14.1 — HTTP оркестратора во внутренней сети](<changelog-0.14.1.md>)
+- [API 0.14.3 — защита каталогов CLI без изменения владельца и аудита](<changelog-0.14.3.md>)
+- [API 0.14.4 — существующий CSV для регистрации агентов](<changelog-0.14.4.md>)
+- [API 0.14.5 — понятная диагностика регистрации агентов](<changelog-0.14.5.md>)
+- [0.15.0 — 18.11.2026](<changelog-0.15.0.md>)
+- [0.15.1 — 18.11.2026](<changelog-0.15.1.md>)
+- [0.15.2 — 18.11.2026](<changelog-0.15.2.md>)
+- [0.15.3 — 18.11.2026](<changelog-0.15.3.md>)
+- [0.15.4 — 18.11.2026](<changelog-0.15.4.md>)
+- [0.16.0 — 19.11.2026](<changelog-0.16.0.md>)
+- [0.17.0 — 19.11.2026](<changelog-0.17.0.md>)
+- [Отчёт по изменениям — релиз 0.6.0](<changelog-0.6.0.md>)
+- [0.6.17 — внешний IP и имена артефактов для 1С](<changelog-0.6.17.md>)
