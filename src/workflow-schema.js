@@ -16,6 +16,7 @@ export function validateWorkflow(script, configuredLimits) {
   if (script.context != null && (typeof script.context !== 'object' || Array.isArray(script.context))) add('script.context', 'context должен быть объектом');
   if (script.output !== undefined && !timeoutTemplate(script.output) && (!script.output || typeof script.output !== 'object' || Array.isArray(script.output))) add('script.output', 'output должен быть объектом или точным шаблоном объекта');
   if (script.capture_error_screenshot !== undefined && typeof script.capture_error_screenshot !== 'boolean') add('script.capture_error_screenshot', 'Требуется boolean');
+  if (script.retry_on_partial_result !== undefined && typeof script.retry_on_partial_result !== 'boolean') add('script.retry_on_partial_result', 'Требуется boolean');
   const routines = script.routines || {};
   if (typeof routines !== 'object' || Array.isArray(routines)) add('script.routines', 'routines должен быть объектом');
   const visit = (steps, path, depth = 0) => {

@@ -31,7 +31,8 @@
   "script": {
     "format": "json-workflow",
     "title": "СБИС: ФНС, СФР и Росстат из JSON",
-    "version": "3.13.2",
+    "version": "3.13.4",
+    "retry_on_partial_result": false,
     "default_step_timeout_ms": 60000,
     "context": {
       "mode": "validate_only",
@@ -2249,7 +2250,7 @@
                             "title": "Подготовить переход по root_dir или явным шагам каталога",
                             "description": "Вводит root_dir в адресную строку диалога СБИС. Явный массив upload_directory_steps переопределяет переход. Перед импортом сверяются имя и полный путь XML.",
                             "params": {
-                              "expression": "(()=>{const custom=context.upload_directory_steps;if(Array.isArray(custom)&&custom.length)return custom;if(custom!=null&&!Array.isArray(custom))throw Object.assign(new Error('upload_directory_steps должен быть массивом JSON'),{code:'UI_BINDING_REQUIRED'});const input=[['#popup div.tw-shrink-0 input']];return [{type:'click',target:'main',selectors:[['text/ИзбранноеЗагрузки']],offsetX:10,offsetY:10},{type:'waitForElement',target:'main',selectors:input,visible:true},{type:'change',target:'main',selectors:input,value:context.root_dir},{type:'keyDown',target:'main',key:'Enter'},{type:'keyUp',target:'main',key:'Enter'}]})()"
+                              "expression": "(()=>{const custom=context.upload_directory_steps;if(Array.isArray(custom)&&custom.length)return custom;if(custom!=null&&!Array.isArray(custom))throw Object.assign(new Error('upload_directory_steps должен быть массивом JSON'),{code:'UI_BINDING_REQUIRED'});const input=[['#popup div.tw-shrink-0 input']];return [{type:'click',target:'main',selectors:[['text/ИзбранноеЗагрузки']],offsetX:10,offsetY:10},{type:'waitForElement',target:'main',selectors:input,visible:true}]})()"
                             },
                             "save_as": "directory_navigation_steps",
                             "private": true,
@@ -2266,6 +2267,54 @@
                             "private": true,
                             "timeout_ms": "{{control_timeout_ms}}",
                             "id": "sbis_run_reports_then_23_steps_14_then_2_steps_12"
+                          },
+                          {
+                            "action": "compute",
+                            "title": "Проверить, нужен ли штатный ввод адреса",
+                            "params": {
+                              "expression": "!Array.isArray(context.upload_directory_steps)||!context.upload_directory_steps.length"
+                            },
+                            "save_as": "use_default_picker_address",
+                            "private": true
+                          },
+                          {
+                            "action": "if",
+                            "title": "Ввести и подтвердить адрес папки СБИС",
+                            "params": {
+                              "condition": "{{use_default_picker_address}}"
+                            },
+                            "private": true,
+                            "then": [
+                              {
+                                "action": "browser_eval",
+                                "title": "Ввести и проверить полный адрес папки",
+                                "params": {
+                                  "expression": "(()=>{\n const input=document.querySelector('#popup div.tw-shrink-0 input');\n const fail=()=>{throw Object.assign(new Error('Не удалось ввести полный адрес папки в диалоге СБИС'),{code:'FILE_PICKER_ADDRESS_FAILED'});};\n if(!input||!input.getClientRects().length||input.disabled||input.readOnly)fail();\n input.focus();\n input.select();\n document.execCommand('insertText',false,context.root_dir);\n if(input.value!==context.root_dir)fail();\n input.focus();\n return true;\n})()"
+                                },
+                                "private": true
+                              },
+                              {
+                                "action": "browser_steps",
+                                "title": "Подтвердить адрес папки клавишей Enter",
+                                "params": {
+                                  "steps": [
+                                    {
+                                      "type": "keyDown",
+                                      "target": "main",
+                                      "key": "Enter"
+                                    },
+                                    {
+                                      "type": "keyUp",
+                                      "target": "main",
+                                      "key": "Enter"
+                                    }
+                                  ],
+                                  "timeout_ms": "{{browser_step_timeout_ms}}"
+                                },
+                                "timeout_ms": "{{browser_step_budget_ms}}",
+                                "private": true
+                              }
+                            ]
                           },
                           {
                             "action": "compute",

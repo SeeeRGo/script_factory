@@ -1,4 +1,6 @@
 import test from 'node:test';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { readdirSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile, copyFile } from 'node:fs/promises';
@@ -111,6 +113,61 @@ for (const scenario of ['validation_clean_protocol','validation_bundle_collision
       upload_directory_steps: [{ type: 'waitForExpression', expression: 'true' }],
       login_url: `${origin}/login`, report_url: `${origin}/report`, authenticated_url: `${origin}/cabinet`, root_dir: incoming, loaded_dir: loaded, error_dir: errors, license_debt_enabled:['license_debt_allowed','license_debt_price_changed','license_debt_late_price'].includes(scenario), license_debt_expected_amount:scenario==='license_debt_price_changed'?1000:2500, authority_prefixes, ui },
       executablePath: process.env.PUPPETEER_EXECUTABLE_PATH, headless: process.env.BROWSER_HEADLESS !== 'false', allowedRoots: [root], artifactDirectory: path.join(root, 'artifacts'), publicArtifactBasePath: '/artifacts/test', jobId: `job-${scenario}`, checkIp: async () => ({ ip_matches_expected: true }) };
+    if (scenario === 'unknown_send') {
+      const reportSteps = script.steps.find(step => step.id === 'sbis_run_reports').then;
+      const ipCheck = reportSteps.findIndex(step => step.action === 'system_ip_check');
+      reportSteps[ipCheck] = { action: 'set', params: { ip_check: { ip_matches_expected: true } } };
+
+      const portProbe = createServer();
+      await new Promise(resolve => portProbe.listen(0, '127.0.0.1', resolve));
+      const port = portProbe.address().port;
+      await new Promise(resolve => portProbe.close(resolve));
+      const apiKey = 'sbis-retry-fixture-key';
+      const api = spawn(process.execPath, ['src/server.js'], { env: {
+        ...process.env, HOST: '127.0.0.1', PORT: String(port), DATA_DIR: root,
+        FILESYSTEM_ALLOWED_ROOTS: root, EXECUTION_MODE: 'inline', UN_ID: 'sbis-retry-fixture',
+        API_KEY: apiKey, WEB_LOGIN: 'test', WEB_PASSWORD: 'test', POWER_ENABLED: 'false',
+        BROWSER_HEADLESS: 'true', BROWSER_STEP_DELAY_MS: '0', BROWSER_HOLD_OPEN_MS: '0',
+        PUPPETEER_EXECUTABLE_PATH: opts.executablePath || '/usr/bin/chromium'
+      }, stdio: ['ignore', 'pipe', 'pipe'] });
+      let diagnostics = '';
+      for (const stream of [api.stdout, api.stderr]) stream.on('data', data => { diagnostics += data; });
+      t.after(async () => {
+        if (api.exitCode !== null) return;
+        const stopped = once(api, 'exit');
+        api.kill('SIGTERM');
+        await stopped;
+      });
+      const base = `http://127.0.0.1:${port}`;
+      const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+      let ready = false;
+      for (let i = 0; i < 100 && !ready; i++) {
+        try { ready = (await fetch(base + '/live')).ok; } catch {}
+        if (!ready) await pause(50);
+      }
+      assert.ok(ready, diagnostics);
+      const headers = { 'X-API-Key': apiKey, 'Content-Type': 'application/json' };
+      const response = await fetch(base + '/api/v2/jobs', {
+        method: 'POST', headers, body: JSON.stringify({
+          script, context: opts.context, retry_policy: { max_attempts: 3, backoff_ms: 1 }, timeout_ms: 60000
+        })
+      });
+      assert.equal(response.status, 201, await response.clone().text());
+      const { job: accepted } = await response.json();
+      let job;
+      for (let i = 0; i < 500; i++) {
+        ({ job } = await (await fetch(base + '/api/v2/jobs/' + accepted.job_id, { headers })).json());
+        if (['failed', 'validation_failed', 'success', 'timeout', 'cancelled'].includes(job.status)) break;
+        await pause(100);
+      }
+      assert.equal(job.status, 'failed', JSON.stringify(job.error));
+      assert.equal(job.attempts, 1);
+      assert.equal(submitted, 1, JSON.stringify(job.error));
+      assert.equal(job.result.Rezult_1.state, 'requires_reconciliation');
+      assert.ok(job.result.Rezult_1.screenshot);
+      assert.ok((await readdir(incoming)).includes(names[0]));
+      return;
+    }
     const codes = {validation_archive_conflict:'VALIDATION_ERROR',validation_bundle_error:'VALIDATION_ERROR', validation_two_reports:'VALIDATION_ERROR', validation_full_panel:'VALIDATION_ERROR',validation_delayed_details:'VALIDATION_ERROR',validation_header_only:'VALIDATION_PROTOCOL_NOT_READY', send_multiple_tab_mismatch:'REPORT_IDENTITY_MISMATCH', workstation_not_ready:'WORKFLOW_ERROR', mixed_validation:'VALIDATION_ERROR', send_three_partial:'REPORTING_LICENSE_REQUIRED', license_debt_late_price:'LICENSE_PRICE_CHANGED',license_debt_contradiction:'REQUIRES_RECONCILIATION', license_debt_denied:'REPORTING_LICENSE_CONFIRMATION_REQUIRED',license_debt_price_changed:'LICENSE_PRICE_CHANGED', license_wrong_card:'REPORT_IDENTITY_MISMATCH', license_required: 'REPORTING_LICENSE_REQUIRED', invalid: 'VALIDATION_ERROR', wrong_org: 'ORGANIZATION_NOT_VERIFIED', wrong_authority: 'AUTHORITY_NOT_VERIFIED', wrong_file_path: 'FILE_SELECTION_MISMATCH', wrong_card: 'REPORT_IDENTITY_MISMATCH', ambiguous_certificate: 'CERTIFICATE_AMBIGUOUS', expired_only: 'CERTIFICATE_NOT_FOUND', account_setup: 'AUTH_ACCOUNT_SETUP_REQUIRED', duplicate: 'REPORT_ALREADY_IMPORTED', file_conflict: 'AUTHORITY_FILE_CONFLICT', same_card_key: 'REPORT_BUNDLE_REQUIRED', unknown_send: 'WORKFLOW_ERROR' };
     const checkSavedResult = async projection => {
       const files = projection.artifacts.filter(a => /^result-\d+\.json$/.test(a.filename));

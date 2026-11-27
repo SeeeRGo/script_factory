@@ -1471,7 +1471,16 @@ async function executeJob(job) {
       return;
     }
 
-    if (job.attempts < job.max_attempts) {
+    const partialResult = serializeJobResult(error?.partial_context);
+    const preservePartialResult = job.request.script?.format === 'json-workflow'
+      && job.request.script.retry_on_partial_result === false
+      && partialResult !== null
+      && Object.keys(partialResult).some(key => key !== 'artifacts');
+    if (preservePartialResult) {
+      logJob(job, 'info', 'Повтор пропущен: сценарий сохранил результат обработки');
+    }
+
+    if (!preservePartialResult && job.attempts < job.max_attempts) {
       job.status = 'retrying';
       job.error = serializeJobError(error);
       job.execution.status = 'retrying';

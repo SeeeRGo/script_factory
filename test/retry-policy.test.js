@@ -30,6 +30,19 @@ for(const mode of ['inline','broker'])test(`${mode}: caller policy controls all 
   const id=await f.create({retry_policy:{max_attempts:3,backoff_ms:5},script:{format:'json-workflow',steps:[{action:'fail',title:'Business failure',params:{error_code:'REPORTS_FAILED',message:'Отчёт уже загружен'}}],output:{}}});
   const j=await f.finish(id);assert.equal(j.status,'failed');assert.equal(j.attempts,3);assert.equal(j.error.code,'REPORTS_FAILED');assert.equal(Object.hasOwn(j.error,'retryable'),false);
  });
+ await t.test('workflow can preserve a failed report instead of returning an empty success on retry',async()=>{
+  const script={format:'json-workflow',retry_on_partial_result:false,steps:[
+   {action:'compute',params:{expression:'context.attempt===1'},save_as:'first'},
+   {action:'if',params:{condition:'{{first}}'},then:[{action:'fail',params:{error_code:'REPORTS_FAILED'}}]}
+  ],on_error:[{action:'set',params:{report:{state:'failed',error_code:'REPORT_ALREADY_IMPORTED',error_path:'archive/report.xml'}}}],
+  output:{Rezult_1:'{{report}}'}};
+  const j=await f.finish(await f.create({retry_policy:{max_attempts:3,backoff_ms:1},script}));
+  assert.equal(j.status,'failed');
+  assert.equal(j.attempts,1);
+  assert.equal(j.error.code,'REPORTS_FAILED');
+  assert.equal(j.result.Rezult_1.error_path,'archive/report.xml');
+  assert.equal(j.result.Rezult_1.error_code,'REPORT_ALREADY_IMPORTED');
+ });
  await t.test('max_attempts=1 disables retries',async()=>{
   const id=await f.create({retry_policy:{max_attempts:1},script:{format:'json-workflow',steps:[{action:'fail',params:{error_code:'ONE_ATTEMPT'}}]}});
   const j=await f.finish(id);assert.equal(j.attempts,1);assert.equal(j.error.code,'ONE_ATTEMPT');
